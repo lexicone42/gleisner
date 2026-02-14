@@ -3,10 +3,10 @@
 //! A bundle contains the in-toto statement, its cryptographic signature,
 //! and the verification material needed to validate it.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A signed attestation bundle ready for distribution.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AttestationBundle {
     /// The canonical JSON of the signed statement.
     pub payload: String,
@@ -17,7 +17,7 @@ pub struct AttestationBundle {
 }
 
 /// Material needed to verify the bundle's signature.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum VerificationMaterial {
     /// Sigstore keyless: Fulcio certificate + Rekor log entry.

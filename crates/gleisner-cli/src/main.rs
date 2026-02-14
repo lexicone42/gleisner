@@ -35,11 +35,11 @@ enum Commands {
     Wrap(commands::wrap::WrapArgs),
     /// Run Claude Code inside a sandbox with full attestation recording.
     Record(commands::record::RecordArgs),
-    // Future commands — stubbed for CLI help text:
-    // /// Verify an attestation bundle's signatures and integrity.
-    // Verify(commands::verify::VerifyArgs),
-    // /// Display an attestation in human-readable format.
-    // Inspect(commands::inspect::InspectArgs),
+    /// Verify an attestation bundle's signatures, digests, and policies.
+    Verify(commands::verify::VerifyArgs),
+    /// Display an attestation bundle in human-readable format.
+    Inspect(commands::inspect::InspectArgs),
+    // Future commands:
     // /// Generate or analyze a Software Bill of Materials.
     // Sbom(commands::sbom::SbomArgs),
 }
@@ -70,5 +70,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Wrap(args) => commands::wrap::execute(args),
         Commands::Record(args) => commands::record::execute(args).await,
+        Commands::Verify(args) => commands::verify::execute(args),
+        Commands::Inspect(args) => commands::inspect::execute(&args),
     }
 }

@@ -167,7 +167,11 @@ pub fn default_key_path() -> std::path::PathBuf {
 // ── PEM helpers ──────────────────────────────────────────────────────
 
 /// Wrap DER bytes in PEM with the given label.
-fn der_to_pem(der: &[u8], label: &str) -> String {
+///
+/// # Panics
+///
+/// Cannot panic — base64 output is always valid ASCII.
+pub fn der_to_pem(der: &[u8], label: &str) -> String {
     use std::fmt::Write;
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(der);
@@ -181,7 +185,7 @@ fn der_to_pem(der: &[u8], label: &str) -> String {
 }
 
 /// Extract DER bytes from a PEM string.
-fn pem_to_der(pem: &str) -> Option<Vec<u8>> {
+pub fn pem_to_der(pem: &str) -> Option<Vec<u8>> {
     let mut b64 = String::new();
     let mut in_body = false;
 
@@ -215,7 +219,7 @@ fn pem_to_der(pem: &str) -> Option<Vec<u8>> {
 ///   BIT STRING <public key>
 /// }
 /// ```
-fn encode_p256_spki(pub_key: &[u8]) -> Vec<u8> {
+pub fn encode_p256_spki(pub_key: &[u8]) -> Vec<u8> {
     // Fixed SPKI header for P-256 uncompressed public key
     #[rustfmt::skip]
     const SPKI_HEADER: [u8; 26] = [

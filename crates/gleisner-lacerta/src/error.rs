@@ -25,4 +25,16 @@ pub enum VerificationError {
     /// I/O error during verification.
     #[error("verification I/O error: {0}")]
     IoError(#[from] std::io::Error),
+
+    /// JSON parsing error.
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
+
+    /// Unsupported verification material type.
+    #[error("unsupported verification material: {0}")]
+    UnsupportedMaterial(String),
+
+    /// Bundle structure is invalid.
+    #[error("invalid bundle: {0}")]
+    InvalidBundle(String),
 }
