@@ -1,0 +1,65 @@
+# Carter-Zimmerman — Permissive profile
+#
+# Named after the Carter-Zimmerman polis in Greg Egan's "Diaspora" —
+# outward-looking, willing to take risks for knowledge. Allows Claude Code
+# to access package registries and git remotes in addition to the Anthropic API.
+#
+# Use this profile when Claude Code needs to install packages, clone repos,
+# or interact with external services during a session.
+#
+# Network: Anthropic API + package registries + GitHub
+# Filesystem: System paths read-only, credentials hidden
+# Process: PID namespace isolated
+
+name = "carter-zimmerman"
+description = "Permissive profile — package registries and GitHub access, credentials hidden"
+
+[filesystem]
+readonly_bind = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/etc",
+    "/bin",
+    "/sbin",
+    "/opt",
+]
+readwrite_bind = []
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.config/gcloud",
+    "~/.azure",
+    "~/.kube",
+    "~/.docker",
+]
+tmpfs = ["/tmp"]
+
+[network]
+default = "allow"
+allow_domains = [
+    "api.anthropic.com",
+    "sentry.io",
+    "registry.npmjs.org",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "crates.io",
+    "static.crates.io",
+    "github.com",
+    "objects.githubusercontent.com",
+]
+allow_ports = [443, 80]
+allow_dns = true
+
+[process]
+pid_namespace = true
+no_new_privileges = true
+command_allowlist = []
+
+[resources]
+max_memory_mb = 8192
+max_cpu_percent = 100
+max_pids = 512
+max_file_descriptors = 4096
+max_disk_write_mb = 20480

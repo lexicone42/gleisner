@@ -1,0 +1,22 @@
+[package]
+name = "gleisner-lacerta"
+version = "0.1.0"
+description = "Verification and policy enforcement for Gleisner attestation bundles"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+wasmtime.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+gleisner-introdus.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

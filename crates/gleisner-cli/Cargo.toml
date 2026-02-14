@@ -1,0 +1,41 @@
+[package]
+name = "gleisner-cli"
+version = "0.1.0"
+description = "CLI for Gleisner — supply chain security for Claude Code"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "gleisner"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+sha2.workspace = true
+hex.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+color-eyre.workspace = true
+directories.workspace = true
+
+# Internal crates
+gleisner-polis.workspace = true
+gleisner-introdus.workspace = true
+gleisner-bridger.workspace = true
+gleisner-scapes.workspace = true
+gleisner-lacerta.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

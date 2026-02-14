@@ -1,0 +1,62 @@
+# Ashton-Laval — Maximum isolation profile
+#
+# Named after the Ashton-Laval polis in Greg Egan's "Diaspora" —
+# the most cautious and isolationist community. Claude Code can think
+# but cannot reach anything beyond the Anthropic API.
+#
+# No package registries. No git remotes. No telemetry.
+# Credentials hidden. Tight resource limits.
+#
+# Use this profile for maximum security when reviewing untrusted
+# codebases or when Claude Code should only analyze, not modify
+# the dependency tree.
+#
+# Network: ONLY api.anthropic.com — nothing else
+# Filesystem: Minimal, credentials hidden, strict deny list
+# Process: Fully isolated, tight limits
+
+name = "ashton-laval"
+description = "Maximum isolation — Anthropic API only, no registries, no git, tight limits"
+
+[filesystem]
+readonly_bind = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/etc",
+    "/bin",
+    "/sbin",
+]
+readwrite_bind = []
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.config/gcloud",
+    "~/.azure",
+    "~/.kube",
+    "~/.docker",
+    "~/.npmrc",
+    "~/.cargo/credentials.toml",
+    "~/.gitconfig",
+    "~/.netrc",
+]
+tmpfs = ["/tmp"]
+
+[network]
+default = "deny"
+allow_domains = ["api.anthropic.com"]
+allow_ports = [443]
+allow_dns = false
+
+[process]
+pid_namespace = true
+no_new_privileges = true
+command_allowlist = []
+
+[resources]
+max_memory_mb = 2048
+max_cpu_percent = 50
+max_pids = 128
+max_file_descriptors = 512
+max_disk_write_mb = 4096

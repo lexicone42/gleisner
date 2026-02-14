@@ -1,0 +1,52 @@
+# Konishi — Default balanced profile
+#
+# Named after the Konishi polis in Greg Egan's "Diaspora" — a moderate,
+# consensus-oriented community. Provides reasonable isolation while
+# allowing Claude Code to function effectively.
+#
+# Network: Anthropic API only (Claude Code won't function without it)
+# Filesystem: System paths read-only, credentials hidden
+# Process: PID namespace isolated, no privilege escalation
+
+name = "konishi"
+description = "Default balanced profile — Anthropic API access, credentials hidden, PID isolated"
+
+[filesystem]
+readonly_bind = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/etc",
+    "/bin",
+    "/sbin",
+    "/opt",
+]
+readwrite_bind = []
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.config/gcloud",
+    "~/.azure",
+    "~/.kube",
+    "~/.docker",
+]
+tmpfs = ["/tmp"]
+
+[network]
+default = "deny"
+allow_domains = ["api.anthropic.com", "sentry.io"]
+allow_ports = [443]
+allow_dns = true
+
+[process]
+pid_namespace = true
+no_new_privileges = true
+command_allowlist = []
+
+[resources]
+max_memory_mb = 4096
+max_cpu_percent = 100
+max_pids = 256
+max_file_descriptors = 1024
+max_disk_write_mb = 10240
