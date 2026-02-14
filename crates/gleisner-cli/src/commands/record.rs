@@ -3,9 +3,10 @@
 //! Orchestrates the complete attestation pipeline:
 //! 1. Capture pre-session state (git, Claude Code context)
 //! 2. Set up event bus with JSONL writer and session recorder
-//! 3. Run Claude Code in a bwrap sandbox
-//! 4. On exit: finalize recorder, assemble in-toto statement, sign
-//! 5. Write attestation bundle (or unsigned statement) to disk
+//! 3. Start event monitors (fanotify filesystem, /proc process)
+//! 4. Run Claude Code in a bwrap sandbox
+//! 5. On exit: cancel monitors, finalize recorder, assemble in-toto statement, sign
+//! 6. Write attestation bundle (or unsigned statement) to disk
 
 use std::path::PathBuf;
 
@@ -13,6 +14,7 @@ use chrono::Utc;
 use clap::Args;
 use color_eyre::eyre::{Result, eyre};
 use sha2::{Digest, Sha256};
+use tokio_util::sync::CancellationToken;
 
 use gleisner_introdus::claude_code::ClaudeCodeContext;
 use gleisner_introdus::metadata;
@@ -34,6 +36,7 @@ use super::wrap::WrapArgs;
 /// capturing materials (inputs), subjects (outputs), and provenance
 /// metadata for the sandboxed session.
 #[derive(Args)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct RecordArgs {
     /// All sandbox configuration (profile, paths, network, etc.).
     #[command(flatten)]
@@ -61,6 +64,18 @@ pub struct RecordArgs {
     /// Skip signing — write an unsigned in-toto statement only.
     #[arg(long)]
     pub no_sign: bool,
+
+    /// Disable filesystem monitoring (fanotify).
+    #[arg(long)]
+    pub no_fs_monitor: bool,
+
+    /// Disable process monitoring (/proc scanning).
+    #[arg(long)]
+    pub no_proc_monitor: bool,
+
+    /// Disable cgroup resource limits.
+    #[arg(long)]
+    pub no_cgroups: bool,
 }
 
 /// Execute the `record` command.
@@ -69,6 +84,7 @@ pub struct RecordArgs {
 ///
 /// Returns an error if profile resolution, sandbox creation, attestation
 /// assembly, or signing fails.
+#[allow(clippy::too_many_lines)]
 pub async fn execute(args: RecordArgs) -> Result<()> {
     let project_dir = args
         .wrap
@@ -127,24 +143,112 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     let bus = EventBus::new();
     let rx_writer = bus.subscribe();
     let rx_recorder = bus.subscribe();
+    let publisher = bus.publisher();
 
     let writer_handle = spawn_jsonl_writer(rx_writer, &audit_log_path)
         .map_err(|e| eyre!("failed to start audit log writer: {e}"))?;
 
     let recorder_handle = tokio::spawn(recorder::run(rx_recorder, audit_log_path.clone()));
 
-    // ── 5. Run sandboxed process ─────────────────────────────────────
-    let exit_code = run_sandbox(
-        profile,
-        project_dir,
+    // ── 5. Spawn sandbox child (don't await exit yet) ────────────────
+    let profile_for_sandbox = profile.clone();
+    let mut child = spawn_sandbox_child(
+        profile_for_sandbox,
+        project_dir.clone(),
         args.wrap.allow_network,
         args.wrap.allow_path,
         args.wrap.claude_bin,
         args.wrap.claude_args,
-    )
-    .await?;
+    )?;
 
-    // ── 6. Finalize recording ────────────────────────────────────────
+    let child_pid = child.id().unwrap_or(0);
+
+    // ── 6. Optionally create cgroup scope ────────────────────────────
+    let _cgroup_scope = if !args.no_cgroups && child_pid > 0 {
+        match gleisner_polis::CgroupScope::create(&profile.resources) {
+            Ok(scope) => {
+                if let Err(e) = scope.add_pid(child_pid) {
+                    tracing::warn!(error = %e, "failed to add child to cgroup — continuing without resource limits");
+                    None
+                } else {
+                    tracing::info!(pid = child_pid, "applied cgroup resource limits");
+                    Some(scope)
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to create cgroup — continuing without resource limits");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // ── 7. Start event monitors ──────────────────────────────────────
+    let cancel = CancellationToken::new();
+    let mut monitor_handles = Vec::new();
+
+    if !args.no_fs_monitor {
+        let fs_config = gleisner_polis::FsMonitorConfig {
+            mount_path: project_dir.clone(),
+            ignore_patterns: vec![
+                "target".to_owned(),
+                ".git".to_owned(),
+                "node_modules".to_owned(),
+                ".gleisner".to_owned(),
+            ],
+        };
+        let fs_publisher = publisher.clone();
+        let fs_cancel = cancel.clone();
+        let handle = tokio::spawn(async move {
+            if let Err(e) =
+                gleisner_polis::fanotify::run_fs_monitor(fs_config, fs_publisher, fs_cancel).await
+            {
+                tracing::warn!(error = %e, "filesystem monitor failed — continuing without fs monitoring");
+            }
+        });
+        monitor_handles.push(handle);
+    }
+
+    if !args.no_proc_monitor && child_pid > 0 {
+        let proc_config = gleisner_polis::ProcMonitorConfig {
+            root_pid: child_pid,
+            poll_interval: gleisner_polis::ProcMonitorConfig::DEFAULT_POLL_INTERVAL,
+        };
+        let proc_publisher = publisher.clone();
+        let proc_cancel = cancel.clone();
+        let handle = tokio::spawn(async move {
+            if let Err(e) =
+                gleisner_polis::procmon::run_proc_monitor(proc_config, proc_publisher, proc_cancel)
+                    .await
+            {
+                tracing::warn!(error = %e, "process monitor failed — continuing without proc monitoring");
+            }
+        });
+        monitor_handles.push(handle);
+    }
+
+    // ── 8. Await child exit ──────────────────────────────────────────
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| eyre!("failed to wait on sandboxed process: {e}"))?;
+
+    let exit_code = status.code().unwrap_or(1);
+    if status.success() {
+        tracing::info!("sandboxed session completed successfully");
+    } else {
+        tracing::warn!(exit_code, "sandboxed session exited with error");
+    }
+
+    // ── 9. Cancel monitors and await their completion ────────────────
+    cancel.cancel();
+    for handle in monitor_handles {
+        let _ = handle.await;
+    }
+
+    // ── 10. Finalize recording ───────────────────────────────────────
+    drop(publisher);
     drop(bus);
     let recorder_output = recorder_handle
         .await
@@ -160,7 +264,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
         "session recording complete"
     );
 
-    // ── 7. Assemble and sign ─────────────────────────────────────────
+    // ── 11. Assemble and sign ────────────────────────────────────────
     let statement = assemble_statement(
         recorder_output,
         git_state.as_ref(),
@@ -181,15 +285,16 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     std::process::exit(exit_code);
 }
 
-/// Run the sandboxed Claude Code process. Returns the exit code.
-async fn run_sandbox(
+/// Spawn the sandboxed Claude Code process. Returns the child handle
+/// without waiting for exit, so monitors can start while it runs.
+fn spawn_sandbox_child(
     profile: gleisner_polis::Profile,
     project_dir: PathBuf,
     allow_network: Vec<String>,
     allow_path: Vec<PathBuf>,
     claude_bin: String,
     claude_args: Vec<String>,
-) -> Result<i32> {
+) -> Result<tokio::process::Child> {
     let mut sandbox = gleisner_polis::BwrapSandbox::new(profile, project_dir)?;
 
     if !allow_network.is_empty() {
@@ -208,19 +313,11 @@ async fn run_sandbox(
     cmd.stdout(std::process::Stdio::inherit());
     cmd.stderr(std::process::Stdio::inherit());
 
-    let status = cmd
-        .status()
-        .await
+    let child = cmd
+        .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-    let exit_code = status.code().unwrap_or(1);
-    if status.success() {
-        tracing::info!("sandboxed session completed successfully");
-    } else {
-        tracing::warn!(exit_code, "sandboxed session exited with error");
-    }
-
-    Ok(exit_code)
+    Ok(child)
 }
 
 /// Assemble the in-toto attestation statement from recorder output.

@@ -38,7 +38,7 @@ static DEFAULT_PROFILE_DIRS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
 ///
 /// Profiles are loaded from TOML files and define filesystem, network,
 /// process, and resource constraints for the sandboxed environment.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Profile {
     /// Human-readable profile name.
     pub name: String,
@@ -55,7 +55,7 @@ pub struct Profile {
 }
 
 /// Controls which filesystem paths are visible and writable.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct FilesystemPolicy {
     /// Paths mounted read-only (e.g., `/usr`, `/lib`, `/etc`).
     pub readonly_bind: Vec<PathBuf>,
@@ -69,7 +69,7 @@ pub struct FilesystemPolicy {
 }
 
 /// Controls outbound network access.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct NetworkPolicy {
     /// Default disposition: `deny` (recommended) or `allow`.
     pub default: PolicyDefault,
@@ -82,7 +82,7 @@ pub struct NetworkPolicy {
 }
 
 /// Controls process-level isolation.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProcessPolicy {
     /// Isolate PID namespace (sandboxed process sees itself as PID 1).
     pub pid_namespace: bool,
@@ -95,7 +95,7 @@ pub struct ProcessPolicy {
 }
 
 /// Resource limits enforced via cgroups v2.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ResourceLimits {
     /// Maximum memory in megabytes.
     pub max_memory_mb: u64,
@@ -110,7 +110,7 @@ pub struct ResourceLimits {
 }
 
 /// Whether the default disposition is to allow or deny.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyDefault {
     /// Allow by default.

@@ -6,10 +6,16 @@
 
 mod bwrap;
 pub mod error;
+pub mod fanotify;
+pub mod monitor;
 mod namespace;
-mod policy;
+pub mod policy;
+pub mod procmon;
 pub mod profile;
-mod resource;
+pub mod resource;
 
 pub use bwrap::BwrapSandbox;
+pub use monitor::{FsMonitorConfig, ProcMonitorConfig};
+pub use policy::FileAccessType;
 pub use profile::{Profile, resolve_profile};
+pub use resource::CgroupScope;

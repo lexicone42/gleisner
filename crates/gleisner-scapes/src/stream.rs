@@ -8,6 +8,8 @@
 //! independent receiver and processes events at its own pace.
 
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
@@ -25,7 +27,7 @@ const DEFAULT_CHANNEL_CAPACITY: usize = 4096;
 /// An event bus that distributes [`AuditEvent`]s to multiple consumers.
 pub struct EventBus {
     sender: broadcast::Sender<AuditEvent>,
-    sequence: std::sync::atomic::AtomicU64,
+    sequence: Arc<AtomicU64>,
 }
 
 impl EventBus {
@@ -41,7 +43,7 @@ impl EventBus {
         let (sender, _) = broadcast::channel(capacity);
         Self {
             sender,
-            sequence: std::sync::atomic::AtomicU64::new(0),
+            sequence: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -54,14 +56,24 @@ impl EventBus {
         self.sender.subscribe()
     }
 
+    /// Create a cloneable publisher handle for use in background tasks.
+    ///
+    /// The publisher shares the same sequence counter and broadcast
+    /// channel as this bus. Multiple publishers can coexist.
+    #[must_use]
+    pub fn publisher(&self) -> EventPublisher {
+        EventPublisher {
+            sender: self.sender.clone(),
+            sequence: Arc::clone(&self.sequence),
+        }
+    }
+
     /// Publish an event to all subscribers.
     ///
     /// Automatically assigns the next sequence number. Returns the
     /// number of active receivers that received the event.
     pub fn publish(&self, mut event: AuditEvent) -> usize {
-        let seq = self
-            .sequence
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let seq = self.sequence.fetch_add(1, Ordering::Relaxed);
         event.sequence = seq;
 
         self.sender.send(event).map_or(0, |count| {
@@ -73,7 +85,33 @@ impl EventBus {
     /// Returns the number of events published so far.
     #[must_use]
     pub fn event_count(&self) -> u64 {
-        self.sequence.load(std::sync::atomic::Ordering::Relaxed)
+        self.sequence.load(Ordering::Relaxed)
+    }
+}
+
+/// A cloneable handle for publishing events to an [`EventBus`].
+///
+/// Created via [`EventBus::publisher`]. Safe to send into
+/// `spawn_blocking` or other background tasks.
+#[derive(Clone)]
+pub struct EventPublisher {
+    sender: broadcast::Sender<AuditEvent>,
+    sequence: Arc<AtomicU64>,
+}
+
+impl EventPublisher {
+    /// Publish an event to all subscribers.
+    ///
+    /// Automatically assigns the next sequence number. Returns the
+    /// number of active receivers that received the event.
+    pub fn publish(&self, mut event: AuditEvent) -> usize {
+        let seq = self.sequence.fetch_add(1, Ordering::Relaxed);
+        event.sequence = seq;
+
+        self.sender.send(event).map_or(0, |count| {
+            debug!(sequence = seq, receivers = count, "event published");
+            count
+        })
     }
 }
 
@@ -184,5 +222,54 @@ mod tests {
         }));
 
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn event_publisher_shares_sequence_with_bus() {
+        let bus = EventBus::new();
+        let publisher = bus.publisher();
+        let mut rx = bus.subscribe();
+
+        let event = test_event(EventKind::FileRead {
+            path: PathBuf::from("/test"),
+            sha256: "abc".to_owned(),
+        });
+
+        // Publish via bus, then via publisher — sequences should be contiguous
+        bus.publish(event.clone());
+        publisher.publish(event.clone());
+        bus.publish(event);
+
+        assert_eq!(bus.event_count(), 3);
+
+        let e0 = rx.try_recv().expect("should receive event 0");
+        let e1 = rx.try_recv().expect("should receive event 1");
+        let e2 = rx.try_recv().expect("should receive event 2");
+
+        assert_eq!(e0.sequence, 0);
+        assert_eq!(e1.sequence, 1);
+        assert_eq!(e2.sequence, 2);
+    }
+
+    #[test]
+    fn cloned_publishers_share_sequence() {
+        let bus = EventBus::new();
+        let pub1 = bus.publisher();
+        let pub2 = pub1.clone();
+        let mut rx = bus.subscribe();
+
+        let event = test_event(EventKind::FileRead {
+            path: PathBuf::from("/test"),
+            sha256: "abc".to_owned(),
+        });
+
+        pub1.publish(event.clone());
+        pub2.publish(event);
+
+        let e0 = rx.try_recv().expect("should receive event 0");
+        let e1 = rx.try_recv().expect("should receive event 1");
+
+        assert_eq!(e0.sequence, 0);
+        assert_eq!(e1.sequence, 1);
     }
 }

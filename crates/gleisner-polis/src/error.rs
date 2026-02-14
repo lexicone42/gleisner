@@ -27,4 +27,17 @@ pub enum SandboxError {
     /// Landlock is not supported on this kernel.
     #[error("landlock requires Linux 5.13+, detected kernel {0}")]
     LandlockUnsupported(String),
+
+    /// A cgroup operation failed.
+    #[error("cgroup operation `{operation}` failed: {source}")]
+    CgroupError {
+        /// The cgroup operation that failed.
+        operation: String,
+        /// The underlying I/O error.
+        source: std::io::Error,
+    },
+
+    /// An event monitor encountered an error.
+    #[error("monitor error: {0}")]
+    MonitorError(String),
 }
