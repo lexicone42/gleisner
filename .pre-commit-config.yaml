@@ -1,0 +1,20 @@
+# See https://prek.j178.dev for more information
+repos:
+  - repo: builtin
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+        args: ['--all', '--', '--check']
+      - id: cargo-check
+        args: ['--all-targets']
+      - id: clippy
+        args: ['--all-targets', '--', '-D', 'warnings']
