@@ -1,16 +1,25 @@
-//! Selective network filtering via slirp4netns + iptables.
+//! Selective network filtering via slirp4netns + nftables/iptables.
 //!
 //! When a sandbox profile declares `network.default = "deny"` with
 //! `allow_domains`, this module provides domain-level outbound filtering
 //! instead of blanket network isolation. It works by:
 //!
 //! 1. Resolving domain names to IP addresses before sandbox entry
-//! 2. Starting slirp4netns to provide a TAP device inside the network namespace
-//! 3. Applying iptables rules that allow only resolved IPs on specified ports
+//! 2. Creating a user+network namespace pair via `unshare`
+//! 3. Starting slirp4netns to provide a TAP device in that namespace
+//! 4. Running bwrap inside the namespace via `nsenter` (inheriting the
+//!    filtered network instead of using `--unshare-net`)
+//! 5. Applying iptables rules inside the namespace to restrict outbound
+//!    traffic to only the resolved IPs
 //!
-//! The sandbox child runs inside `--unshare-net` with a shell wrapper that
-//! waits for the TAP device and applies firewall rules before exec-ing
-//! the actual command.
+//! ## Why not `--unshare-net` + external slirp4netns?
+//!
+//! bwrap implicitly creates a user namespace when run unprivileged.
+//! Network namespaces are *owned* by the user namespace they were created
+//! in, and `setns(CLONE_NEWNET)` requires `CAP_SYS_ADMIN` in the owning
+//! user namespace. Since slirp4netns runs in the init user namespace, it
+//! can't enter bwrap's network namespace. By creating the namespaces
+//! ourselves first, slirp4netns can attach before bwrap starts.
 
 use std::fmt::Write as _;
 use std::net::ToSocketAddrs;
@@ -97,51 +106,83 @@ impl NetworkFilter {
         })
     }
 
-    /// Generate the iptables setup script to run inside the sandbox.
+    /// Generate the firewall setup script to run inside the sandbox.
+    ///
+    /// The script auto-detects the firewall backend: prefers `nft` (nftables),
+    /// falls back to `iptables` (legacy). This covers modern kernels with only
+    /// `nf_tables` as well as traditional distros with `ip_tables`.
     ///
     /// The script:
-    /// 1. Polls for the `tap0` device (created by slirp4netns)
-    /// 2. Drops all IPv6 traffic
-    /// 3. Sets default OUTPUT policy to DROP
-    /// 4. Allows loopback and optionally DNS
-    /// 5. Allows each resolved IP+port combination
-    /// 6. Execs the wrapped command via `"$@"`
+    /// 1. Verifies `tap0` device exists (created by slirp4netns before bwrap)
+    /// 2. Sets default output policy to DROP (blocks both IPv4 and IPv6 with nft)
+    /// 3. Allows loopback and optionally DNS
+    /// 4. Allows each resolved IP+port combination
+    /// 5. Execs the wrapped command via `"$@"`
     #[must_use]
-    pub fn iptables_setup_script(&self) -> String {
+    pub fn firewall_setup_script(&self) -> String {
         let mut script = String::from(
             r#"set -e
-# Wait for tap0 (slirp4netns creates it)
-for i in $(seq 1 200); do
-  ip link show tap0 >/dev/null 2>&1 && break; sleep 0.05
-done
-ip link show tap0 >/dev/null 2>&1 || { echo "gleisner: tap0 timeout" >&2; exit 1; }
+# Verify tap0 exists (should already be created by slirp4netns)
+if ! ip link show tap0 >/dev/null 2>&1; then
+  echo "gleisner: tap0 not found — slirp4netns may have failed" >&2
+  exit 1
+fi
 
-# Block IPv6 entirely
-ip6tables -P OUTPUT DROP 2>/dev/null || true
-ip6tables -P INPUT DROP 2>/dev/null || true
-ip6tables -P FORWARD DROP 2>/dev/null || true
-
-# IPv4: restrict outbound
-iptables -P FORWARD DROP
-iptables -P INPUT ACCEPT
-iptables -P OUTPUT DROP
-iptables -A OUTPUT -o lo -j ACCEPT
+# Auto-detect firewall backend: prefer nft (modern), fall back to iptables (legacy)
+if command -v nft >/dev/null 2>&1; then
+  # nftables: single inet table handles both IPv4 and IPv6
+  nft add table inet gleisner
+  nft add chain inet gleisner input '{ type filter hook input priority 0; policy accept; }'
+  nft add chain inet gleisner forward '{ type filter hook forward priority 0; policy drop; }'
+  nft add chain inet gleisner output '{ type filter hook output priority 0; policy drop; }'
+  nft add rule inet gleisner output oifname lo accept
 "#,
         );
 
+        // nft DNS rules
         if self.allow_dns {
-            script.push_str("iptables -A OUTPUT -p udp --dport 53 -j ACCEPT\n");
-            script.push_str("iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT\n");
+            script.push_str("  nft add rule inet gleisner output udp dport 53 accept\n");
+            script.push_str("  nft add rule inet gleisner output tcp dport 53 accept\n");
         }
 
+        // nft per-IP rules
         for (ip, port) in &self.allowed_endpoints {
             let _ = writeln!(
                 script,
-                "iptables -A OUTPUT -p tcp -d {ip} --dport {port} -j ACCEPT"
+                "  nft add rule inet gleisner output ip daddr {ip} tcp dport {port} accept"
             );
         }
 
-        script.push_str("\nexec \"$@\"\n");
+        script.push_str(
+            r"else
+  # iptables legacy fallback
+  # Block IPv6 entirely
+  ip6tables -P OUTPUT DROP 2>/dev/null || true
+  ip6tables -P INPUT DROP 2>/dev/null || true
+  ip6tables -P FORWARD DROP 2>/dev/null || true
+  # IPv4: restrict outbound
+  iptables -P FORWARD DROP
+  iptables -P INPUT ACCEPT
+  iptables -P OUTPUT DROP
+  iptables -A OUTPUT -o lo -j ACCEPT
+",
+        );
+
+        // iptables DNS rules
+        if self.allow_dns {
+            script.push_str("  iptables -A OUTPUT -p udp --dport 53 -j ACCEPT\n");
+            script.push_str("  iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT\n");
+        }
+
+        // iptables per-IP rules
+        for (ip, port) in &self.allowed_endpoints {
+            let _ = writeln!(
+                script,
+                "  iptables -A OUTPUT -p tcp -d {ip} --dport {port} -j ACCEPT"
+            );
+        }
+
+        script.push_str("fi\n\nexec \"$@\"\n");
         script
     }
 
@@ -151,7 +192,7 @@ iptables -A OUTPUT -o lo -j ACCEPT
     /// inner command is passed as positional arguments after `--`.
     #[must_use]
     pub fn wrap_command(&self, inner_cmd: &[String]) -> Vec<String> {
-        let script = self.iptables_setup_script();
+        let script = self.firewall_setup_script();
         let mut wrapped = vec![
             "sh".to_owned(),
             "-c".to_owned(),
@@ -169,6 +210,86 @@ iptables -A OUTPUT -o lo -j ACCEPT
     }
 }
 
+/// Holds a user+network namespace pair created via `unshare`.
+///
+/// The namespace is kept alive by a long-running `sleep` process.
+/// slirp4netns attaches to this namespace, and bwrap enters it via
+/// `nsenter` instead of creating its own with `--unshare-net`.
+///
+/// On drop, the holder process is killed, which destroys the namespace.
+#[derive(Debug)]
+pub struct NamespaceHandle {
+    /// The `unshare ... sleep` process that holds the namespace open.
+    holder: Child,
+    /// PID of the holder (used for nsenter --target).
+    holder_pid: u32,
+}
+
+impl NamespaceHandle {
+    /// Create a new user+network namespace pair.
+    ///
+    /// Spawns `unshare --user --map-root-user --net -- sleep infinity`
+    /// to hold the namespaces open.
+    ///
+    /// # Errors
+    ///
+    /// Returns `NetworkSetupFailed` if unshare cannot be spawned.
+    pub fn create() -> Result<Self, SandboxError> {
+        let holder = Command::new("unshare")
+            .args([
+                "--user",
+                "--map-root-user",
+                "--net",
+                "--",
+                "sleep",
+                "infinity",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                SandboxError::NetworkSetupFailed(format!("failed to create network namespace: {e}"))
+            })?;
+
+        let holder_pid = holder.id();
+        debug!(holder_pid, "created user+network namespace");
+
+        // Brief wait for namespace to be ready
+        std::thread::sleep(Duration::from_millis(100));
+
+        Ok(Self { holder, holder_pid })
+    }
+
+    /// Get the PID of the namespace holder process.
+    ///
+    /// Used as the target for both slirp4netns and nsenter.
+    #[must_use]
+    pub const fn pid(&self) -> u32 {
+        self.holder_pid
+    }
+
+    /// Get the path to the holder's user namespace.
+    #[must_use]
+    pub fn user_ns_path(&self) -> String {
+        format!("/proc/{}/ns/user", self.holder_pid)
+    }
+
+    /// Get the path to the holder's network namespace.
+    #[must_use]
+    pub fn net_ns_path(&self) -> String {
+        format!("/proc/{}/ns/net", self.holder_pid)
+    }
+}
+
+impl Drop for NamespaceHandle {
+    fn drop(&mut self) {
+        debug!(holder_pid = self.holder_pid, "destroying network namespace");
+        let _ = self.holder.kill();
+        let _ = self.holder.wait();
+    }
+}
+
 /// Handle for a running slirp4netns process.
 ///
 /// Owns the child process and kills it on drop to ensure cleanup.
@@ -179,10 +300,10 @@ pub struct SlirpHandle {
 }
 
 impl SlirpHandle {
-    /// Start slirp4netns for the given PID.
+    /// Start slirp4netns for the given namespace holder PID.
     ///
     /// The process will create a `tap0` device inside the network
-    /// namespace of `child_pid` with the default slirp4netns addressing:
+    /// namespace with the default slirp4netns addressing:
     /// - Guest IP: 10.0.2.100/24
     /// - Gateway:  10.0.2.2
     /// - DNS:      10.0.2.3
@@ -190,17 +311,17 @@ impl SlirpHandle {
     /// # Errors
     ///
     /// Returns `SlirpNotFound` if the binary isn't installed, or
-    /// `NetworkSetupFailed` if spawn fails.
-    pub fn start(child_pid: u32) -> Result<Self, SandboxError> {
+    /// `NetworkSetupFailed` if spawn fails or slirp4netns exits immediately.
+    pub fn start(ns_holder_pid: u32) -> Result<Self, SandboxError> {
         which::which("slirp4netns").map_err(|_| SandboxError::SlirpNotFound)?;
 
-        info!(pid = child_pid, "starting slirp4netns");
+        info!(pid = ns_holder_pid, "starting slirp4netns");
 
-        let child = Command::new("slirp4netns")
+        let mut child = Command::new("slirp4netns")
             .args([
                 "--configure",
                 "--disable-host-loopback",
-                &child_pid.to_string(),
+                &ns_holder_pid.to_string(),
                 "tap0",
             ])
             .stdin(std::process::Stdio::null())
@@ -209,7 +330,26 @@ impl SlirpHandle {
             .spawn()
             .map_err(|e| SandboxError::NetworkSetupFailed(format!("slirp4netns spawn: {e}")))?;
 
-        debug!(slirp_pid = child.id(), "slirp4netns started");
+        let slirp_pid = child.id();
+        debug!(slirp_pid, "slirp4netns started");
+
+        // Give slirp4netns a moment to attach, then check it hasn't crashed
+        std::thread::sleep(Duration::from_millis(500));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // slirp4netns exited immediately — read stderr for reason
+                let mut stderr_output = String::new();
+                if let Some(mut stderr) = child.stderr {
+                    use std::io::Read;
+                    let _ = stderr.read_to_string(&mut stderr_output);
+                }
+                return Err(SandboxError::NetworkSetupFailed(format!(
+                    "slirp4netns exited immediately with {status}: {stderr_output}"
+                )));
+            }
+            Ok(None) => debug!(slirp_pid, "slirp4netns running"),
+            Err(e) => warn!(error = %e, "could not check slirp4netns status"),
+        }
 
         Ok(Self { child })
     }
@@ -233,6 +373,23 @@ impl Drop for SlirpHandle {
             let _ = self.child.wait();
         }
     }
+}
+
+/// Build an nsenter prefix command that enters the given namespace.
+///
+/// Returns a `Command` for `nsenter --user=... --net=... --preserve-credentials --no-fork`
+/// which should have the actual bwrap command appended to it.
+#[must_use]
+pub fn nsenter_command(ns: &NamespaceHandle) -> Command {
+    let mut cmd = Command::new("nsenter");
+    cmd.args([
+        &format!("--user={}", ns.user_ns_path()),
+        &format!("--net={}", ns.net_ns_path()),
+        "--preserve-credentials",
+        "--no-fork",
+        "--",
+    ]);
+    cmd
 }
 
 /// Scan `/proc` to find a child process of the given parent PID.
@@ -345,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn iptables_script_contains_rules() {
+    fn firewall_script_contains_both_backends() {
         let filter = NetworkFilter {
             allowed_endpoints: vec![
                 ("104.18.0.1".parse().unwrap(), 443),
@@ -354,36 +511,62 @@ mod tests {
             allow_dns: true,
         };
 
-        let script = filter.iptables_setup_script();
+        let script = filter.firewall_setup_script();
 
-        assert!(script.contains("tap0"), "should wait for tap0");
-        assert!(script.contains("ip6tables"), "should block IPv6");
-        assert!(script.contains("OUTPUT DROP"), "should drop by default");
-        assert!(script.contains("-o lo -j ACCEPT"), "should allow loopback");
-        assert!(script.contains("--dport 53"), "should allow DNS");
+        // Common checks
+        assert!(script.contains("tap0"), "should check for tap0");
+        assert!(script.contains("exec \"$@\""), "should exec inner command");
+
+        // nft backend present
+        assert!(
+            script.contains("nft add table inet gleisner"),
+            "should have nft table creation"
+        );
+        assert!(script.contains("policy drop"), "nft should drop by default");
+        assert!(
+            script.contains("oifname lo accept"),
+            "nft should allow loopback"
+        );
+        assert!(
+            script.contains("daddr 104.18.0.1 tcp dport 443"),
+            "nft should allow resolved IPs"
+        );
+        assert!(
+            script.contains("daddr 104.18.0.2 tcp dport 443"),
+            "nft should allow resolved IPs"
+        );
+
+        // iptables fallback present
+        assert!(
+            script.contains("ip6tables"),
+            "iptables fallback should block IPv6"
+        );
+        assert!(
+            script.contains("OUTPUT DROP"),
+            "iptables should drop by default"
+        );
+        assert!(
+            script.contains("-o lo -j ACCEPT"),
+            "iptables should allow loopback"
+        );
         assert!(
             script.contains("-d 104.18.0.1 --dport 443"),
-            "should allow resolved IPs"
+            "iptables should allow resolved IPs"
         );
-        assert!(
-            script.contains("-d 104.18.0.2 --dport 443"),
-            "should allow resolved IPs"
-        );
-        assert!(script.contains("exec \"$@\""), "should exec inner command");
     }
 
     #[test]
-    fn iptables_script_without_dns() {
+    fn firewall_script_without_dns() {
         let filter = NetworkFilter {
             allowed_endpoints: vec![("1.2.3.4".parse().unwrap(), 443)],
             allow_dns: false,
         };
 
-        let script = filter.iptables_setup_script();
+        let script = filter.firewall_setup_script();
 
         assert!(
-            !script.contains("--dport 53"),
-            "should not allow DNS when disabled"
+            !script.contains("dport 53"),
+            "should not allow DNS when disabled in either backend"
         );
     }
 
@@ -447,5 +630,22 @@ mod tests {
         };
         let filter = NetworkFilter::resolve(&policy, &[]).unwrap();
         assert!(!filter.has_endpoints());
+    }
+
+    #[test]
+    fn nsenter_command_has_correct_args() {
+        let ns = NamespaceHandle {
+            holder: Command::new("sleep").arg("0").spawn().expect("spawn sleep"),
+            holder_pid: 12345,
+        };
+
+        let cmd = nsenter_command(&ns);
+        let args: Vec<_> = cmd.get_args().map(|a| a.to_str().unwrap()).collect();
+
+        assert!(args.contains(&"--user=/proc/12345/ns/user"));
+        assert!(args.contains(&"--net=/proc/12345/ns/net"));
+        assert!(args.contains(&"--preserve-credentials"));
+        assert!(args.contains(&"--no-fork"));
+        // ns dropped here, kills the sleep 0
     }
 }

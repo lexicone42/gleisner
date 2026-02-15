@@ -17,7 +17,7 @@ pub mod resource;
 
 pub use bwrap::BwrapSandbox;
 pub use monitor::{FsMonitorConfig, ProcMonitorConfig};
-pub use netfilter::{NetworkFilter, SlirpHandle};
+pub use netfilter::{NamespaceHandle, NetworkFilter, SlirpHandle};
 pub use policy::FileAccessType;
 pub use profile::{Profile, resolve_profile};
 pub use resource::CgroupScope;

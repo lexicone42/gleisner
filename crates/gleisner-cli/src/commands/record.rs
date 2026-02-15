@@ -164,6 +164,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     let SandboxChild {
         mut child,
         _slirp, // kept alive until session ends
+        _ns,    // kept alive until session ends
     } = sandbox_child;
 
     let child_pid = child.id().unwrap_or(0);
@@ -290,19 +291,22 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     std::process::exit(exit_code);
 }
 
-/// Result of spawning a sandboxed child process, including an optional
-/// slirp4netns handle that must be kept alive for the session duration.
+/// Result of spawning a sandboxed child process, including optional
+/// handles that must be kept alive for the session duration.
 struct SandboxChild {
     child: tokio::process::Child,
     /// Keeps slirp4netns alive — dropped when the session ends.
     _slirp: Option<gleisner_polis::SlirpHandle>,
+    /// Keeps the user+net namespace alive — dropped when the session ends.
+    _ns: Option<gleisner_polis::NamespaceHandle>,
 }
 
 /// Spawn the sandboxed Claude Code process. Returns the child handle
 /// without waiting for exit, so monitors can start while it runs.
 ///
-/// When the profile uses selective network filtering, also starts
-/// slirp4netns and returns its handle alongside the child.
+/// When the profile uses selective network filtering, creates a
+/// user+net namespace pair, starts slirp4netns, and runs bwrap inside
+/// the namespace via nsenter.
 fn spawn_sandbox_child(
     profile: gleisner_polis::Profile,
     project_dir: PathBuf,
@@ -350,7 +354,22 @@ fn spawn_sandbox_child(
     let mut inner_command = vec![claude_bin];
     inner_command.extend(claude_args);
 
-    let std_cmd = sandbox.build_command(&inner_command, filter.as_ref());
+    let bwrap_cmd = sandbox.build_command(&inner_command, filter.as_ref());
+
+    // When filtering is active, create namespace + slirp and wrap bwrap in nsenter
+    let (ns, slirp, std_cmd) = if filter.is_some() {
+        let ns = gleisner_polis::NamespaceHandle::create()?;
+        let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
+
+        let mut nsenter = gleisner_polis::netfilter::nsenter_command(&ns);
+        nsenter.arg(bwrap_cmd.get_program());
+        nsenter.args(bwrap_cmd.get_args());
+
+        (Some(ns), Some(slirp), nsenter)
+    } else {
+        (None, None, bwrap_cmd)
+    };
+
     let mut cmd = tokio::process::Command::from(std_cmd);
     cmd.stdin(std::process::Stdio::inherit());
     cmd.stdout(std::process::Stdio::inherit());
@@ -360,26 +379,10 @@ fn spawn_sandbox_child(
         .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-    // Start slirp4netns if we have a network filter
-    let slirp = if filter.is_some() {
-        let bwrap_pid = child.id().unwrap_or(0);
-        if bwrap_pid > 0 {
-            let inner_pid = gleisner_polis::netfilter::wait_for_child_pid(
-                bwrap_pid,
-                std::time::Duration::from_secs(5),
-            )?;
-            Some(gleisner_polis::SlirpHandle::start(inner_pid)?)
-        } else {
-            tracing::warn!("could not get bwrap PID — skipping network filter");
-            None
-        }
-    } else {
-        None
-    };
-
     Ok(SandboxChild {
         child,
         _slirp: slirp,
+        _ns: ns,
     })
 }
 

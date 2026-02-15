@@ -6,7 +6,6 @@
 //! isolation but don't need cryptographic provenance.
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use clap::Args;
 use color_eyre::eyre::{Result, eyre};
@@ -113,30 +112,35 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     let mut inner_command = vec![args.claude_bin];
     inner_command.extend(args.claude_args);
 
-    let mut cmd = sandbox.build_command(&inner_command, filter.as_ref());
+    let bwrap_cmd = sandbox.build_command(&inner_command, filter.as_ref());
+
+    // When filtering is active, we need to:
+    // 1. Create a user+net namespace pair (NamespaceHandle)
+    // 2. Start slirp4netns targeting that namespace
+    // 3. Run bwrap inside the namespace via nsenter
+    // All handles must stay alive until the child exits.
+    let (_ns_handle, _slirp, mut cmd) = if let Some(ref _f) = filter {
+        let ns = gleisner_polis::NamespaceHandle::create()?;
+        let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
+
+        // Build nsenter command that wraps bwrap
+        let mut nsenter = gleisner_polis::netfilter::nsenter_command(&ns);
+        nsenter.arg(bwrap_cmd.get_program());
+        nsenter.args(bwrap_cmd.get_args());
+
+        (Some(ns), Some(slirp), nsenter)
+    } else {
+        (None, None, bwrap_cmd)
+    };
 
     // Inherit stdin/stdout/stderr so Claude Code's interactive UI works
     cmd.stdin(std::process::Stdio::inherit());
     cmd.stdout(std::process::Stdio::inherit());
     cmd.stderr(std::process::Stdio::inherit());
 
-    let mut child = cmd
-        .spawn()
+    let status = cmd
+        .status()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
-
-    // Start slirp4netns if we have a network filter
-    let _slirp = if filter.is_some() {
-        let bwrap_pid = child.id();
-        let inner_pid =
-            gleisner_polis::netfilter::wait_for_child_pid(bwrap_pid, Duration::from_secs(5))?;
-        Some(gleisner_polis::SlirpHandle::start(inner_pid)?)
-    } else {
-        None
-    };
-
-    let status = child
-        .wait()
-        .map_err(|e| eyre!("failed to wait on sandboxed process: {e}"))?;
 
     if status.success() {
         tracing::info!("sandboxed session completed successfully");

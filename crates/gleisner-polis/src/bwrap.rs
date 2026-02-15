@@ -64,12 +64,14 @@ impl BwrapSandbox {
 
     /// Build the `bwrap` invocation for the given inner command.
     ///
-    /// When a [`NetworkFilter`] is provided, the inner command is wrapped
-    /// in a shell script that waits for the slirp4netns TAP device and
-    /// applies iptables rules before exec-ing the actual command.
+    /// When a [`NetworkFilter`] is provided:
+    /// - `--unshare-net` is **skipped** (the caller must pre-create a
+    ///   namespace via [`NamespaceHandle`] and run bwrap inside it via nsenter)
+    /// - The inner command is wrapped in a shell script that applies
+    ///   iptables rules before exec-ing the actual command
     ///
-    /// The resulting [`Command`] is ready to spawn. The inner command
-    /// and its arguments are appended after all bwrap flags.
+    /// The resulting [`Command`] is ready to spawn (or to have its args
+    /// appended to an nsenter command).
     #[must_use]
     pub fn build_command(
         &self,
@@ -81,7 +83,15 @@ impl BwrapSandbox {
         // Order matters: filesystem → process → network → working dir → die-with-parent
         self.apply_filesystem_policy(&mut cmd);
         self.apply_process_policy(&mut cmd);
-        self.apply_network_policy(&mut cmd);
+
+        // When a filter is active, skip --unshare-net — the caller enters
+        // a pre-created namespace via nsenter instead
+        if filter.is_some() {
+            // iptables needs /run/xtables.lock — provide a writable /run
+            cmd.args(["--tmpfs", "/run"]);
+        } else {
+            self.apply_network_policy(&mut cmd);
+        }
 
         // Working directory inside the sandbox
         cmd.args(["--chdir", &self.project_dir.display().to_string()]);
