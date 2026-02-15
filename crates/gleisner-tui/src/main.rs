@@ -36,7 +36,11 @@ async fn main() -> color_eyre::Result<()> {
     let project_dir = args
         .iter()
         .position(|a| a == "--project-dir")
-        .and_then(|i| args.get(i + 1)).map_or_else(|| std::env::current_dir().unwrap_or_default(), PathBuf::from);
+        .and_then(|i| args.get(i + 1))
+        .map_or_else(
+            || std::env::current_dir().unwrap_or_default(),
+            PathBuf::from,
+        );
 
     // Load the gleisner security profile
     let profile = gleisner_polis::profile::resolve_profile(&profile_name)?;

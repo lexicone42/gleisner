@@ -64,7 +64,7 @@ name = "gleisner-lacerta"
 version = "0.1.0"
 edition.workspace = true        # inherits "2024"
 rust-version.workspace = true   # inherits "1.85"
-license.workspace = true        # inherits "MIT OR Apache-2.0"
+license.workspace = true        # inherits "Apache-2.0"
 
 [dependencies]
 serde.workspace = true          # no version here -- inherited

@@ -118,7 +118,7 @@ impl QueryConfig {
             .map(|p| expand_tilde(p).display().to_string())
             .collect();
 
-        let disallowed_tools = plugins.disallowed_tools.to_vec();
+        let disallowed_tools = plugins.disallowed_tools.clone();
 
         Self {
             prompt: String::new(),
