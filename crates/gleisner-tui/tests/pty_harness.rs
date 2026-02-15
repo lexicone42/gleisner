@@ -278,9 +278,9 @@ fn tui_starts_and_shows_title() {
 fn tui_shows_welcome_message() {
     let harness = TuiHarness::spawn();
 
-    // The welcome system message should show the profile name
+    // The welcome system message should show the polis (profile) name
     assert!(
-        harness.screen_contains("profile: konishi"),
+        harness.screen_contains("polis: konishi"),
         "expected welcome message on screen.\n{}",
         harness.dump_screen()
     );
@@ -297,10 +297,10 @@ fn tui_shows_security_dashboard() {
         harness.dump_screen()
     );
 
-    // Should show the "Security" title
+    // Should show the "Telemetry" title
     assert!(
-        harness.screen_contains("Security"),
-        "expected 'Security' dashboard title.\n{}",
+        harness.screen_contains("Telemetry"),
+        "expected 'Telemetry' dashboard title.\n{}",
         harness.dump_screen()
     );
 }

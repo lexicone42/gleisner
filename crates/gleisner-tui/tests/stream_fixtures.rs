@@ -1087,7 +1087,7 @@ fn sandboxed_query_builds_bwrap_command() {
         "--output-format".into(),
         "stream-json".into(),
     ];
-    let cmd = sandbox.build_command(&inner, None);
+    let cmd = sandbox.build_command(&inner, false);
 
     let args: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
 

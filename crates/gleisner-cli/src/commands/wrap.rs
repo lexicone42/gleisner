@@ -134,16 +134,22 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     let mut inner_command = vec![args.claude_bin];
     inner_command.extend(args.claude_args);
 
-    let bwrap_cmd = sandbox.build_command(&inner_command, filter.as_ref());
+    let has_filter = filter.is_some();
+    let bwrap_cmd = sandbox.build_command(&inner_command, has_filter);
 
     // When filtering is active, we need to:
     // 1. Create a user+net namespace pair (NamespaceHandle)
     // 2. Start slirp4netns targeting that namespace
-    // 3. Run bwrap inside the namespace via nsenter
+    // 3. Apply firewall rules via nsenter (before bwrap starts)
+    // 4. Run bwrap inside the namespace via nsenter
     // All handles must stay alive until the child exits.
-    let (ns_handle, slirp, mut cmd) = if let Some(ref _f) = filter {
+    let (ns_handle, slirp, mut cmd) = if let Some(ref f) = filter {
         let ns = gleisner_polis::NamespaceHandle::create()?;
         let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
+
+        // Apply firewall rules before starting bwrap — bwrap's --unshare-user
+        // creates a nested namespace that loses CAP_NET_ADMIN
+        f.apply_firewall_via_nsenter(&ns)?;
 
         // Build nsenter command that wraps bwrap
         let mut nsenter = gleisner_polis::netfilter::nsenter_command(&ns);

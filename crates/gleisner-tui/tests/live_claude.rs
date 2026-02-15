@@ -243,37 +243,37 @@ fn live_tool_use_updates_dashboard() {
     eprintln!("{}", harness.dump_screen());
 }
 
-/// Verify that the STREAMING indicator appears and disappears.
+/// Verify that the LINKED indicator appears and disappears.
 #[test]
 #[ignore = "requires claude binary and API access, costs money"]
 fn live_streaming_indicator_lifecycle() {
     let mut harness = TuiHarness::spawn();
 
-    // Confirm we start without STREAMING
+    // Confirm we start without LINKED
     assert!(
-        !harness.screen_contains("STREAMING"),
-        "STREAMING indicator should not be visible before submit"
+        !harness.screen_contains("LINKED"),
+        "LINKED indicator should not be visible before submit"
     );
 
     harness.type_str("i");
     harness.type_str("Say hello");
     harness.press_enter();
 
-    // STREAMING should appear briefly
+    // LINKED should appear briefly
     // (it may disappear fast for simple prompts, so don't require it)
 
     // Wait for response to complete
     let completed = harness.wait_for_text("claude>", Duration::from_secs(60));
     assert!(completed, "response didn't arrive");
 
-    // After response, STREAMING should be gone
+    // After response, LINKED should be gone
     // Give a moment for the state to settle
     thread::sleep(Duration::from_secs(2));
     harness.read_output();
 
     assert!(
-        !harness.screen_contains("STREAMING"),
-        "STREAMING indicator should disappear after response completes.\n{}",
+        !harness.screen_contains("LINKED"),
+        "LINKED indicator should disappear after response completes.\n{}",
         harness.dump_screen()
     );
 }

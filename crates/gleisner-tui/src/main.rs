@@ -97,21 +97,17 @@ fn run(
 ) -> color_eyre::Result<()> {
     let mut app = App::new(&profile.name);
 
-    let sandbox_indicator = if sandbox.is_some() {
-        " [sandboxed]"
-    } else {
-        ""
-    };
+    let sandbox_indicator = if sandbox.is_some() { " [embodied]" } else { "" };
     app.push_message(
         Role::System,
         format!(
-            "gleisner TUI v0.1.0 — profile: {} — {}{}",
-            profile.name, profile.description, sandbox_indicator
+            "\u{27E8}gleisner\u{27E9} suit active — polis: {}{sandbox_indicator}",
+            profile.name,
         ),
     );
     app.push_message(
         Role::System,
-        "Press 'i' to enter insert mode, type a prompt, press Enter to send. Try /help for commands.",
+        "Channel ready. 'i' to open, Enter to transmit. /help for suit commands.",
     );
     if debug_mode {
         let log_path = dirs_log_dir().join("tui-debug.log");

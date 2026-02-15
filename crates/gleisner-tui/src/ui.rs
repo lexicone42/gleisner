@@ -21,7 +21,8 @@ use ratatui::widgets::{
 use crate::app::{App, InputMode, Message, Role, SessionState};
 
 /// The title shown in the top border.
-const TITLE: &str = " gleisner ";
+/// Angle brackets evoke a digital tag — the Gleisner suit's identifier.
+const TITLE: &str = " \u{27E8}gleisner\u{27E9} ";
 
 /// Content indent (two spaces for all message content lines).
 const INDENT: &str = "  ";
@@ -242,7 +243,7 @@ fn role_badge(role: Role) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ),
         Role::System => (
-            " sys ",
+            " suit ",
             Style::default()
                 .fg(Color::Black)
                 .bg(Color::Yellow)
@@ -428,13 +429,13 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
         left_spans.push(Span::raw(" "));
     }
 
-    // Streaming indicator.
+    // Streaming indicator — "LINKED" means the polis link is active.
     if app.session_state == SessionState::Streaming {
         left_spans.push(Span::styled(
-            " STREAMING ",
+            " LINKED ",
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Yellow)
+                .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ));
         left_spans.push(Span::raw(" "));
@@ -543,7 +544,7 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![Span::raw("  Exo-self:    "), exo_self_indicator]),
         Line::from(""),
         Line::from(Span::styled(
-            "  \u{2500}\u{2500} Activity \u{2500}\u{2500}",
+            "  \u{2500}\u{2500} Sensors \u{2500}\u{2500}",
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
@@ -554,7 +555,7 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(format!("  Plugins:     {}", sec.plugin_count)),
         Line::from(""),
         Line::from(Span::styled(
-            "  \u{2500}\u{2500} Session \u{2500}\u{2500}",
+            "  \u{2500}\u{2500} Link \u{2500}\u{2500}",
             Style::default()
                 .fg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),
@@ -564,7 +565,7 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
     ];
 
     let block = Block::default()
-        .title(" Security ")
+        .title(" Telemetry ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta));
 

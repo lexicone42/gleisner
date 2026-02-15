@@ -400,12 +400,18 @@ fn spawn_sandbox_child(
     let mut inner_command = vec![claude_bin];
     inner_command.extend(claude_args);
 
-    let bwrap_cmd = sandbox.build_command(&inner_command, filter.as_ref());
+    let has_filter = filter.is_some();
+    let bwrap_cmd = sandbox.build_command(&inner_command, has_filter);
 
-    // When filtering is active, create namespace + slirp and wrap bwrap in nsenter
-    let (ns, slirp, std_cmd) = if filter.is_some() {
+    // When filtering is active, create namespace + slirp, apply firewall
+    // rules via nsenter, and wrap bwrap in nsenter
+    let (ns, slirp, std_cmd) = if let Some(ref f) = filter {
         let ns = gleisner_polis::NamespaceHandle::create()?;
         let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
+
+        // Apply firewall rules before starting bwrap — bwrap's --unshare-user
+        // creates a nested namespace that loses CAP_NET_ADMIN
+        f.apply_firewall_via_nsenter(&ns)?;
 
         let mut nsenter = gleisner_polis::netfilter::nsenter_command(&ns);
         nsenter.arg(bwrap_cmd.get_program());

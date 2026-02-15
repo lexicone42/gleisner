@@ -13,7 +13,6 @@ use std::process::Command;
 use tracing::{debug, info};
 
 use crate::error::SandboxError;
-use crate::netfilter::NetworkFilter;
 use crate::profile::{PolicyDefault, Profile};
 
 /// Constructs and executes a bubblewrap sandbox from a [`Profile`].
@@ -64,32 +63,25 @@ impl BwrapSandbox {
 
     /// Build the `bwrap` invocation for the given inner command.
     ///
-    /// When a [`NetworkFilter`] is provided:
+    /// When `use_external_netns` is true:
     /// - `--unshare-net` is **skipped** (the caller must pre-create a
     ///   namespace via [`NamespaceHandle`] and run bwrap inside it via nsenter)
-    /// - The inner command is wrapped in a shell script that applies
-    ///   iptables rules before exec-ing the actual command
+    /// - Firewall rules must be applied separately via
+    ///   [`NetworkFilter::apply_firewall_via_nsenter`] before spawning bwrap
     ///
     /// The resulting [`Command`] is ready to spawn (or to have its args
     /// appended to an nsenter command).
     #[must_use]
-    pub fn build_command(
-        &self,
-        inner_command: &[String],
-        filter: Option<&NetworkFilter>,
-    ) -> Command {
+    pub fn build_command(&self, inner_command: &[String], use_external_netns: bool) -> Command {
         let mut cmd = Command::new("bwrap");
 
         // Order matters: filesystem → process → network → working dir → die-with-parent
         self.apply_filesystem_policy(&mut cmd);
         self.apply_process_policy(&mut cmd);
 
-        // When a filter is active, skip --unshare-net — the caller enters
-        // a pre-created namespace via nsenter instead
-        if filter.is_some() {
-            // iptables needs /run/xtables.lock — provide a writable /run
-            cmd.args(["--tmpfs", "/run"]);
-        } else {
+        // When an external namespace is active, skip --unshare-net — the
+        // caller enters a pre-created namespace via nsenter instead
+        if !use_external_netns {
             self.apply_network_policy(&mut cmd);
         }
 
@@ -99,14 +91,7 @@ impl BwrapSandbox {
         // Kill sandbox if parent process dies — prevents orphaned sandboxes
         cmd.arg("--die-with-parent");
 
-        // The actual command to run inside the sandbox — optionally wrapped
-        // with iptables setup when selective network filtering is active
-        if let Some(f) = filter {
-            let wrapped = f.wrap_command(inner_command);
-            cmd.args(wrapped);
-        } else {
-            cmd.args(inner_command);
-        }
+        cmd.args(inner_command);
 
         debug!(
             args = ?cmd.get_args().collect::<Vec<_>>(),
@@ -353,7 +338,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["echo".to_owned(), "hello".to_owned()], None);
+        let cmd = sandbox.build_command(&["echo".to_owned(), "hello".to_owned()], false);
         let args = args_of(&cmd);
 
         assert!(
@@ -389,7 +374,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()], None);
+        let cmd = sandbox.build_command(&["true".to_owned()], false);
         let args = args_of(&cmd);
 
         assert!(
@@ -408,7 +393,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()], None);
+        let cmd = sandbox.build_command(&["true".to_owned()], false);
         let args = args_of(&cmd);
 
         assert!(
@@ -427,7 +412,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()], None);
+        let cmd = sandbox.build_command(&["true".to_owned()], false);
         let args = args_of(&cmd);
 
         assert!(

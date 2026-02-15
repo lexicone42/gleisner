@@ -434,14 +434,19 @@ fn build_sandboxed_command(
     let mut full_inner: Vec<String> = vec![config.claude_bin.clone()];
     full_inner.extend(inner_args);
 
-    // Build bwrap command — with or without NetworkFilter
-    let bwrap_cmd = sandbox.build_command(&full_inner, filter.as_ref());
+    // Build bwrap command — pass bool indicating external netns
+    let has_filter = filter.is_some();
+    let bwrap_cmd = sandbox.build_command(&full_inner, has_filter);
 
     // ── Set up namespace + slirp4netns when filtering ───────────
     // These handles must stay alive for the subprocess duration.
-    let (ns_handle, slirp_handle, tokio_cmd) = if filter.is_some() {
+    let (ns_handle, slirp_handle, tokio_cmd) = if let Some(ref f) = filter {
         let ns = gleisner_polis::NamespaceHandle::create()?;
         let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
+
+        // Apply firewall rules before starting bwrap — bwrap's --unshare-user
+        // creates a nested namespace that loses CAP_NET_ADMIN
+        f.apply_firewall_via_nsenter(&ns)?;
 
         // Wrap bwrap in nsenter to enter the pre-created namespace
         let mut nsenter = netfilter::nsenter_command(&ns);

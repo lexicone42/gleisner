@@ -210,10 +210,17 @@ exec "$@"
         script
     }
 
-    /// Wrap an inner command with the iptables setup script.
+    /// Wrap an inner command with the firewall setup script.
     ///
     /// Returns a command vector where the first element is `sh` and the
     /// inner command is passed as positional arguments after `--`.
+    ///
+    /// **Note:** This runs the firewall setup and inner command in the same
+    /// process. The caller must ensure the process has `CAP_NET_ADMIN` in
+    /// the network namespace (e.g., by running as root in a user namespace).
+    /// If the inner command runs inside a nested user namespace (like bwrap
+    /// with `--unshare-user`), use [`Self::apply_firewall_via_nsenter`]
+    /// instead.
     #[must_use]
     pub fn wrap_command(&self, inner_cmd: &[String]) -> Vec<String> {
         let script = self.firewall_setup_script();
@@ -225,6 +232,53 @@ exec "$@"
         ];
         wrapped.extend_from_slice(inner_cmd);
         wrapped
+    }
+
+    /// Apply firewall rules inside the namespace as a separate step.
+    ///
+    /// Runs the firewall setup script via `nsenter` into the given namespace
+    /// as root (the namespace creator), then returns. The actual sandboxed
+    /// command can then run in a nested user namespace without needing
+    /// `CAP_NET_ADMIN`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the firewall script fails (neither nftables nor
+    /// iptables available, or rules cannot be applied).
+    pub fn apply_firewall_via_nsenter(&self, ns: &NamespaceHandle) -> Result<(), SandboxError> {
+        // Build a script that applies firewall rules and exits (no exec "$@")
+        let setup_script = self.firewall_setup_script().replace("exec \"$@\"\n", "");
+
+        let mut cmd = Command::new("nsenter");
+        cmd.args([
+            &format!("--user={}", ns.user_ns_path()),
+            &format!("--net={}", ns.net_ns_path()),
+            "--preserve-credentials",
+            "--no-fork",
+            "--",
+            "sh",
+            "-c",
+            &setup_script,
+        ]);
+
+        debug!("applying firewall rules via nsenter");
+        let output = cmd.output().map_err(|e| {
+            SandboxError::NetworkSetupFailed(format!(
+                "failed to run nsenter for firewall setup: {e}"
+            ))
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SandboxError::NetworkSetupFailed(format!(
+                "firewall setup failed (exit {}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr.trim()
+            )));
+        }
+
+        info!("firewall rules applied successfully");
+        Ok(())
     }
 
     /// Returns true if there are any resolved endpoints.
