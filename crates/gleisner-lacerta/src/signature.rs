@@ -41,6 +41,9 @@ pub fn verify_signature(
             certificate_chain,
             rekor_log_id,
         ),
+        VerificationMaterial::None => Err(VerificationError::InvalidSignature(
+            "no verification material — unsigned bundle".to_owned(),
+        )),
     }
 }
 

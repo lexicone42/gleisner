@@ -290,6 +290,7 @@ mod tests {
                     network_policy: "deny".to_owned(),
                     filesystem_deny_count: 4,
                 },
+                chain: None,
             },
         }
     }

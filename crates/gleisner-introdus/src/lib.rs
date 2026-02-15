@@ -5,6 +5,7 @@
 //! them via Sigstore or local keys.
 
 pub mod bundle;
+pub mod chain;
 pub mod claude_code;
 pub mod error;
 pub mod metadata;

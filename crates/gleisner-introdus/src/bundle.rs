@@ -34,4 +34,7 @@ pub enum VerificationMaterial {
         /// PEM-encoded public key.
         public_key: String,
     },
+    /// No verification material (unsigned bundle, used in testing/chains).
+    #[serde(rename = "none")]
+    None,
 }

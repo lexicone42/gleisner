@@ -23,6 +23,10 @@ pub struct PolicyInput {
     pub builder_id: Option<String>,
     /// Whether verification materials are present.
     pub has_materials: bool,
+    /// Whether this attestation has a parent (is part of a chain).
+    pub has_parent_attestation: bool,
+    /// Number of links in the attestation chain (if verified).
+    pub chain_length: Option<u64>,
 }
 
 /// Result of a single policy rule evaluation.
@@ -60,6 +64,8 @@ pub struct BuiltinPolicy {
     pub allowed_builders: Option<Vec<String>>,
     /// Require that verification materials are present.
     pub require_materials: Option<bool>,
+    /// Require that the attestation has a parent (is part of a chain).
+    pub require_parent_attestation: Option<bool>,
 }
 
 impl BuiltinPolicy {
@@ -154,6 +160,18 @@ impl PolicyEngine for BuiltinPolicy {
             });
         }
 
+        if self.require_parent_attestation == Some(true) {
+            results.push(PolicyResult {
+                rule: "require_parent_attestation".to_owned(),
+                passed: input.has_parent_attestation,
+                message: if input.has_parent_attestation {
+                    "parent attestation present (part of chain)".to_owned()
+                } else {
+                    "no parent attestation (not part of a chain)".to_owned()
+                },
+            });
+        }
+
         Ok(results)
     }
 }
@@ -214,6 +232,12 @@ pub fn extract_policy_input(payload: &serde_json::Value) -> PolicyInput {
         .and_then(|m| m.as_array())
         .is_some_and(|arr| !arr.is_empty());
 
+    let has_parent_attestation = predicate
+        .and_then(|p| p.get("gleisner:chain"))
+        .and_then(|c| c.get("parentDigest"))
+        .and_then(|d| d.as_str())
+        .is_some_and(|s| !s.is_empty());
+
     PolicyInput {
         sandboxed,
         sandbox_profile,
@@ -221,6 +245,8 @@ pub fn extract_policy_input(payload: &serde_json::Value) -> PolicyInput {
         has_audit_log,
         builder_id,
         has_materials,
+        has_parent_attestation,
+        chain_length: None, // only set during chain verification
     }
 }
 
@@ -236,6 +262,8 @@ mod tests {
             has_audit_log: audit,
             builder_id: Some("gleisner-cli/0.1.0".to_owned()),
             has_materials: true,
+            has_parent_attestation: false,
+            chain_length: None,
         }
     }
 
@@ -371,5 +399,59 @@ mod tests {
         assert!(input.has_audit_log);
         assert_eq!(input.builder_id.as_deref(), Some("gleisner-cli/0.1.0"));
         assert!(input.has_materials);
+    }
+
+    #[test]
+    fn require_parent_attestation_pass() {
+        let mut input = make_input(true, "konishi", true);
+        input.has_parent_attestation = true;
+
+        let policy = BuiltinPolicy {
+            require_parent_attestation: Some(true),
+            ..Default::default()
+        };
+        let results = policy.evaluate(&input).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
+    }
+
+    #[test]
+    fn require_parent_attestation_fail() {
+        let input = make_input(true, "konishi", true);
+        // has_parent_attestation defaults to false in make_input
+
+        let policy = BuiltinPolicy {
+            require_parent_attestation: Some(true),
+            ..Default::default()
+        };
+        let results = policy.evaluate(&input).unwrap();
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed);
+    }
+
+    #[test]
+    fn extract_chain_from_payload() {
+        let payload = serde_json::json!({
+            "predicate": {
+                "builder": { "id": "gleisner-cli/0.1.0" },
+                "invocation": {
+                    "environment": { "sandboxed": true }
+                },
+                "metadata": {
+                    "buildStartedOn": "2025-01-01T00:00:00Z",
+                    "buildFinishedOn": "2025-01-01T00:02:00Z"
+                },
+                "gleisner:auditLogDigest": "abc123",
+                "gleisner:sandboxProfile": { "name": "strict" },
+                "materials": [],
+                "gleisner:chain": {
+                    "parentDigest": "deadbeef",
+                    "parentPath": "attestation-001.json"
+                }
+            }
+        });
+
+        let input = extract_policy_input(&payload);
+        assert!(input.has_parent_attestation);
     }
 }

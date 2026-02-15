@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use gleisner_introdus::claude_code::ClaudeCodeContext;
 use gleisner_introdus::metadata;
 use gleisner_introdus::provenance::{
-    BuildMetadata, Builder, ClaudeCodeEnvironment, Completeness, GleisnerProvenance, Invocation,
-    SandboxProfileSummary,
+    BuildMetadata, Builder, ChainMetadata, ClaudeCodeEnvironment, Completeness, GleisnerProvenance,
+    Invocation, SandboxProfileSummary,
 };
 use gleisner_introdus::recorder::{self, RecorderOutput};
 use gleisner_introdus::signer::{LocalSigner, Signer, default_key_path};
@@ -76,6 +76,10 @@ pub struct RecordArgs {
     /// Disable cgroup resource limits.
     #[arg(long)]
     pub no_cgroups: bool,
+
+    /// Don't link to previous attestation (start a new chain).
+    #[arg(long)]
+    pub no_chain: bool,
 }
 
 /// Execute the `record` command.
@@ -270,13 +274,41 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
         "session recording complete"
     );
 
-    // ── 11. Assemble and sign ────────────────────────────────────────
+    // ── 11. Chain: find parent attestation ─────────────────────────
+    let chain_metadata = if args.no_chain {
+        None
+    } else {
+        match gleisner_introdus::chain::find_latest_attestation(&gleisner_dir) {
+            Ok(Some(link)) => {
+                tracing::info!(
+                    parent = %link.path.display(),
+                    digest = %link.payload_digest,
+                    "linking to parent attestation"
+                );
+                Some(ChainMetadata {
+                    parent_digest: link.payload_digest,
+                    parent_path: link.path.display().to_string(),
+                })
+            }
+            Ok(None) => {
+                tracing::info!("no previous attestation found — starting new chain");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to discover parent attestation — starting new chain");
+                None
+            }
+        }
+    };
+
+    // ── 12. Assemble and sign ────────────────────────────────────────
     let statement = assemble_statement(
         recorder_output,
         git_state.as_ref(),
         cc_context,
         sandbox_summary,
         exit_code,
+        chain_metadata,
     );
 
     write_attestation(
@@ -395,6 +427,7 @@ fn assemble_statement(
     cc_context: ClaudeCodeContext,
     sandbox_summary: SandboxProfileSummary,
     exit_code: i32,
+    chain: Option<ChainMetadata>,
 ) -> InTotoStatement {
     let mut materials = recorder_output.materials;
     if let Some(gs) = git_state {
@@ -445,6 +478,7 @@ fn assemble_statement(
             materials,
             audit_log_digest: recorder_output.audit_log_digest,
             sandbox_profile: sandbox_summary,
+            chain,
         },
     }
 }

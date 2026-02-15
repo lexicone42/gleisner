@@ -38,6 +38,10 @@ pub struct VerifyArgs {
     /// Output results as JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// Verify the attestation chain (walk parent links).
+    #[arg(long)]
+    pub chain: bool,
 }
 
 /// Execute the verify command.
@@ -62,6 +66,8 @@ pub fn execute(args: VerifyArgs) -> Result<()> {
         audit_log_path: args.audit_log,
         check_files_base,
         policies,
+        check_chain: args.chain,
+        chain_dir: None, // defaults to same directory as the bundle
     };
 
     let verifier = Verifier::new(config);

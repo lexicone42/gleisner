@@ -321,3 +321,95 @@ version = "0.1.0"
     let json: serde_json::Value = serde_json::from_str(&content).expect("valid JSON file");
     assert_eq!(json["bomFormat"], "CycloneDX");
 }
+
+// ─── chain verification tests ───────────────────────────────
+
+/// Create an unsigned attestation bundle with optional chain metadata.
+fn create_unsigned_bundle(
+    dir: &Path,
+    filename: &str,
+    chain: Option<(&str, &str)>,
+    finished_on: &str,
+) -> std::path::PathBuf {
+    let chain_json = match chain {
+        Some((digest, path)) => {
+            format!(r#","gleisner:chain":{{"parentDigest":"{digest}","parentPath":"{path}"}}"#,)
+        }
+        None => String::new(),
+    };
+
+    let payload = format!(
+        r#"{{"_type":"https://in-toto.io/Statement/v1","subject":[],"predicateType":"https://slsa.dev/provenance/v1","predicate":{{"buildType":"https://gleisner.dev/GleisnerProvenance/v1","builder":{{"id":"test/0.1.0"}},"invocation":{{"parameters":{{}},"environment":{{"sandboxed":true}}}},"metadata":{{"buildStartedOn":"{finished_on}","buildFinishedOn":"{finished_on}","completeness":{{"parameters":true,"environment":true,"materials":false}}}},"materials":[],"gleisner:auditLogDigest":"","gleisner:sandboxProfile":{{"name":"default"}}{chain_json}}}}}"#,
+    );
+
+    let bundle = gleisner_introdus::bundle::AttestationBundle {
+        payload,
+        signature: String::new(),
+        verification_material: gleisner_introdus::bundle::VerificationMaterial::None,
+    };
+
+    let bundle_path = dir.join(filename);
+    let json = serde_json::to_string_pretty(&bundle).unwrap();
+    std::fs::write(&bundle_path, &json).unwrap();
+    bundle_path
+}
+
+#[test]
+fn verify_chain_walks_linked_attestations() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Create a 3-link chain of unsigned bundles.
+    let path1 = create_unsigned_bundle(
+        dir.path(),
+        "attestation-001.json",
+        None,
+        "2025-01-01T00:00:00Z",
+    );
+    let b1: gleisner_introdus::bundle::AttestationBundle =
+        serde_json::from_str(&std::fs::read_to_string(&path1).unwrap()).unwrap();
+    let d1 = gleisner_introdus::chain::compute_payload_digest(&b1);
+
+    let path2 = create_unsigned_bundle(
+        dir.path(),
+        "attestation-002.json",
+        Some((&d1, "attestation-001.json")),
+        "2025-02-01T00:00:00Z",
+    );
+    let b2: gleisner_introdus::bundle::AttestationBundle =
+        serde_json::from_str(&std::fs::read_to_string(&path2).unwrap()).unwrap();
+    let d2 = gleisner_introdus::chain::compute_payload_digest(&b2);
+
+    let path3 = create_unsigned_bundle(
+        dir.path(),
+        "attestation-003.json",
+        Some((&d2, "attestation-002.json")),
+        "2025-03-01T00:00:00Z",
+    );
+
+    // Verify chain from the latest link (signature will fail, but chain should work).
+    gleisner()
+        .args(["verify", "--chain", path3.to_str().unwrap()])
+        .assert()
+        // Verification will fail due to unsigned bundles, but chain output should appear.
+        .failure()
+        .stdout(predicate::str::contains("3 link(s) verified"));
+}
+
+#[test]
+fn verify_chain_reports_broken_link() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Create bundle 3 pointing to a nonexistent parent.
+    let path3 = create_unsigned_bundle(
+        dir.path(),
+        "attestation-003.json",
+        Some(("deadbeefdeadbeef", "attestation-002.json")),
+        "2025-03-01T00:00:00Z",
+    );
+
+    gleisner()
+        .args(["verify", "--chain", path3.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("broken chain").or(predicate::str::contains("1 link(s)")));
+}

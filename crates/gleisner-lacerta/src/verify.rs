@@ -24,6 +24,10 @@ pub struct VerifyConfig {
     pub check_files_base: Option<PathBuf>,
     /// Policy engines to evaluate.
     pub policies: Vec<Box<dyn PolicyEngine>>,
+    /// Verify the attestation chain (walk parent links).
+    pub check_chain: bool,
+    /// Directory to search for chain parents (defaults to same dir as bundle).
+    pub chain_dir: Option<PathBuf>,
 }
 
 /// Outcome of a single verification check.
@@ -223,7 +227,61 @@ impl Verifier {
     pub fn verify_file(&self, path: &Path) -> Result<VerificationReport, VerificationError> {
         let data = std::fs::read_to_string(path)?;
         let bundle: AttestationBundle = serde_json::from_str(&data)?;
-        Ok(self.verify(&bundle))
+        let mut report = self.verify(&bundle);
+
+        if self.config.check_chain {
+            let chain_dir = self
+                .config
+                .chain_dir
+                .clone()
+                .or_else(|| path.parent().map(Path::to_path_buf))
+                .unwrap_or_else(|| PathBuf::from("."));
+
+            Self::verify_chain(path, &chain_dir, &mut report.outcomes);
+            // Re-evaluate passed status after chain checks.
+            report.passed = !report.outcomes.iter().any(VerificationOutcome::is_fail);
+        }
+
+        Ok(report)
+    }
+
+    /// Verify the attestation chain by walking parent links.
+    fn verify_chain(bundle_path: &Path, chain_dir: &Path, outcomes: &mut Vec<VerificationOutcome>) {
+        use gleisner_introdus::chain;
+
+        match chain::walk_chain(bundle_path, chain_dir) {
+            Ok(entries) => {
+                let chain_len = entries.len();
+                outcomes.push(VerificationOutcome::Pass(format!(
+                    "attestation chain: {chain_len} link(s) verified"
+                )));
+
+                // Check each link's parent digest integrity.
+                for (i, entry) in entries.iter().enumerate() {
+                    if let Some(ref parent_digest) = entry.parent_digest {
+                        // Find the next entry in the chain (which should be the parent).
+                        if let Some(parent_entry) = entries.get(i + 1) {
+                            if parent_entry.payload_digest != *parent_digest {
+                                outcomes.push(VerificationOutcome::Fail(format!(
+                                    "chain link {i}: parent digest mismatch (expected {}, found {})",
+                                    &parent_digest[..8.min(parent_digest.len())],
+                                    &parent_entry.payload_digest[..8.min(parent_entry.payload_digest.len())]
+                                )));
+                            }
+                        } else {
+                            outcomes.push(VerificationOutcome::Skip(format!(
+                                "chain link {i}: parent attestation not found (broken chain)"
+                            )));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                outcomes.push(VerificationOutcome::Fail(format!(
+                    "failed to walk attestation chain: {e}"
+                )));
+            }
+        }
     }
 }
 

@@ -29,6 +29,10 @@ pub struct GleisnerProvenance {
     /// Summary of the sandbox configuration used.
     #[serde(rename = "gleisner:sandboxProfile")]
     pub sandbox_profile: SandboxProfileSummary,
+
+    /// Digest of the parent attestation's payload, linking sessions into a chain.
+    #[serde(rename = "gleisner:chain", skip_serializing_if = "Option::is_none")]
+    pub chain: Option<ChainMetadata>,
 }
 
 impl GleisnerProvenance {
@@ -118,4 +122,14 @@ pub struct SandboxProfileSummary {
     pub network_policy: String,
     /// Number of denied filesystem paths.
     pub filesystem_deny_count: usize,
+}
+
+/// Chain metadata linking this attestation to its predecessor.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChainMetadata {
+    /// SHA-256 of the parent attestation bundle's `payload` field.
+    pub parent_digest: String,
+    /// Path to the parent attestation bundle (for discovery).
+    pub parent_path: String,
 }
