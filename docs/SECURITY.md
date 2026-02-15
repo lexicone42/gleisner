@@ -381,8 +381,16 @@ Verification checks:
 - **Chain completeness:** If a `parentDigest` references a bundle that cannot
   be found in the chain directory, the verifier reports:
   `"chain link N: parent attestation not found (broken chain)"`.
-- **Loop prevention:** The walk is bounded by the number of bundles in the
-  directory plus one, preventing infinite loops on malformed chains.
+- **Cycle detection:** The chain walker tracks visited payload digests in a
+  `HashSet`. If a digest is encountered twice, the walk terminates with a
+  warning, preventing infinite loops on cyclic chains.
+- **Unsigned link detection:** Each chain entry tracks whether its bundle has
+  `VerificationMaterial` other than `None`. If any link in the chain is
+  unsigned, the verifier emits a failure:
+  `"chain contains N unsigned link(s) (VerificationMaterial::None)"`.
+- **Duplicate digest handling:** When building the digest index,
+  `build_digest_index()` keeps the first file for each payload digest and
+  logs a warning about duplicates, ensuring deterministic chain walking.
 
 ### 6.3 What "Broken Chain" Means
 

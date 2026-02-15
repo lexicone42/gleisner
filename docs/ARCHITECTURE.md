@@ -344,12 +344,24 @@ graph LR
 ```
 walk_chain(start, dir):
     index = build_digest_index(dir)   // map: payload_digest -> file_path
+                                      // duplicates: keeps first, warns about later
     chain = []
+    visited = HashSet::new()          // cycle detection
     current = start
 
     for _ in 0..index.len()+1:        // safety bound prevents infinite loops
         bundle = load(current)
+        digest = sha256(bundle.payload)
+
+        if digest in visited:
+            warn("cycle detected")
+            break                      // cycle in chain
+
+        visited.insert(digest)
         entry = extract_metadata(bundle)
+        entry.is_signed = (bundle.verification_material != None)
+        if not entry.is_signed:
+            warn("unsigned bundle in chain")
         chain.push(entry)
 
         parent_digest = extract_parent_digest(bundle)
@@ -363,10 +375,13 @@ walk_chain(start, dir):
     return chain                       // newest-first ordering
 ```
 
-The algorithm pre-loads all bundles in the directory into a digest-indexed `HashMap` for O(1) parent lookup. Chain walks terminate on:
+The algorithm pre-loads all bundles in the directory into a digest-indexed `HashMap` for O(1) parent lookup. Duplicate payload digests are handled deterministically (first file wins, duplicates logged as warnings). Chain walks terminate on:
 - Reaching a root node (no `gleisner:chain` field)
 - A broken chain (parent digest not found in any file)
-- The safety bound (prevents infinite loops from malformed cyclic chains)
+- A cycle (payload digest already visited)
+- The safety bound (prevents infinite loops from malformed chains)
+
+Each `ChainEntry` includes an `is_signed` flag indicating whether the bundle has `VerificationMaterial` other than `None`. Unsigned bundles are logged as warnings during chain walking and flagged as failures during verification.
 
 ### Payload Digest vs Bundle Digest
 
@@ -448,6 +463,8 @@ The `CgroupScope` creates a dedicated cgroup under `/sys/fs/cgroup/gleisner-{id}
 | `memory.max` | `max_memory_mb * 1024 * 1024` | Hard memory limit |
 | `cpu.max` | `"(max_cpu_percent * 1000) 100000"` | CPU quota per 100ms period |
 | `pids.max` | `max_pids` | Maximum process count |
+
+Zero values are treated as "no limit" -- if a resource field is `0`, the corresponding cgroup control is not written and a warning is logged. This prevents accidental denial-of-service from writing `0` to `memory.max` (which would mean zero bytes allowed) or `pids.max` (which would prevent any process creation).
 
 On drop, processes are migrated to the parent cgroup and the directory is removed.
 
@@ -564,7 +581,7 @@ pub trait PolicyEngine: Send + Sync {
 |------|-------|--------|
 | `require_sandbox` | `sandboxed` bool | Require session was sandboxed |
 | `allowed_profiles` | `sandbox_profile` name | Restrict to named profiles |
-| `max_session_duration_secs` | Computed from timestamps | Cap session length |
+| `max_session_duration_secs` | Computed from timestamps | Cap session length (must be positive; non-positive values produce a validation failure) |
 | `require_audit_log` | `has_audit_log` | Require audit log present |
 | `allowed_builders` | `builder_id` | Restrict builder identity |
 | `require_materials` | `has_materials` | Require input materials |
@@ -574,7 +591,10 @@ pub trait PolicyEngine: Send + Sync {
 
 ### Chain Verification
 
-When `--check-chain` is enabled, the verifier walks the attestation chain via `walk_chain()` and validates that each link's parent digest matches the actual payload digest of the referenced parent bundle.
+When `--check-chain` is enabled, the verifier walks the attestation chain via `walk_chain()` and validates:
+- Each link's parent digest matches the actual payload digest of the referenced parent bundle
+- No unsigned links exist in the chain (bundles with `VerificationMaterial::None` produce a `Fail` outcome)
+- The chain is cycle-free (cycle detection via visited digest tracking in `walk_chain()`)
 
 ### VerificationReport
 

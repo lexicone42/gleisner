@@ -792,9 +792,21 @@ project's attestation history. Deleted links create undetectable gaps.
   from a given bundle backward, verifying each signature and checking that
   `parentDigest` matches `SHA-256(parent.payload)`. Detects modified or
   deleted intermediate bundles.
+- `gleisner-introdus` cycle detection: `walk_chain()` tracks visited payload
+  digests in a `HashSet`. If a cycle is detected (duplicate digest), the walk
+  terminates with a warning, preventing infinite loops from malformed or
+  maliciously crafted chains.
+- `gleisner-introdus` duplicate digest handling: `build_digest_index()` uses
+  deterministic insertion (first file wins) and logs warnings about duplicate
+  payload digests, preventing non-deterministic chain walking when multiple
+  files share the same payload digest.
 - `gleisner-introdus` chain linking: uses `compute_payload_digest()` on the
   canonical `payload` field (not the full bundle), making the digest
   deterministic and signature-independent.
+- `gleisner-lacerta` unsigned link detection: `verify_chain()` checks the
+  `is_signed` flag on each `ChainEntry` and emits a `Fail` outcome if any
+  link in the chain has `VerificationMaterial::None`, surfacing unsigned
+  bundles that weaken chain integrity.
 - `gleisner-lacerta` policy engine: `require_parent_attestation` policy rule
   can reject attestations that lack chain links, detecting `--no-chain`
   usage.
@@ -804,10 +816,10 @@ project's attestation history. Deleted links create undetectable gaps.
 
 **Residual Risk:** Medium -- chain verification is opt-in (`--chain` flag).
 Without it, individual attestations are verified in isolation and chain
-manipulation is undetectable. Additionally, `VerificationMaterial::None`
-bundles cannot have their signatures verified, so their chain participation
-is purely digest-based. Organizations should enforce `--chain` verification
-in CI/CD and disallow unsigned attestations via policy.
+manipulation is undetectable. Cycle detection and unsigned link detection
+mitigate the most dangerous chain manipulation attacks, but organizations
+should still enforce `--chain` verification in CI/CD and disallow unsigned
+attestations via policy.
 
 ---
 
@@ -901,6 +913,11 @@ entire attestation trust model. Any session history can be fabricated.
   reported with a warning during `verify`. The signature verification step
   is skipped (not failed), and the outcome includes a clear indication that
   no signature was present.
+- `gleisner-lacerta` chain verification: when `--chain` is enabled,
+  `verify_chain()` checks the `is_signed` flag on each `ChainEntry` and
+  emits a `Fail` outcome for any unsigned link in the chain, producing:
+  `"chain contains N unsigned link(s) (VerificationMaterial::None)"`. This
+  prevents unsigned bundles from silently poisoning otherwise-signed chains.
 - `gleisner-lacerta` policy engine: policies can require specific
   `VerificationMaterial` types (e.g., `require_sigstore: true` or
   `require_signature: true`) to reject unsigned bundles.
@@ -908,10 +925,10 @@ entire attestation trust model. Any session history can be fabricated.
   attestation is unsigned and should not be used for production provenance.
 
 **Residual Risk:** Medium -- without policy enforcement, unsigned
-attestations are accepted by default. The residual risk is that development
-workflows using `--no-sign` may be promoted to production without
-transitioning to signed attestations. Organizations should enforce signing
-requirements via policy.
+attestations are accepted by default. Chain verification now actively
+surfaces unsigned links as failures, but this requires `--chain` to be
+enabled. Organizations should enforce both `--chain` verification and
+signing requirements via policy.
 
 ---
 
@@ -930,9 +947,9 @@ mitigation.
 | **LACERTA-006** TOCTOU on sandbox boundary | Atomic namespace creation, no-new-privs | Profile digest in attestation | -- | -- | Digest verification |
 | **LACERTA-007** Attestation forgery/tampering | -- | Sigstore signing, timestamps, audit log digest | Audit log as ground truth | -- | Signature verification, digest checks, OPA policy |
 | **LACERTA-008** Gleisner dependency compromise | -- | -- | -- | -- | cargo-deny, lockfile pinning, forbid unsafe |
-| **LACERTA-009** Attestation chain manipulation | `.gleisner/` read-only in sandbox | Chain digest linking, payload canonicalization | -- | -- | Chain verification (`--chain`), `require_parent_attestation` policy |
+| **LACERTA-009** Attestation chain manipulation | `.gleisner/` read-only in sandbox | Chain digest linking, payload canonicalization, cycle detection, duplicate digest handling | -- | -- | Chain verification (`--chain`), unsigned link detection, `require_parent_attestation` policy |
 | **LACERTA-010** Network filter bypass | slirp4netns + nftables/iptables, IP pinning | -- | Network activity logged | -- | -- |
-| **LACERTA-011** Unsigned attestation acceptance | -- | `--no-sign` warning | -- | -- | Policy: `require_signature`, verification warnings |
+| **LACERTA-011** Unsigned attestation acceptance | -- | `--no-sign` warning | -- | -- | Policy: `require_signature`, verification warnings, chain unsigned link detection |
 
 ### 8.1 Defense in Depth Layers
 
