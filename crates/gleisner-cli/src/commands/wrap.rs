@@ -119,7 +119,7 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     // 2. Start slirp4netns targeting that namespace
     // 3. Run bwrap inside the namespace via nsenter
     // All handles must stay alive until the child exits.
-    let (_ns_handle, _slirp, mut cmd) = if let Some(ref _f) = filter {
+    let (ns_handle, slirp, mut cmd) = if let Some(ref _f) = filter {
         let ns = gleisner_polis::NamespaceHandle::create()?;
         let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
 
@@ -148,6 +148,11 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
         let code = status.code().unwrap_or(1);
         tracing::warn!(exit_code = code, "sandboxed session exited with error");
     }
+
+    // Drop network handles before exit() — exit() skips destructors,
+    // which would leak slirp4netns and namespace holder processes.
+    drop(slirp);
+    drop(ns_handle);
 
     std::process::exit(status.code().unwrap_or(1));
 }

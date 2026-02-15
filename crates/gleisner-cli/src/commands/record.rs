@@ -163,14 +163,14 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
 
     let SandboxChild {
         mut child,
-        _slirp, // kept alive until session ends
-        _ns,    // kept alive until session ends
+        slirp, // kept alive until session ends
+        ns,    // kept alive until session ends
     } = sandbox_child;
 
     let child_pid = child.id().unwrap_or(0);
 
     // ── 6. Optionally create cgroup scope ────────────────────────────
-    let _cgroup_scope = if !args.no_cgroups && child_pid > 0 {
+    let cgroup_scope = if !args.no_cgroups && child_pid > 0 {
         match gleisner_polis::CgroupScope::create(&profile.resources) {
             Ok(scope) => {
                 if let Err(e) = scope.add_pid(child_pid) {
@@ -288,6 +288,12 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     )
     .await?;
 
+    // Drop network handles before exit() — exit() skips destructors,
+    // which would leak slirp4netns and namespace holder processes.
+    drop(slirp);
+    drop(ns);
+    drop(cgroup_scope);
+
     std::process::exit(exit_code);
 }
 
@@ -296,9 +302,9 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
 struct SandboxChild {
     child: tokio::process::Child,
     /// Keeps slirp4netns alive — dropped when the session ends.
-    _slirp: Option<gleisner_polis::SlirpHandle>,
+    slirp: Option<gleisner_polis::SlirpHandle>,
     /// Keeps the user+net namespace alive — dropped when the session ends.
-    _ns: Option<gleisner_polis::NamespaceHandle>,
+    ns: Option<gleisner_polis::NamespaceHandle>,
 }
 
 /// Spawn the sandboxed Claude Code process. Returns the child handle
@@ -379,11 +385,7 @@ fn spawn_sandbox_child(
         .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-    Ok(SandboxChild {
-        child,
-        _slirp: slirp,
-        _ns: ns,
-    })
+    Ok(SandboxChild { child, slirp, ns })
 }
 
 /// Assemble the in-toto attestation statement from recorder output.

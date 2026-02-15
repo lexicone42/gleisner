@@ -109,8 +109,9 @@ impl NetworkFilter {
     /// Generate the firewall setup script to run inside the sandbox.
     ///
     /// The script auto-detects the firewall backend: prefers `nft` (nftables),
-    /// falls back to `iptables` (legacy). This covers modern kernels with only
-    /// `nf_tables` as well as traditional distros with `ip_tables`.
+    /// falls back to `iptables` (legacy), and errors out if neither works.
+    /// This covers modern kernels with only `nf_tables` as well as traditional
+    /// distros with `ip_tables`.
     ///
     /// The script:
     /// 1. Verifies `tap0` device exists (created by slirp4netns before bwrap)
@@ -154,12 +155,14 @@ if command -v nft >/dev/null 2>&1; then
         }
 
         script.push_str(
-            r"else
-  # iptables legacy fallback
-  # Block IPv6 entirely
-  ip6tables -P OUTPUT DROP 2>/dev/null || true
-  ip6tables -P INPUT DROP 2>/dev/null || true
-  ip6tables -P FORWARD DROP 2>/dev/null || true
+            r"elif command -v iptables >/dev/null 2>&1 && iptables -L -n >/dev/null 2>&1; then
+  # iptables legacy fallback (only if kernel module is available)
+  # Block IPv6 entirely (ip6tables may not exist — ignore errors)
+  if command -v ip6tables >/dev/null 2>&1; then
+    ip6tables -P OUTPUT DROP 2>/dev/null || true
+    ip6tables -P INPUT DROP 2>/dev/null || true
+    ip6tables -P FORWARD DROP 2>/dev/null || true
+  fi
   # IPv4: restrict outbound
   iptables -P FORWARD DROP
   iptables -P INPUT ACCEPT
@@ -182,7 +185,15 @@ if command -v nft >/dev/null 2>&1; then
             );
         }
 
-        script.push_str("fi\n\nexec \"$@\"\n");
+        script.push_str(
+            r#"else
+  echo "gleisner: neither nft nor iptables available — cannot apply network filter" >&2
+  exit 1
+fi
+
+exec "$@"
+"#,
+        );
         script
     }
 
@@ -552,6 +563,36 @@ mod tests {
         assert!(
             script.contains("-d 104.18.0.1 --dport 443"),
             "iptables should allow resolved IPs"
+        );
+    }
+
+    #[test]
+    fn firewall_script_has_elif_structure() {
+        let filter = NetworkFilter {
+            allowed_endpoints: vec![("1.2.3.4".parse().unwrap(), 443)],
+            allow_dns: true,
+        };
+
+        let script = filter.firewall_setup_script();
+
+        // Should use elif (not bare else) to check iptables availability AND kernel module
+        assert!(
+            script.contains("elif command -v iptables"),
+            "should check iptables binary exists before using it"
+        );
+        assert!(
+            script.contains("iptables -L -n"),
+            "should probe iptables kernel module before using it"
+        );
+        // Should check ip6tables binary exists before calling it
+        assert!(
+            script.contains("command -v ip6tables"),
+            "should check ip6tables exists before calling it"
+        );
+        // Should error out if neither backend works
+        assert!(
+            script.contains("neither nft nor iptables"),
+            "should error when no firewall backend available"
         );
     }
 
