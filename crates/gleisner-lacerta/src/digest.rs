@@ -40,7 +40,8 @@ pub fn check_file_digest(
 ///
 /// The payload should be a JSON `Value` containing an in-toto v1 statement.
 /// Returns a `Vec` of results — one per subject. Subjects that match get `Ok(())`,
-/// mismatches get `Err(DigestMismatch)`.
+/// malformed subjects get `Err(InvalidBundle)`, and mismatches get
+/// `Err(DigestMismatch)`.
 pub fn check_subjects(
     payload: &serde_json::Value,
     base_dir: &Path,
@@ -51,15 +52,29 @@ pub fn check_subjects(
 
     subjects
         .iter()
-        .filter_map(|subject| {
-            let name = subject.get("name")?.as_str()?;
+        .enumerate()
+        .map(|(i, subject)| {
+            let name = subject
+                .get("name")
+                .and_then(|n| n.as_str())
+                .ok_or_else(|| {
+                    VerificationError::InvalidBundle(format!(
+                        "subject[{i}] missing or non-string \"name\" field"
+                    ))
+                })?;
+
             let expected = subject
                 .get("digest")
                 .and_then(|d| d.get("sha256"))
-                .and_then(|h| h.as_str())?;
+                .and_then(|h| h.as_str())
+                .ok_or_else(|| {
+                    VerificationError::InvalidBundle(format!(
+                        "subject[{i}] (\"{name}\") missing \"digest.sha256\" field"
+                    ))
+                })?;
 
             let path = base_dir.join(name);
-            Some(check_file_digest(&path, expected, name))
+            check_file_digest(&path, expected, name)
         })
         .collect()
 }
@@ -163,6 +178,42 @@ mod tests {
         let results = check_subjects(&payload, dir.path());
         assert_eq!(results.len(), 1);
         assert!(results[0].is_err());
+    }
+
+    #[test]
+    fn check_subjects_malformed_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Subject missing the "name" field entirely
+        let payload = serde_json::json!({
+            "subject": [
+                { "digest": { "sha256": "abc123" } },
+            ]
+        });
+
+        let results = check_subjects(&payload, dir.path());
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0], Err(VerificationError::InvalidBundle(msg)) if msg.contains("name")),
+            "should report missing name field"
+        );
+    }
+
+    #[test]
+    fn check_subjects_malformed_digest() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Subject has name but no digest.sha256
+        let payload = serde_json::json!({
+            "subject": [
+                { "name": "a.txt", "digest": {} },
+            ]
+        });
+
+        let results = check_subjects(&payload, dir.path());
+        assert_eq!(results.len(), 1);
+        assert!(
+            matches!(&results[0], Err(VerificationError::InvalidBundle(msg)) if msg.contains("digest.sha256")),
+            "should report missing digest field"
+        );
     }
 
     #[test]

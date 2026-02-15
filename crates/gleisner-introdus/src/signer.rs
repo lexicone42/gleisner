@@ -185,6 +185,9 @@ pub fn der_to_pem(der: &[u8], label: &str) -> String {
 }
 
 /// Extract DER bytes from a PEM string.
+///
+/// Returns `None` if the PEM has no BEGIN/END markers, contains no
+/// base64 content between the markers, or the base64 is invalid.
 pub fn pem_to_der(pem: &str) -> Option<Vec<u8>> {
     let mut b64 = String::new();
     let mut in_body = false;
@@ -203,7 +206,17 @@ pub fn pem_to_der(pem: &str) -> Option<Vec<u8>> {
         }
     }
 
-    base64::engine::general_purpose::STANDARD.decode(&b64).ok()
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(&b64)
+        .ok()?;
+
+    // Reject empty PEM bodies — valid PEM markers with no content between them
+    // would produce an empty DER that confuses downstream crypto code.
+    if decoded.is_empty() {
+        return None;
+    }
+
+    Some(decoded)
 }
 
 /// Encode a raw P-256 public key (uncompressed point, 65 bytes) as
@@ -362,6 +375,23 @@ mod tests {
         let pem = der_to_pem(data, "TEST");
         let recovered = pem_to_der(&pem).expect("should parse PEM");
         assert_eq!(recovered, data);
+    }
+
+    #[test]
+    fn pem_to_der_rejects_empty_body() {
+        let empty_pem = "-----BEGIN PRIVATE KEY-----\n-----END PRIVATE KEY-----\n";
+        assert!(
+            pem_to_der(empty_pem).is_none(),
+            "empty PEM body should return None"
+        );
+    }
+
+    #[test]
+    fn pem_to_der_rejects_no_markers() {
+        assert!(
+            pem_to_der("just some text").is_none(),
+            "PEM without markers should return None"
+        );
     }
 
     #[test]

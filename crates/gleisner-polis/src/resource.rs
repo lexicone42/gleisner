@@ -90,10 +90,31 @@ impl CgroupScope {
             self.write_control("pids.max", &limits.max_pids.to_string())?;
         }
 
+        // RLIMIT_NOFILE: enforced by BwrapSandbox::apply_rlimits() after spawn,
+        // not via cgroup. Logged here for completeness.
+        if limits.max_file_descriptors > 0 {
+            debug!(
+                max_fd = limits.max_file_descriptors,
+                "file descriptor limit will be applied via prlimit after spawn"
+            );
+        }
+
+        // io.max requires a major:minor block device identifier which is
+        // environment-specific. Log a warning so users know this field is
+        // advisory until block device detection is implemented.
+        if limits.max_disk_write_mb > 0 {
+            warn!(
+                max_disk_write_mb = limits.max_disk_write_mb,
+                "disk write limit is advisory — cgroup io.max enforcement requires block device detection (not yet implemented)"
+            );
+        }
+
         debug!(
             memory_mb = limits.max_memory_mb,
             cpu_percent = limits.max_cpu_percent,
             max_pids = limits.max_pids,
+            max_fd = limits.max_file_descriptors,
+            max_disk_write_mb = limits.max_disk_write_mb,
             "configured cgroup resource limits"
         );
 

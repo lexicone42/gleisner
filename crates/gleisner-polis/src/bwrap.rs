@@ -197,6 +197,47 @@ impl BwrapSandbox {
         &self.extra_allow_domains
     }
 
+    /// Apply resource limits (`RLIMIT_NOFILE`) to a running child process.
+    ///
+    /// Call this immediately after spawning the command returned by
+    /// [`build_command()`]. Uses `prlimit` to set limits on the child PID
+    /// without requiring `unsafe` or `pre_exec`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SandboxError::ResourceLimit`] if the rlimit cannot be applied.
+    pub fn apply_rlimits(&self, pid: nix::unistd::Pid) -> Result<(), SandboxError> {
+        let max_fd = self.profile.resources.max_file_descriptors;
+        if max_fd > 0 {
+            // prlimit on a foreign PID requires same UID or CAP_SYS_RESOURCE.
+            // Since we just spawned this child, we own it.
+            // Note: nix::sys::resource::setrlimit only sets on current process.
+            // For child PID, we need prlimit(2) which nix doesn't wrap directly.
+            // Fall back to the prlimit CLI tool.
+            let status = Command::new("prlimit")
+                .args([
+                    &format!("--pid={}", pid.as_raw()),
+                    &format!("--nofile={max_fd}:{max_fd}"),
+                ])
+                .output()
+                .map_err(|e| SandboxError::ResourceLimit {
+                    resource: "RLIMIT_NOFILE",
+                    detail: format!("failed to run prlimit: {e}"),
+                })?;
+
+            if !status.status.success() {
+                let stderr = String::from_utf8_lossy(&status.stderr);
+                return Err(SandboxError::ResourceLimit {
+                    resource: "RLIMIT_NOFILE",
+                    detail: format!("prlimit failed: {stderr}"),
+                });
+            }
+
+            debug!(pid = pid.as_raw(), max_fd, "applied RLIMIT_NOFILE to child");
+        }
+        Ok(())
+    }
+
     /// Get a reference to the loaded profile.
     #[must_use]
     pub const fn profile(&self) -> &Profile {

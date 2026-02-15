@@ -48,4 +48,13 @@ pub enum SandboxError {
     /// Network setup (slirp4netns, iptables, or child PID detection) failed.
     #[error("network setup failed: {0}")]
     NetworkSetupFailed(String),
+
+    /// A resource limit could not be applied.
+    #[error("failed to set {resource}: {detail}")]
+    ResourceLimit {
+        /// The resource being limited (e.g. "`RLIMIT_NOFILE`").
+        resource: &'static str,
+        /// Details about the failure.
+        detail: String,
+    },
 }
