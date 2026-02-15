@@ -7,6 +7,7 @@
 mod bwrap;
 pub mod error;
 pub mod fanotify;
+mod landlock;
 pub mod monitor;
 mod namespace;
 pub mod netfilter;
@@ -16,6 +17,7 @@ pub mod profile;
 pub mod resource;
 
 pub use bwrap::BwrapSandbox;
+pub use landlock::{LandlockEnforcement, LandlockStatus, apply_landlock};
 pub use monitor::{FsMonitorConfig, ProcMonitorConfig};
 pub use netfilter::{NamespaceHandle, NetworkFilter, SlirpHandle};
 pub use policy::FileAccessType;

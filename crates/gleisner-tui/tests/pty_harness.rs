@@ -111,7 +111,7 @@ impl TuiHarness {
             // so we do a timed read approach: try reading with a small buffer
             // and break when we've consumed everything available.
             match reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
                 Ok(n) => {
                     self.parser.process(&buf[..n]);
                     // If we got a full buffer, there might be more
@@ -119,7 +119,6 @@ impl TuiHarness {
                         break;
                     }
                 }
-                Err(_) => break,
             }
         }
     }
@@ -144,9 +143,16 @@ impl TuiHarness {
         self.read_output();
     }
 
-    /// Send Enter key.
+    /// Send Enter key (submits input in insert mode).
     fn press_enter(&mut self) {
         self.send_key(b"\r");
+    }
+
+    /// Send Alt+Enter.
+    #[allow(dead_code)]
+    fn press_alt_enter(&mut self) {
+        // ESC followed by CR is the standard terminal encoding for Alt+Enter.
+        self.send_key(b"\x1b\r");
     }
 
     /// Send Escape key.
@@ -180,6 +186,77 @@ impl TuiHarness {
              (screen: {COLS}x{ROWS})"
         )
     }
+
+    /// Spawn gleisner-tui with a custom `--claude-bin` binary.
+    ///
+    /// Used with fake-claude scripts to test the full submit→response flow
+    /// without needing a real Claude API key.
+    fn spawn_with_claude_bin(claude_bin: &str) -> Self {
+        let pty_system = native_pty_system();
+        let pair = pty_system
+            .openpty(PtySize {
+                rows: ROWS,
+                cols: COLS,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .expect("failed to open PTY pair");
+
+        let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gleisner-tui"));
+        cmd.env("TERM", "xterm-256color");
+        cmd.args(["--claude-bin", claude_bin]);
+
+        let child = pair
+            .slave
+            .spawn_command(cmd)
+            .expect("failed to spawn gleisner-tui in PTY");
+
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .expect("failed to clone PTY reader");
+
+        let writer = pair
+            .master
+            .take_writer()
+            .expect("failed to take PTY writer");
+
+        let parser = vt100::Parser::new(ROWS, COLS, 0);
+
+        let mut harness = Self {
+            parser,
+            writer,
+            reader,
+            _child: child,
+        };
+
+        thread::sleep(STARTUP_DELAY);
+        harness.read_output();
+        harness
+    }
+}
+
+/// Create a fake-claude shell script that outputs a fixture file.
+///
+/// Returns a (`TempDir`, `script_path`) — the `TempDir` keeps the script
+/// alive for the duration of the test.
+fn make_fake_claude_script(fixture_name: &str) -> (tempfile::TempDir, String) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let fixture_path = format!("{manifest_dir}/tests/fixtures/{fixture_name}");
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let script_path = dir.path().join("fake-claude.sh");
+
+    let script = format!("#!/bin/bash\ncat '{fixture_path}'\n");
+
+    std::fs::write(&script_path, script).expect("failed to write fake-claude script");
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+        .expect("failed to chmod fake-claude script");
+
+    let path_str = script_path.display().to_string();
+    (dir, path_str)
 }
 
 // ─── Tests ───────────────────────────────────────────────────────
@@ -270,7 +347,7 @@ fn tui_accepts_input_and_submits() {
         harness.dump_screen()
     );
 
-    // Submit with Enter
+    // Submit with Alt+Enter
     harness.press_enter();
 
     // Give extra time for the submit + stream error to render
@@ -281,8 +358,8 @@ fn tui_accepts_input_and_submits() {
 
     // Should see the user message in conversation
     assert!(
-        harness.screen_contains("you>"),
-        "expected user message prefix on screen.\n{}",
+        harness.screen_contains("you"),
+        "expected user badge on screen.\n{}",
         harness.dump_screen()
     );
 }
@@ -323,4 +400,95 @@ fn tui_quits_on_q_in_normal_mode() {
     // or we should no longer see the TUI elements
     // At minimum, we verify the harness doesn't panic
     eprintln!("=== Screen after quit ===\n{}", harness.dump_screen());
+}
+
+// ─── Fake-claude integration tests ──────────────────────────────
+
+/// Full end-to-end test: user submits a prompt, fake-claude responds
+/// with a fixture, and the assistant's response appears on screen.
+#[test]
+fn tui_shows_assistant_response_from_fake_claude() {
+    let (_dir, script_path) = make_fake_claude_script("simple_response.jsonl");
+    let mut harness = TuiHarness::spawn_with_claude_bin(&script_path);
+
+    eprintln!(
+        "=== Screen after startup (fake-claude) ===\n{}",
+        harness.dump_screen()
+    );
+
+    // Enter insert mode
+    harness.type_str("i");
+    assert!(
+        harness.screen_contains("INSERT"),
+        "expected INSERT mode.\n{}",
+        harness.dump_screen()
+    );
+
+    // Type a prompt and submit
+    harness.type_str("what is 2+2");
+    harness.press_enter();
+
+    // Wait for the fake-claude output to be processed
+    thread::sleep(Duration::from_millis(2000));
+    harness.read_output();
+
+    eprintln!(
+        "=== Screen after submit (fake-claude) ===\n{}",
+        harness.dump_screen()
+    );
+
+    // Should see the user message
+    assert!(
+        harness.screen_contains("you"),
+        "expected user badge.\n{}",
+        harness.dump_screen()
+    );
+
+    // The simple_response fixture has an assistant message with "4"
+    // It should appear somewhere on screen
+    let has_assistant_content = harness.screen_contains("claude") || harness.screen_contains("4");
+    assert!(
+        has_assistant_content,
+        "expected assistant response on screen.\n{}",
+        harness.dump_screen()
+    );
+}
+
+/// Verify that stderr from fake-claude appears in the TUI conversation.
+#[test]
+fn tui_shows_stderr_from_subprocess() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Create a fake-claude that writes to stderr
+    let dir = tempfile::tempdir().expect("temp dir");
+    let script_path = dir.path().join("fake-claude.sh");
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let fixture = format!("{manifest_dir}/tests/fixtures/simple_response.jsonl");
+    let script =
+        format!("#!/bin/bash\necho 'STARTUP_ERROR: something went wrong' >&2\ncat '{fixture}'\n");
+    std::fs::write(&script_path, script).expect("write");
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    let mut harness = TuiHarness::spawn_with_claude_bin(&script_path.display().to_string());
+
+    // Submit a prompt
+    harness.type_str("i");
+    harness.type_str("test");
+    harness.press_enter();
+
+    // Wait for output
+    thread::sleep(Duration::from_millis(2000));
+    harness.read_output();
+
+    eprintln!(
+        "=== Screen after submit (stderr test) ===\n{}",
+        harness.dump_screen()
+    );
+
+    // Should see the stderr message in the conversation
+    assert!(
+        harness.screen_contains("STARTUP_ERROR") || harness.screen_contains("[stderr]"),
+        "expected stderr message on screen.\n{}",
+        harness.dump_screen()
+    );
 }

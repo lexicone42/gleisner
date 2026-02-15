@@ -81,14 +81,13 @@ impl TuiHarness {
         let mut buf = [0u8; 8192];
         loop {
             match self.reader.read(&mut buf) {
-                Ok(0) => break,
+                Ok(0) | Err(_) => break,
                 Ok(n) => {
                     self.parser.process(&buf[..n]);
                     if n < buf.len() {
                         break;
                     }
                 }
-                Err(_) => break,
             }
         }
     }

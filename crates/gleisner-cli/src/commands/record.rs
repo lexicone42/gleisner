@@ -163,6 +163,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
         args.wrap.allow_path,
         args.wrap.claude_bin,
         args.wrap.claude_args,
+        args.wrap.no_landlock,
     )?;
 
     let SandboxChild {
@@ -352,6 +353,7 @@ fn spawn_sandbox_child(
     allow_path: Vec<PathBuf>,
     claude_bin: String,
     claude_args: Vec<String>,
+    no_landlock: bool,
 ) -> Result<SandboxChild> {
     let mut sandbox = gleisner_polis::BwrapSandbox::new(profile, project_dir)?;
 
@@ -360,6 +362,12 @@ fn spawn_sandbox_child(
     }
     if !allow_path.is_empty() {
         sandbox.allow_paths(allow_path);
+    }
+
+    // NOTE: Landlock is NOT applied to the parent orchestrator.
+    // See wrap.rs for detailed rationale (ABI v5+ restricts mount namespace creation).
+    if !no_landlock {
+        tracing::debug!("landlock deferred — will be applied inside sandbox in a future release");
     }
 
     // Resolve selective network filter if applicable

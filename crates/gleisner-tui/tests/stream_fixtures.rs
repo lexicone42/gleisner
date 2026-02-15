@@ -292,13 +292,10 @@ fn app_processes_tool_use_stream() {
     );
 
     // Should have tool messages
-    let tool_msgs: Vec<_> = app
-        .messages
-        .iter()
-        .filter(|m| matches!(m.role, gleisner_tui::app::Role::Tool))
-        .collect();
     assert!(
-        !tool_msgs.is_empty(),
+        app.messages
+            .iter()
+            .any(|m| matches!(m.role, gleisner_tui::app::Role::Tool)),
         "expected tool messages from Read call"
     );
 
@@ -347,13 +344,11 @@ fn multi_tool_response_parses_completely() {
 
     assert!(
         tool_names.contains(&"Glob"),
-        "expected Glob tool call, got {:?}",
-        tool_names
+        "expected Glob tool call, got {tool_names:?}"
     );
     assert!(
         tool_names.contains(&"Bash"),
-        "expected Bash tool call, got {:?}",
-        tool_names
+        "expected Bash tool call, got {tool_names:?}"
     );
 }
 
@@ -415,13 +410,11 @@ fn multi_turn_with_errors_parses_completely() {
 
     assert!(
         tool_count >= 2,
-        "expected at least 2 tool calls, got {}",
-        tool_count
+        "expected at least 2 tool calls, got {tool_count}"
     );
     assert!(
         error_results >= 1,
-        "expected at least 1 error result, got {}",
-        error_results
+        "expected at least 1 error result, got {error_results}"
     );
 }
 
@@ -444,8 +437,7 @@ fn web_search_response_parses_completely() {
 
     assert!(
         assistant_count >= 3,
-        "expected at least 3 assistant events (multi-turn web search), got {}",
-        assistant_count
+        "expected at least 3 assistant events (multi-turn web search), got {assistant_count}"
     );
 }
 
@@ -618,13 +610,11 @@ fn parallel_tool_use_parses_correctly() {
 
     assert!(
         tool_names.contains(&"Read"),
-        "expected Read tool call, got {:?}",
-        tool_names
+        "expected Read tool call, got {tool_names:?}"
     );
     assert!(
         tool_names.contains(&"Glob"),
-        "expected Glob tool call, got {:?}",
-        tool_names
+        "expected Glob tool call, got {tool_names:?}"
     );
 }
 
@@ -670,7 +660,7 @@ fn app_processes_parallel_tools_with_exo_self() {
     );
 }
 
-/// Verify MCP tool calls (serena) are parsed as regular tool_use events.
+/// Verify MCP tool calls (serena) are parsed as regular `tool_use` events.
 #[test]
 fn serena_mcp_tool_calls_parse_as_tool_use() {
     let fixture = include_str!("fixtures/serena_analysis_response.jsonl");
@@ -705,8 +695,7 @@ fn serena_mcp_tool_calls_parse_as_tool_use() {
         tool_names
             .iter()
             .any(|n| n.starts_with("mcp__plugin_serena_serena__")),
-        "expected serena MCP tool calls, got {:?}",
-        tool_names
+        "expected serena MCP tool calls, got {tool_names:?}"
     );
 
     // Should have activate_project and get_symbols_overview
@@ -780,13 +769,11 @@ fn context7_mcp_tool_calls_parse_correctly() {
     // Should have resolve-library-id and query-docs
     assert!(
         tool_names.iter().any(|n| n.contains("resolve-library-id")),
-        "expected resolve-library-id call, got {:?}",
-        tool_names
+        "expected resolve-library-id call, got {tool_names:?}"
     );
     assert!(
         tool_names.iter().any(|n| n.contains("query-docs")),
-        "expected query-docs call, got {:?}",
-        tool_names
+        "expected query-docs call, got {tool_names:?}"
     );
 }
 
@@ -850,7 +837,7 @@ fn cargo_build_test_through_app() {
     );
 }
 
-/// Verify multi-turn session resumption: turn 1 and turn 2 share session_id.
+/// Verify multi-turn session resumption: turn 1 and turn 2 share `session_id`.
 #[test]
 fn multi_turn_session_resumption() {
     let turn1 = include_str!("fixtures/resume-turn1.jsonl");
@@ -896,7 +883,7 @@ fn multi_turn_session_resumption() {
     assert!(has_edit, "turn 2 should use Edit to fix the bug");
 }
 
-/// Verify App tracks file_writes from Edit tool calls in dev workflow.
+/// Verify App tracks `file_writes` from Edit tool calls in dev workflow.
 #[test]
 fn app_tracks_edits_in_dev_workflow() {
     use gleisner_tui::app::{App, SessionState};
@@ -923,8 +910,8 @@ fn app_tracks_edits_in_dev_workflow() {
     );
 }
 
-/// Verify session continuation: the session_id from one fixture
-/// can be used to construct a QueryConfig for multi-turn.
+/// Verify session continuation: the `session_id` from one fixture
+/// can be used to construct a `QueryConfig` for multi-turn.
 #[test]
 fn session_id_is_usable_for_continuation() {
     use gleisner_tui::app::{App, SessionState};
@@ -955,13 +942,12 @@ fn session_id_is_usable_for_continuation() {
     assert!(!sid.is_empty(), "session_id should be non-empty");
 }
 
-/// Verify QueryConfig::from_profile reads settings from the profile TOML.
+/// Verify `QueryConfig::from_profile` reads settings from the profile TOML.
 #[test]
 fn query_config_from_profile_reads_plugin_policy() {
     // Load the konishi profile (available when running from workspace root)
-    let profile = match gleisner_polis::profile::resolve_profile("konishi") {
-        Ok(p) => p,
-        Err(_) => return, // Skip if profile not found (CI)
+    let Ok(profile) = gleisner_polis::profile::resolve_profile("konishi") else {
+        return;
     };
 
     let config = QueryConfig::from_profile(&profile);
@@ -995,13 +981,11 @@ fn query_config_from_profile_reads_plugin_policy() {
 /// Verify ashton-laval profile blocks more tools than konishi.
 #[test]
 fn ashton_laval_blocks_more_tools() {
-    let konishi = match gleisner_polis::profile::resolve_profile("konishi") {
-        Ok(p) => p,
-        Err(_) => return,
+    let Ok(konishi) = gleisner_polis::profile::resolve_profile("konishi") else {
+        return;
     };
-    let ashton = match gleisner_polis::profile::resolve_profile("ashton-laval") {
-        Ok(p) => p,
-        Err(_) => return,
+    let Ok(ashton) = gleisner_polis::profile::resolve_profile("ashton-laval") else {
+        return;
     };
 
     let konishi_config = QueryConfig::from_profile(&konishi);
@@ -1030,26 +1014,25 @@ fn ashton_laval_blocks_more_tools() {
     );
 }
 
-/// Verify SandboxConfig can be attached to a QueryConfig and cloned.
+/// Verify `SandboxConfig` can be attached to a `QueryConfig` and cloned.
 #[test]
 fn sandbox_config_round_trips_through_query_config() {
     use gleisner_tui::claude::SandboxConfig;
     use std::path::PathBuf;
 
-    let profile = match gleisner_polis::profile::resolve_profile("konishi") {
-        Ok(p) => p,
-        Err(_) => return,
+    let Ok(profile) = gleisner_polis::profile::resolve_profile("konishi") else {
+        return;
     };
 
     let mut config = QueryConfig::from_profile(&profile);
     config.prompt = "test prompt".into();
     config.sandbox = Some(SandboxConfig {
-        profile: profile.clone(),
+        profile,
         project_dir: PathBuf::from("/tmp/test-project"),
     });
 
     // Clone should work (needed for tokio::spawn)
-    let cloned = config.clone();
+    let cloned = config;
     assert!(cloned.sandbox.is_some());
 
     let sandbox = cloned.sandbox.unwrap();
@@ -1073,9 +1056,8 @@ fn sandboxed_query_builds_bwrap_command() {
         return;
     }
 
-    let profile = match gleisner_polis::profile::resolve_profile("konishi") {
-        Ok(p) => p,
-        Err(_) => return,
+    let Ok(profile) = gleisner_polis::profile::resolve_profile("konishi") else {
+        return;
     };
 
     let mut config = QueryConfig::from_profile(&profile);
@@ -1086,7 +1068,7 @@ fn sandboxed_query_builds_bwrap_command() {
     });
 
     // Build the sandbox directly to verify the command structure
-    let mut bwrap_profile = profile.clone();
+    let mut bwrap_profile = profile;
     if let Ok(home) = std::env::var("HOME") {
         let home_path = PathBuf::from(&home);
         if !bwrap_profile.filesystem.readonly_bind.contains(&home_path) {

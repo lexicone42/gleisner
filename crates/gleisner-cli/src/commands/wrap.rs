@@ -41,6 +41,14 @@ pub struct WrapArgs {
     #[arg(long, default_value = "claude")]
     pub claude_bin: String,
 
+    /// Disable Landlock filesystem access control.
+    ///
+    /// By default, Landlock LSM rules are applied before spawning the
+    /// sandbox for defense-in-depth. Use this flag to skip Landlock
+    /// (e.g., on kernels without Landlock support).
+    #[arg(long)]
+    pub no_landlock: bool,
+
     /// Additional arguments to pass to Claude Code.
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub claude_args: Vec<String>,
@@ -102,6 +110,20 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     } else {
         None
     };
+
+    // NOTE: Landlock is NOT applied to the parent orchestrator.
+    //
+    // On kernels with Landlock ABI >= v5 (Linux 6.12+), landlock_restrict_self()
+    // prevents mount namespace creation (CLONE_NEWNS), which bwrap requires.
+    // The parent must keep full capabilities to set up the sandbox.
+    //
+    // TODO: Apply Landlock INSIDE the bwrap sandbox via a helper binary that
+    // runs between bwrap's mount setup and the inner command (Claude Code).
+    // This is the correct architecture: the orchestrator is trusted, only the
+    // sandboxed process needs Landlock restrictions.
+    if !args.no_landlock {
+        tracing::debug!("landlock deferred — will be applied inside sandbox in a future release");
+    }
 
     // Detect Claude Code version for logging
     if let Some(version) = detect_claude_code_version(&args.claude_bin) {

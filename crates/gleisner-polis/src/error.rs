@@ -28,6 +28,10 @@ pub enum SandboxError {
     #[error("landlock requires Linux 5.13+, detected kernel {0}")]
     LandlockUnsupported(String),
 
+    /// Landlock ruleset construction or enforcement failed.
+    #[error("landlock enforcement failed: {0}")]
+    LandlockError(String),
+
     /// A cgroup operation failed.
     #[error("cgroup operation `{operation}` failed: {source}")]
     CgroupError {

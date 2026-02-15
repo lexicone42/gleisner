@@ -64,6 +64,28 @@ pub enum InputMode {
     Insert,
 }
 
+/// A TUI-local command (not sent to Claude).
+#[derive(Debug, Clone)]
+pub enum TuiCommand {
+    /// Generate SBOM for the current project.
+    Sbom,
+    /// Verify an attestation bundle.
+    Verify(String),
+    /// Inspect an attestation bundle.
+    Inspect(String),
+    /// Show available TUI commands.
+    Help,
+}
+
+/// What the user submitted — either a Claude prompt or a local command.
+#[derive(Debug, Clone)]
+pub enum UserAction {
+    /// Send this prompt to Claude.
+    Prompt(String),
+    /// Execute a local TUI command.
+    Command(TuiCommand),
+}
+
 /// Whether the app is idle or waiting for Claude.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionState {
@@ -96,6 +118,9 @@ pub struct App {
     pub model: Option<String>,
     /// Claude Code version from the init event.
     pub claude_version: Option<String>,
+    /// Accumulates text from streaming deltas for live display.
+    /// Cleared when the full assistant event arrives.
+    pub streaming_buffer: String,
 }
 
 impl App {
@@ -118,6 +143,7 @@ impl App {
             session_id: None,
             model: None,
             claude_version: None,
+            streaming_buffer: String::new(),
         }
     }
 
@@ -134,9 +160,12 @@ impl App {
         self.scroll_offset = 0;
     }
 
-    /// Submit the current input as a user message.
-    /// Returns the submitted text, or `None` if input was empty or already streaming.
-    pub fn submit_input(&mut self) -> Option<String> {
+    /// Submit the current input as a user message or TUI command.
+    ///
+    /// Returns `None` if input was empty or already streaming.
+    /// Slash commands (`/sbom`, `/verify`, `/inspect`, `/help`) are
+    /// parsed locally and returned as `UserAction::Command`.
+    pub fn submit_input(&mut self) -> Option<UserAction> {
         if self.session_state == SessionState::Streaming {
             return None;
         }
@@ -145,21 +174,48 @@ impl App {
             return None;
         }
         self.input.clear();
+
+        // Parse slash commands
+        if let Some(rest) = text.strip_prefix('/') {
+            let mut parts = rest.splitn(2, ' ');
+            let cmd = parts.next().unwrap_or("");
+            let arg = parts.next().unwrap_or("").to_owned();
+
+            let tui_cmd = match cmd {
+                "sbom" => Some(TuiCommand::Sbom),
+                "verify" if !arg.is_empty() => Some(TuiCommand::Verify(arg)),
+                "inspect" if !arg.is_empty() => Some(TuiCommand::Inspect(arg)),
+                "verify" | "inspect" => {
+                    self.push_message(
+                        Role::System,
+                        format!("/{cmd} requires a file path argument"),
+                    );
+                    return None;
+                }
+                "help" => Some(TuiCommand::Help),
+                _ => None,
+            };
+
+            if let Some(cmd) = tui_cmd {
+                self.push_message(Role::User, &text);
+                return Some(UserAction::Command(cmd));
+            }
+            // Unknown slash command — treat as normal prompt to Claude
+        }
+
         self.push_message(Role::User, &text);
         self.session_state = SessionState::Streaming;
-        Some(text)
+        Some(UserAction::Prompt(text))
     }
 
     /// Process a stream event from the Claude subprocess.
     pub fn handle_stream_event(&mut self, event: StreamEvent) {
         match event {
             StreamEvent::System(sys) => self.handle_system_event(sys),
-            StreamEvent::Assistant(asst) => self.handle_assistant_event(asst),
-            StreamEvent::User(user) => self.handle_user_event(user),
+            StreamEvent::Assistant(ref asst) => self.handle_assistant_event(asst),
+            StreamEvent::User(ref user) => self.handle_user_event(user),
             StreamEvent::Result(result) => self.handle_result_event(result),
-            StreamEvent::StreamDelta(_) => {
-                // TODO: handle partial message deltas for real-time streaming
-            }
+            StreamEvent::StreamDelta(ref delta) => self.handle_stream_delta(delta),
         }
     }
 
@@ -193,13 +249,34 @@ impl App {
                     }
                 }
             }
-            "hook_response" => {}
             _ => {}
         }
     }
 
+    /// Handle streaming delta events for live text display.
+    ///
+    /// Extracts text from `content_block_delta` events and appends to the
+    /// streaming buffer. The buffer is rendered as a live message in the UI
+    /// and cleared when the full `assistant` event arrives.
+    fn handle_stream_delta(&mut self, delta: &crate::stream::StreamDeltaEvent) {
+        if let Some(ref event) = delta.event {
+            // content_block_delta with text_delta contains partial text
+            if event.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
+                if let Some(text) = event
+                    .get("delta")
+                    .and_then(|d| d.get("text"))
+                    .and_then(|t| t.as_str())
+                {
+                    self.streaming_buffer.push_str(text);
+                }
+            }
+        }
+    }
+
     /// Handle assistant messages (text output, tool calls).
-    fn handle_assistant_event(&mut self, asst: crate::stream::AssistantEvent) {
+    fn handle_assistant_event(&mut self, asst: &crate::stream::AssistantEvent) {
+        // Clear streaming buffer — the full message supersedes the live preview.
+        self.streaming_buffer.clear();
         for block in &asst.message.content {
             match block {
                 ContentBlock::Text { text } => {
@@ -209,9 +286,10 @@ impl App {
                     self.security.tool_calls += 1;
                     self.update_tool_counters(name);
 
-                    // Show a compact summary of the tool call
+                    // Show a compact summary with tool icon
+                    let icon = tool_icon(name);
                     let summary = format_tool_call(name, input);
-                    self.push_message(Role::Tool, format!("[{name}] {summary}"));
+                    self.push_message(Role::Tool, format!("{icon} {summary}"));
                 }
                 ContentBlock::Thinking { thinking } => {
                     if !thinking.is_empty() {
@@ -228,7 +306,7 @@ impl App {
     }
 
     /// Handle user messages (tool results).
-    fn handle_user_event(&mut self, user: crate::stream::UserEvent) {
+    fn handle_user_event(&mut self, user: &crate::stream::UserEvent) {
         for block in &user.message.content {
             match block {
                 UserContentBlock::ToolResult {
@@ -243,6 +321,7 @@ impl App {
 
     /// Handle result events (session complete).
     fn handle_result_event(&mut self, result: crate::stream::ResultEvent) {
+        self.streaming_buffer.clear();
         self.session_state = SessionState::Idle;
 
         if let Some(sid) = result.session_id {
@@ -285,17 +364,44 @@ impl App {
         }
     }
 
+    /// Lines to scroll per Page Up/Down press.
+    const PAGE_SCROLL: u16 = 20;
+
     /// Handle a key event.
-    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<String> {
-        use crossterm::event::KeyCode;
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<UserAction> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        // Ctrl+C quits from any mode.
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.should_quit = true;
+            return None;
+        }
 
         match self.input_mode {
             InputMode::Normal => {
                 match key.code {
                     KeyCode::Char('q') => self.should_quit = true,
                     KeyCode::Char('i') => self.input_mode = InputMode::Insert,
-                    KeyCode::Up => self.scroll_offset = self.scroll_offset.saturating_add(1),
-                    KeyCode::Down => self.scroll_offset = self.scroll_offset.saturating_sub(1),
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.scroll_offset = self.scroll_offset.saturating_add(1);
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    }
+                    KeyCode::PageUp => {
+                        self.scroll_offset = self.scroll_offset.saturating_add(Self::PAGE_SCROLL);
+                    }
+                    KeyCode::PageDown => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(Self::PAGE_SCROLL);
+                    }
+                    KeyCode::Home | KeyCode::Char('g') => {
+                        // Jump to top — set a large offset (clamped by renderer)
+                        self.scroll_offset = u16::MAX;
+                    }
+                    KeyCode::End | KeyCode::Char('G') => {
+                        // Jump to bottom
+                        self.scroll_offset = 0;
+                    }
                     _ => {}
                 }
                 None
@@ -326,37 +432,49 @@ impl Default for App {
     }
 }
 
+/// Short icon prefix for a tool name (ASCII-only for terminal compatibility).
+fn tool_icon(name: &str) -> &'static str {
+    match name {
+        "Read" => "[R]",
+        "Write" => "[W]",
+        "Edit" => "[E]",
+        "Bash" => "[$]",
+        "Glob" => "[?]",
+        "Grep" => "[/]",
+        "Task" => "[>]",
+        "WebFetch" | "WebSearch" => "[~]",
+        _ => {
+            if name.contains("read_file") || name.contains("get_symbols") {
+                "[R]"
+            } else if name.contains("replace_")
+                || name.contains("insert_")
+                || name.contains("create_text")
+            {
+                "[W]"
+            } else if name.contains("search") || name.contains("find_") {
+                "[/]"
+            } else if name.contains("browser") || name.contains("playwright") {
+                "[~]"
+            } else {
+                "[.]"
+            }
+        }
+    }
+}
+
 /// Format a tool call for display (compact one-line summary).
 fn format_tool_call(
     name: &str,
     input: &std::collections::HashMap<String, serde_json::Value>,
 ) -> String {
+    // Helper: extract a file path argument and shorten to filename only
+    let file_arg = |key: &str| -> String {
+        let path = input.get(key).and_then(|v| v.as_str()).unwrap_or("?");
+        path.rsplit('/').next().unwrap_or(path).to_owned()
+    };
+
     match name {
-        "Read" => {
-            let path = input
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            // Show just the filename, not the full path
-            let short = path.rsplit('/').next().unwrap_or(path);
-            short.to_owned()
-        }
-        "Write" => {
-            let path = input
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let short = path.rsplit('/').next().unwrap_or(path);
-            short.to_owned()
-        }
-        "Edit" => {
-            let path = input
-                .get("file_path")
-                .and_then(|v| v.as_str())
-                .unwrap_or("?");
-            let short = path.rsplit('/').next().unwrap_or(path);
-            short.to_owned()
-        }
+        "Read" | "Write" | "Edit" => file_arg("file_path"),
         "Bash" => {
             let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("?");
             if cmd.len() > 60 {
@@ -375,47 +493,40 @@ fn format_tool_call(
         }
         _ => {
             // MCP tools: extract the short name after the last "__"
-            if let Some(short) = name.rsplit("__").next() {
-                // Try to extract a meaningful argument
-                let arg = input
-                    .get("relative_path")
-                    .or_else(|| input.get("name_path_pattern"))
-                    .or_else(|| input.get("name_path"))
-                    .or_else(|| input.get("query"))
-                    .or_else(|| input.get("substring_pattern"))
-                    .or_else(|| input.get("project"))
-                    .or_else(|| input.get("libraryName"))
-                    .or_else(|| input.get("url"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                if arg.is_empty() {
-                    short.to_owned()
-                } else {
-                    let short_arg = if arg.len() > 40 {
-                        format!("{}...", &arg[..37])
-                    } else {
-                        arg.to_owned()
-                    };
-                    format!("{short} {short_arg}")
-                }
+            // rsplit("__").next() always returns Some on non-empty strings
+            let short = name.rsplit("__").next().unwrap_or(name);
+            let arg = input
+                .get("relative_path")
+                .or_else(|| input.get("name_path_pattern"))
+                .or_else(|| input.get("name_path"))
+                .or_else(|| input.get("query"))
+                .or_else(|| input.get("substring_pattern"))
+                .or_else(|| input.get("project"))
+                .or_else(|| input.get("libraryName"))
+                .or_else(|| input.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if arg.is_empty() {
+                short.to_owned()
             } else {
-                format!("{name}(...)")
+                let short_arg = if arg.len() > 40 {
+                    format!("{}...", &arg[..37])
+                } else {
+                    arg.to_owned()
+                };
+                format!("{short} {short_arg}")
             }
         }
     }
 }
 
-/// Format a tool result for display (compact preview).
+/// Format a tool result for display (compact preview with line count).
 fn format_tool_result(content: &serde_json::Value, is_error: bool) -> String {
     let prefix = if is_error { "ERR" } else { "ok" };
-    let text = match content {
+    let (first_line, total_lines) = match content {
         serde_json::Value::String(s) => {
-            let first_line = s.lines().next().unwrap_or("");
-            if first_line.len() > 80 {
-                format!("{}...", &first_line[..77])
-            } else {
-                first_line.to_owned()
-            }
+            let fl = s.lines().next().unwrap_or("");
+            (truncate_line(fl, 80), s.lines().count())
         }
         serde_json::Value::Array(arr) => {
             // Tool results can be an array of content blocks
@@ -424,14 +535,24 @@ fn format_tool_result(content: &serde_json::Value, is_error: bool) -> String {
                 .filter_map(|v| v.get("text").and_then(|t| t.as_str()))
                 .collect();
             let joined = texts.join(" ");
-            let first_line = joined.lines().next().unwrap_or("");
-            if first_line.len() > 80 {
-                format!("{}...", &first_line[..77])
-            } else {
-                first_line.to_owned()
-            }
+            let fl = joined.lines().next().unwrap_or("").to_owned();
+            let count = joined.lines().count();
+            (truncate_line(&fl, 80), count)
         }
-        _ => "...".to_owned(),
+        _ => ("...".to_owned(), 0),
     };
-    format!("  → [{prefix}] {text}")
+    if total_lines > 1 {
+        format!("  -> [{prefix}] {first_line} (+{} lines)", total_lines - 1)
+    } else {
+        format!("  -> [{prefix}] {first_line}")
+    }
+}
+
+/// Truncate a string to `max` chars with `...` suffix.
+fn truncate_line(s: &str, max: usize) -> String {
+    if s.len() > max {
+        format!("{}...", &s[..max.saturating_sub(3)])
+    } else {
+        s.to_owned()
+    }
 }
