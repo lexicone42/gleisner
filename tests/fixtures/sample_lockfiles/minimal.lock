@@ -1,0 +1,21 @@
+version = 4
+
+[[package]]
+name = "example-app"
+version = "0.1.0"
+
+[[package]]
+name = "serde"
+version = "1.0.200"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddc6f9cc94d67c0e21aed1c158a7d1bda4e189c1e0dba2b950ea3c7dbf4b0e2e"
+
+[[package]]
+name = "tokio"
+version = "1.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aede2f107e2c4e4f1e079a831e1c4a3e9b8e545b6ed81cbc3262dbb8eb23e0d"
+
+[[package]]
+name = "my-local-lib"
+version = "0.2.0"

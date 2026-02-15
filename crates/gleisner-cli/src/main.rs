@@ -39,9 +39,8 @@ enum Commands {
     Verify(commands::verify::VerifyArgs),
     /// Display an attestation bundle in human-readable format.
     Inspect(commands::inspect::InspectArgs),
-    // Future commands:
-    // /// Generate or analyze a Software Bill of Materials.
-    // Sbom(commands::sbom::SbomArgs),
+    /// Generate a Software Bill of Materials (`CycloneDX` 1.5).
+    Sbom(commands::sbom::SbomArgs),
 }
 
 #[tokio::main]
@@ -72,5 +71,6 @@ async fn main() -> Result<()> {
         Commands::Record(args) => commands::record::execute(args).await,
         Commands::Verify(args) => commands::verify::execute(args),
         Commands::Inspect(args) => commands::inspect::execute(&args),
+        Commands::Sbom(args) => commands::sbom::execute(&args),
     }
 }

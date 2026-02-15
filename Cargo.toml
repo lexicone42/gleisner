@@ -59,6 +59,10 @@ gix = { version = "0.68", default-features = false, features = ["basic"] }
 # Sigstore
 sigstore = "0.10"
 
+# X.509 / ASN.1
+x509-cert = { version = "0.2", features = ["pem"] }
+der = "0.7"
+
 # TUI
 ratatui = "0.29"
 crossterm = "0.28"

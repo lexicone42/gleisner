@@ -5,4 +5,7 @@
 //! trust annotations indicating whether dependencies were introduced
 //! by Claude Code or pre-existing.
 
+pub mod cargo_lock;
+pub mod cyclonedx;
 pub mod error;
+pub mod sbom;
