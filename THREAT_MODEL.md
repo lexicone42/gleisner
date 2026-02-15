@@ -1,6 +1,6 @@
 # Lacerta -- Threat Model for Gleisner
 
-**Document version:** 0.1.0
+**Document version:** 0.2.0
 **Date:** 2026-02-14
 **Status:** Living document -- updated as the project evolves
 **Authors:** Gleisner maintainers
@@ -29,8 +29,11 @@ interposes between the developer and Claude Code to provide:
 - **Audit logging** (`gleisner-scapes`) -- timestamped, sequenced JSONL event
   streams covering every observable action inside the sandbox.
 - **Verification** (`gleisner-lacerta`) -- signature verification, digest
-  integrity checks, and OPA/Rego policy evaluation (via Wasmtime) against
-  attestation bundles.
+  integrity checks, attestation chain verification, and OPA/Rego policy
+  evaluation (via Wasmtime) against attestation bundles.
+- **Attestation chain** (`gleisner-introdus/chain`) -- links successive
+  attestation bundles via SHA-256 parent digests, enabling continuity
+  verification and gap detection across sessions.
 
 ### 1.2 Purpose of This Document
 
@@ -83,7 +86,8 @@ Developer workstation
 |  |  - Landlock: filesystem access control               | |
 |  |  - cgroups v2: memory, CPU, PID, disk limits         | |
 |  |  - seccomp BPF: syscall filtering                    | |
-|  |  - Network policy: domain/port allowlists            | |
+|  |  - Network filtering: slirp4netns + nftables/iptables| |
+|  |    (user+net namespace, TAP device, firewall rules)  | |
 |  +-----------------------------------------------------+ |
 |           |                                               |
 |           v                                               |
@@ -114,6 +118,7 @@ Developer workstation
 |  | gleisner-lacerta  (verification)                     | |
 |  |  - Signature verification                            | |
 |  |  - Digest integrity checks                           | |
+|  |  - Attestation chain verification (--chain)          | |
 |  |  - OPA/Rego policy evaluation (Wasmtime)             | |
 |  +-----------------------------------------------------+ |
 |                                                           |
@@ -345,6 +350,58 @@ process has the necessary permissions. Critical targets include:
 - `~/.config/gleisner/` -- modify Gleisner's own configuration
 - Cron files, systemd user units -- scheduled persistence
 
+### 6.7 Network Filtering Architecture
+
+When `allow_domains` is configured in a sandbox profile, Gleisner creates a
+multi-layer network filtering stack:
+
+1. **User + network namespace** -- `slirp4netns` creates a TAP device
+   (`tap0`) inside a new user and network namespace, providing an isolated
+   network stack with a virtual gateway (`10.0.2.2`) and DNS resolver
+   (`10.0.2.3`).
+2. **Domain resolution** -- allowed domains are resolved to IP addresses
+   before the sandbox starts. Only these IPs are permitted in firewall rules.
+3. **Firewall rules** -- nftables (preferred) or iptables (fallback) rules
+   are applied inside the namespace, restricting outbound traffic to the
+   resolved IPs on ports 80 and 443, plus DNS to the slirp4netns resolver.
+
+Attack surface includes:
+- **Firewall backend detection** -- Gleisner probes for nftables then falls
+  back to iptables. If neither is available, the sandbox starts without
+  network filtering (fail-open for usability).
+- **DNS resolution timing** -- domains are resolved once at setup time.
+  DNS-rebinding attacks could cause re-resolution to attacker IPs after rules
+  are applied.
+- **slirp4netns process lifecycle** -- the slirp4netns process runs outside
+  the sandbox and must be properly cleaned up. Process leaks were identified
+  and fixed (explicit `drop()` before `exit()`).
+
+### 6.8 Attestation Chain
+
+Each `gleisner record` session can link to the previous attestation via a
+`gleisner:chain` field in the provenance predicate. This creates a hash-linked
+chain of attestation bundles:
+
+```
+attestation-003.json  (latest)
+  └─ parentDigest: sha256(attestation-002.json.payload)
+       └─ parentDigest: sha256(attestation-001.json.payload)
+            └─ (root -- no parent)
+```
+
+Attack surface includes:
+- **Chain gap injection** -- deleting an intermediate attestation breaks the
+  chain but does not invalidate individual attestations.
+- **Parent digest forgery** -- an attacker who can write to `.gleisner/`
+  could create a fake attestation with a forged `parentDigest` linking to a
+  legitimate parent.
+- **Unsigned chain bootstrapping** -- `--no-sign` produces attestations with
+  `VerificationMaterial::None` that can participate in chains, weakening the
+  chain's cryptographic guarantees.
+- **File-based discovery** -- chain walking relies on scanning `.gleisner/`
+  for `attestation-*.json` files. An attacker who can inject files into this
+  directory can poison chain discovery.
+
 ---
 
 ## 7. Threat Scenarios
@@ -539,9 +596,12 @@ injection.
 the impact is the same as LACERTA-001.
 
 **Gleisner Mitigation:**
-- `gleisner-polis` network policy: `allow_dns: false` in strict profiles
-  blocks DNS-based exfiltration entirely (requires pre-resolved addresses or a
-  local DNS proxy).
+- `gleisner-polis` network filtering: when `allow_domains` is configured,
+  Gleisner creates a user+network namespace with `slirp4netns` providing a
+  TAP-based network stack, then applies nftables (preferred) or iptables
+  (fallback) rules that restrict outbound connections to resolved IP addresses
+  of allowed domains only. DNS queries to the slirp4netns resolver
+  (`10.0.2.3`) are permitted; all other DNS is blocked.
 - `gleisner-polis` network policy: outbound connections to
   `api.anthropic.com` are permitted but other domains are blocked, limiting
   the exfiltration surface to the Anthropic API channel itself.
@@ -699,6 +759,162 @@ own code, not its dependencies (many of which use `unsafe` internally, e.g.,
 
 ---
 
+### LACERTA-009: Attestation Chain Manipulation
+
+**Description:** An attacker who has write access to the `.gleisner/`
+directory attempts to manipulate the attestation chain:
+
+1. **Chain gap injection:** Delete an intermediate attestation (e.g.,
+   `attestation-002.json`) to break the chain. Verification of
+   `attestation-003.json` with `--chain` will fail to find the parent, but
+   individual attestation verification still passes.
+2. **Forged chain link:** Create a fake attestation with a fabricated
+   `gleisner:chain.parentDigest` that links to a legitimate parent, inserting
+   a fabricated session into the chain.
+3. **Chain reset abuse:** Use `--no-chain` to silently start a new chain
+   after a session that should have been recorded but was compromised.
+4. **Unsigned chain link:** Use `--no-sign` to create attestation bundles
+   with `VerificationMaterial::None` that participate in the chain without
+   cryptographic binding, then modify their payloads freely since no
+   signature verification is possible.
+
+**Likelihood:** Low -- requires write access to `.gleisner/`, which implies
+the attacker already has significant access to the project. However, a
+compromised Claude Code session (via prompt injection) could modify
+`.gleisner/` contents if the directory is writable within the sandbox.
+
+**Impact:** High -- a manipulated chain undermines session continuity
+guarantees. Forged chain links could insert fabricated provenance into the
+project's attestation history. Deleted links create undetectable gaps.
+
+**Gleisner Mitigation:**
+- `gleisner-lacerta` chain verification (`verify --chain`): walks the chain
+  from a given bundle backward, verifying each signature and checking that
+  `parentDigest` matches `SHA-256(parent.payload)`. Detects modified or
+  deleted intermediate bundles.
+- `gleisner-introdus` chain linking: uses `compute_payload_digest()` on the
+  canonical `payload` field (not the full bundle), making the digest
+  deterministic and signature-independent.
+- `gleisner-lacerta` policy engine: `require_parent_attestation` policy rule
+  can reject attestations that lack chain links, detecting `--no-chain`
+  usage.
+- `gleisner-polis` filesystem policy: `.gleisner/` can be configured as
+  read-only within the sandbox, preventing Claude Code from modifying
+  existing attestations.
+
+**Residual Risk:** Medium -- chain verification is opt-in (`--chain` flag).
+Without it, individual attestations are verified in isolation and chain
+manipulation is undetectable. Additionally, `VerificationMaterial::None`
+bundles cannot have their signatures verified, so their chain participation
+is purely digest-based. Organizations should enforce `--chain` verification
+in CI/CD and disallow unsigned attestations via policy.
+
+---
+
+### LACERTA-010: Network Filter Bypass
+
+**Description:** An attacker (via prompt injection or compromised model)
+attempts to bypass the slirp4netns + nftables/iptables network filtering:
+
+1. **Firewall backend unavailability:** If neither nftables nor iptables is
+   available on the host, Gleisner logs a warning but starts the sandbox
+   without network filtering (fail-open). An attacker who can remove or hide
+   firewall tools gains unrestricted network access.
+2. **DNS rebinding:** The allowed domains are resolved to IP addresses at
+   sandbox setup time. An attacker who controls a DNS record for an allowed
+   domain could change it after resolution, causing the domain to resolve to
+   a different IP inside the sandbox (slirp4netns DNS resolver re-resolves
+   independently).
+3. **IP aliasing:** If an allowed domain resolves to multiple IPs, only the
+   IPs resolved at setup time are permitted. An attacker could use a domain
+   that load-balances across many IPs, some of which point to
+   attacker-controlled infrastructure, that were not captured during initial
+   resolution.
+4. **slirp4netns escape:** A vulnerability in slirp4netns could allow the
+   sandboxed process to escape the network namespace and access the host
+   network stack directly.
+5. **Tunneling through allowed domains:** If `api.anthropic.com` is
+   allowlisted (necessarily), an attacker could encode exfiltration data in
+   API request headers, query parameters, or body content that reaches an
+   attacker-controlled middlebox or is extractable from Anthropic's logging.
+
+**Likelihood:** Medium -- firewall backend unavailability is the most likely
+scenario (some minimal Linux installations lack both nftables and iptables).
+DNS rebinding and IP aliasing are well-known techniques but require attacker
+control of DNS records for allowed domains. slirp4netns escape is low
+probability.
+
+**Impact:** High -- network filter bypass enables unrestricted outbound
+connections, enabling credential exfiltration, malicious payload download,
+and communication with attacker infrastructure.
+
+**Gleisner Mitigation:**
+- `gleisner-polis` network filtering: probes for nftables (`nft` binary and
+  kernel support) first, then falls back to iptables (`iptables` binary and
+  `ip_tables` kernel module). Logs a clear warning if neither is available.
+- `gleisner-polis` firewall rules: restrict outbound to resolved IPs on ports
+  80 and 443 only. DNS is limited to the slirp4netns resolver (`10.0.2.3`).
+  All other traffic is dropped.
+- `gleisner-polis` process cleanup: `SlirpHandle` implements `Drop` to kill
+  the slirp4netns process, and `record`/`wrap` commands explicitly drop
+  handles before exit to prevent process leaks.
+- `gleisner-scapes` audit log: network activity is logged, enabling post-hoc
+  detection of connection attempts to unexpected destinations.
+
+**Residual Risk:** Medium -- the fail-open behavior when no firewall backend
+is available is a deliberate usability trade-off. The `api.anthropic.com`
+exfiltration channel (tunneling through allowed domains) is inherent and
+cannot be closed without breaking Claude Code's core functionality. DNS
+rebinding mitigation requires pinning resolved IPs, which is implemented but
+does not protect against re-resolution by the slirp4netns resolver itself.
+
+---
+
+### LACERTA-011: Unsigned Attestation Bundle Acceptance
+
+**Description:** Gleisner supports a `--no-sign` mode that produces
+attestation bundles with `VerificationMaterial::None`. These bundles contain
+valid in-toto statements and provenance predicates but have an empty
+signature and no verification material. An attacker could:
+
+1. **Forge unsigned attestations:** Create attestation bundles with arbitrary
+   payloads and `VerificationMaterial::None`. Since no signature verification
+   is possible, the attestation is unfalsifiable.
+2. **Tamper with unsigned bundles:** Modify the `payload` field of an
+   existing unsigned bundle (changing materials, subjects, or provenance)
+   without detection -- there is no signature to invalidate.
+3. **Mix signed and unsigned in chains:** Create a chain where some
+   attestations are signed and some are unsigned. Chain verification walks
+   the digest links but cannot verify the integrity of unsigned links,
+   creating trust gaps.
+
+**Likelihood:** Medium -- `--no-sign` exists for development and testing
+workflows where key management is not yet configured. However, if unsigned
+attestations are accepted in production verification pipelines, the
+attestation guarantee is meaningless.
+
+**Impact:** High -- accepting unsigned attestations as valid undermines the
+entire attestation trust model. Any session history can be fabricated.
+
+**Gleisner Mitigation:**
+- `gleisner-lacerta` verification: `VerificationMaterial::None` bundles are
+  reported with a warning during `verify`. The signature verification step
+  is skipped (not failed), and the outcome includes a clear indication that
+  no signature was present.
+- `gleisner-lacerta` policy engine: policies can require specific
+  `VerificationMaterial` types (e.g., `require_sigstore: true` or
+  `require_signature: true`) to reject unsigned bundles.
+- `gleisner-cli` output: `record --no-sign` logs a warning that the
+  attestation is unsigned and should not be used for production provenance.
+
+**Residual Risk:** Medium -- without policy enforcement, unsigned
+attestations are accepted by default. The residual risk is that development
+workflows using `--no-sign` may be promoted to production without
+transitioning to signed attestations. Organizations should enforce signing
+requirements via policy.
+
+---
+
 ## 8. Mitigations Matrix
 
 This matrix maps each threat scenario to the Gleisner components that provide
@@ -714,6 +930,9 @@ mitigation.
 | **LACERTA-006** TOCTOU on sandbox boundary | Atomic namespace creation, no-new-privs | Profile digest in attestation | -- | -- | Digest verification |
 | **LACERTA-007** Attestation forgery/tampering | -- | Sigstore signing, timestamps, audit log digest | Audit log as ground truth | -- | Signature verification, digest checks, OPA policy |
 | **LACERTA-008** Gleisner dependency compromise | -- | -- | -- | -- | cargo-deny, lockfile pinning, forbid unsafe |
+| **LACERTA-009** Attestation chain manipulation | `.gleisner/` read-only in sandbox | Chain digest linking, payload canonicalization | -- | -- | Chain verification (`--chain`), `require_parent_attestation` policy |
+| **LACERTA-010** Network filter bypass | slirp4netns + nftables/iptables, IP pinning | -- | Network activity logged | -- | -- |
+| **LACERTA-011** Unsigned attestation acceptance | -- | `--no-sign` warning | -- | -- | Policy: `require_signature`, verification warnings |
 
 ### 8.1 Defense in Depth Layers
 
@@ -790,11 +1009,13 @@ in approximate priority order.
 
 ### 10.1 Network Traffic Inspection (Planned)
 
-Implement a transparent HTTP/HTTPS proxy within the sandbox that can log and
-optionally filter outbound request bodies. This would enable detection of
-credential exfiltration via the Anthropic API channel (LACERTA-005) without
-requiring TLS interception of the Anthropic connection itself -- the proxy
-would inspect traffic before it reaches the TLS layer.
+The current slirp4netns-based network filtering (Phase E) restricts
+connections at the IP/port level but does not inspect request content. A
+future version could add a transparent HTTP proxy within the namespace that
+logs outbound request bodies before they reach the TLS layer. This would
+enable detection of credential exfiltration via the Anthropic API channel
+(LACERTA-005, LACERTA-010) without requiring TLS interception of the
+Anthropic connection itself.
 
 ### 10.2 Real-Time Policy Enforcement (Planned)
 
@@ -856,6 +1077,7 @@ than filesystem-based ECDSA keys but cannot use Sigstore keyless mode.
 | Term | Definition |
 |---|---|
 | **Attestation** | A cryptographically signed statement about the provenance of a software artifact |
+| **Attestation chain** | A sequence of attestation bundles linked by parent digest references, enabling session continuity verification |
 | **bubblewrap (bwrap)** | A Linux sandboxing tool that uses unprivileged user namespaces |
 | **Claude Code** | Anthropic's CLI-based AI coding assistant |
 | **CLAUDE.md** | A project-level markdown file containing instructions for Claude Code |
@@ -863,12 +1085,14 @@ than filesystem-based ECDSA keys but cannot use Sigstore keyless mode.
 | **Fulcio** | Sigstore's certificate authority for code signing |
 | **in-toto** | A framework for securing the integrity of software supply chains |
 | **Landlock** | A Linux security module for unprivileged filesystem access control |
+| **nftables** | Linux kernel subsystem for packet filtering and NAT, successor to iptables |
 | **OPA/Rego** | Open Policy Agent and its policy language, used for attestation verification |
 | **Rekor** | Sigstore's transparency log for code signing events |
 | **SBOM** | Software Bill of Materials -- an inventory of software components |
 | **seccomp BPF** | Linux kernel feature for system call filtering |
 | **Sigstore** | An open-source project for signing, verifying, and protecting software |
 | **SLSA** | Supply-chain Levels for Software Artifacts -- a security framework by Google |
+| **slirp4netns** | User-mode networking for rootless containers, providing TAP-based network access inside user namespaces |
 | **TOCTOU** | Time-of-check/time-of-use -- a class of race condition vulnerabilities |
 
 ## Appendix B: Threat ID Index
@@ -883,3 +1107,6 @@ than filesystem-based ECDSA keys but cannot use Sigstore keyless mode.
 | LACERTA-006 | TOCTOU on sandbox boundary | Low | High |
 | LACERTA-007 | Attestation forgery or tampering | Low--Medium | Critical |
 | LACERTA-008 | Supply chain attack on Gleisner | Low | Critical |
+| LACERTA-009 | Attestation chain manipulation | Low | High |
+| LACERTA-010 | Network filter bypass | Medium | High |
+| LACERTA-011 | Unsigned attestation bundle acceptance | Medium | High |
