@@ -256,6 +256,21 @@ impl Verifier {
                     "attestation chain: {chain_len} link(s) verified"
                 )));
 
+                // Check for unsigned links in the chain.
+                let unsigned_count = entries.iter().filter(|e| !e.is_signed).count();
+                if unsigned_count > 0 {
+                    let unsigned_paths: Vec<_> = entries
+                        .iter()
+                        .filter(|e| !e.is_signed)
+                        .map(|e| e.path.display().to_string())
+                        .collect();
+                    outcomes.push(VerificationOutcome::Fail(format!(
+                        "chain contains {unsigned_count} unsigned link(s) \
+                         (VerificationMaterial::None) — chain integrity cannot be guaranteed: {}",
+                        unsigned_paths.join(", ")
+                    )));
+                }
+
                 // Check each link's parent digest integrity.
                 for (i, entry) in entries.iter().enumerate() {
                     if let Some(ref parent_digest) = entry.parent_digest {

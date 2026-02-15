@@ -40,6 +40,8 @@ pub struct ChainEntry {
     pub started_on: Option<DateTime<Utc>>,
     /// When the session finished.
     pub finished_on: Option<DateTime<Utc>>,
+    /// Whether this bundle has verification material (is cryptographically signed).
+    pub is_signed: bool,
 }
 
 /// Compute the SHA-256 hex digest of an attestation bundle's payload.
@@ -137,6 +139,10 @@ pub fn walk_chain(start: &Path, dir: &Path) -> Result<Vec<ChainEntry>, Attestati
         let git_commit = extract_git_commit(&bundle);
         let started_on = extract_started_on(&bundle);
         let finished_on = extract_finished_on(&bundle);
+        let is_signed = !matches!(
+            bundle.verification_material,
+            crate::bundle::VerificationMaterial::None
+        );
 
         // Detect cycles: if we've already visited this digest, stop.
         if !visited.insert(payload_digest.clone()) {
@@ -147,6 +153,14 @@ pub fn walk_chain(start: &Path, dir: &Path) -> Result<Vec<ChainEntry>, Attestati
             break;
         }
 
+        if !is_signed {
+            warn!(
+                path = %current_path.display(),
+                digest = %payload_digest,
+                "unsigned bundle in attestation chain (VerificationMaterial::None)"
+            );
+        }
+
         chain.push(ChainEntry {
             path: current_path.clone(),
             payload_digest,
@@ -154,6 +168,7 @@ pub fn walk_chain(start: &Path, dir: &Path) -> Result<Vec<ChainEntry>, Attestati
             git_commit,
             started_on,
             finished_on,
+            is_signed,
         });
 
         // Follow the parent link.
