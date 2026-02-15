@@ -1,6 +1,5 @@
 # Gleisner
 
-[![CI](https://github.com/lexicone42/gleisner/actions/workflows/ci.yml/badge.svg)](https://github.com/lexicone42/gleisner/actions/workflows/ci.yml)
 [![License: MIT/Apache-2.0](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 [![Rust: 1.85+](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
 [![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-blueviolet)](https://docs.anthropic.com/en/docs/claude-code)
