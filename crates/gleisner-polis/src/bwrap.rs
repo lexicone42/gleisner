@@ -175,13 +175,19 @@ impl BwrapSandbox {
             cmd.arg("--new-session");
         }
 
-        // Map to the real UID/GID inside the sandbox instead of defaulting
-        // to root (UID 0). bwrap implicitly creates a user namespace when
-        // run unprivileged, mapping the caller to UID 0. This breaks tools
-        // like Claude Code that refuse certain flags when running as root.
+        // Explicitly create a user namespace and map to the real UID/GID
+        // instead of letting bwrap default to UID 0. Without this, Claude
+        // Code detects "root" and refuses --dangerously-skip-permissions.
+        // --unshare-user is required for --uid/--gid to work.
         let uid = nix::unistd::getuid();
         let gid = nix::unistd::getgid();
-        cmd.args(["--uid", &uid.to_string(), "--gid", &gid.to_string()]);
+        cmd.args([
+            "--unshare-user",
+            "--uid",
+            &uid.to_string(),
+            "--gid",
+            &gid.to_string(),
+        ]);
     }
 
     /// Apply network isolation.
