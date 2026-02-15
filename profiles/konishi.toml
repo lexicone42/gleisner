@@ -50,3 +50,12 @@ max_cpu_percent = 100
 max_pids = 256
 max_file_descriptors = 1024
 max_disk_write_mb = 10240
+
+[plugins]
+skip_permissions = true
+add_dirs = ["~/.claude/exo-self"]
+disallowed_tools = [
+    "mcp__plugin_serena_serena__execute_shell_command",
+    "mcp__plugin_serena_serena__create_text_file",
+]
+mcp_network_domains = []

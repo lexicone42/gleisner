@@ -63,3 +63,15 @@ max_cpu_percent = 100
 max_pids = 512
 max_file_descriptors = 4096
 max_disk_write_mb = 20480
+
+[plugins]
+skip_permissions = true
+add_dirs = ["~/.claude/exo-self"]
+disallowed_tools = [
+    "mcp__plugin_serena_serena__execute_shell_command",
+]
+# Carter-Zimmerman allows MCP servers that need network access
+mcp_network_domains = [
+    "context7.com",
+    "api.greptile.com",
+]

@@ -131,7 +131,9 @@ pub fn evaluate_network(target: &str, port: u16, profile: &Profile) -> EventResu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::{FilesystemPolicy, NetworkPolicy, ProcessPolicy, ResourceLimits};
+    use crate::profile::{
+        FilesystemPolicy, NetworkPolicy, PluginPolicy, ProcessPolicy, ResourceLimits,
+    };
     use std::path::PathBuf;
 
     fn test_profile() -> Profile {
@@ -167,6 +169,7 @@ mod tests {
                 max_file_descriptors: 1024,
                 max_disk_write_mb: 10240,
             },
+            plugins: PluginPolicy::default(),
         }
     }
 

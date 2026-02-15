@@ -60,3 +60,15 @@ max_cpu_percent = 50
 max_pids = 128
 max_file_descriptors = 512
 max_disk_write_mb = 4096
+
+[plugins]
+# Ashton-Laval: maximum isolation — block all MCP escape vectors
+skip_permissions = true
+add_dirs = []
+disallowed_tools = [
+    "mcp__plugin_serena_serena__execute_shell_command",
+    "mcp__plugin_serena_serena__create_text_file",
+    "mcp__plugin_playwright_playwright__browser_navigate",
+    "mcp__plugin_playwright_playwright__browser_run_code",
+]
+mcp_network_domains = []

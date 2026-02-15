@@ -1,0 +1,36 @@
+[package]
+name = "gleisner-tui"
+version = "0.1.0"
+description = "Ratatui-based TUI for gleisner — security-aware AI coding REPL"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# TUI
+ratatui.workspace = true
+crossterm.workspace = true
+
+# Async
+tokio.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+color-eyre.workspace = true
+
+# Internal
+gleisner-scapes.workspace = true
+gleisner-polis.workspace = true
+
+[dev-dependencies]
+# PTY-based integration testing
+portable-pty.workspace = true
+vt100.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

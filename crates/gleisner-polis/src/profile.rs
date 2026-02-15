@@ -52,6 +52,9 @@ pub struct Profile {
     pub process: ProcessPolicy,
     /// Resource limits via cgroups v2.
     pub resources: ResourceLimits,
+    /// Claude Code plugin and MCP tool policy.
+    #[serde(default)]
+    pub plugins: PluginPolicy,
 }
 
 /// Controls which filesystem paths are visible and writable.
@@ -92,6 +95,47 @@ pub struct ProcessPolicy {
     pub command_allowlist: Vec<String>,
     /// Optional seccomp BPF profile path.
     pub seccomp_profile: Option<PathBuf>,
+}
+
+/// Claude Code plugin and MCP tool policy.
+///
+/// Controls which MCP tools are blocked, which additional directories
+/// Claude Code can access (e.g. for exo-self), and network domains
+/// needed by MCP servers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginPolicy {
+    /// Tools to explicitly deny via `--disallowedTools`.
+    /// e.g. `["mcp__plugin_serena_serena__execute_shell_command"]`
+    #[serde(default)]
+    pub disallowed_tools: Vec<String>,
+    /// Additional directories to grant via `--add-dir`.
+    /// Tilde expansion is applied (e.g. `~/.claude/exo-self`).
+    #[serde(default)]
+    pub add_dirs: Vec<PathBuf>,
+    /// Extra domains needed by MCP servers (merged into network allowlist).
+    /// e.g. context7 needs `context7.com`, greptile needs `api.greptile.com`.
+    #[serde(default)]
+    pub mcp_network_domains: Vec<String>,
+    /// Whether to skip Claude Code's built-in permission system.
+    /// When `true`, passes `--dangerously-skip-permissions`.
+    /// Gleisner's sandbox provides the real security boundary.
+    #[serde(default = "default_true")]
+    pub skip_permissions: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+impl Default for PluginPolicy {
+    fn default() -> Self {
+        Self {
+            disallowed_tools: vec![],
+            add_dirs: vec![],
+            mcp_network_domains: vec![],
+            skip_permissions: true,
+        }
+    }
 }
 
 /// Resource limits enforced via cgroups v2.

@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 edition = "2024"
 rust-version = "1.85"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 repository = "https://github.com/lexicone42/gleisner"
 homepage = "https://github.com/lexicone42/gleisner"
 categories = ["development-tools", "command-line-utilities"]
@@ -64,8 +64,8 @@ x509-cert = { version = "0.2", features = ["pem"] }
 der = "0.7"
 
 # TUI
-ratatui = "0.29"
-crossterm = "0.28"
+ratatui = { version = "0.30", features = ["crossterm"] }
+crossterm = "0.29"
 
 # Policy (WASM runtime for OPA/Rego)
 wasmtime = "27"
@@ -73,6 +73,10 @@ wasmtime = "27"
 # Filesystem
 directories = "6"
 which = "7"
+
+# PTY / terminal emulation (for TUI testing)
+portable-pty = "0.9"
+vt100 = "0.16"
 
 # Testing
 assert_cmd = "2"
@@ -86,6 +90,7 @@ gleisner-introdus = { path = "crates/gleisner-introdus" }
 gleisner-bridger = { path = "crates/gleisner-bridger" }
 gleisner-scapes = { path = "crates/gleisner-scapes" }
 gleisner-lacerta = { path = "crates/gleisner-lacerta" }
+gleisner-tui = { path = "crates/gleisner-tui" }
 
 # ──────────────────────────────────────────────────────────────
 # Workspace lint inheritance: ALL lint config goes here.

@@ -229,7 +229,9 @@ fn expand_tilde(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::{FilesystemPolicy, NetworkPolicy, ProcessPolicy, ResourceLimits};
+    use crate::profile::{
+        FilesystemPolicy, NetworkPolicy, PluginPolicy, ProcessPolicy, ResourceLimits,
+    };
 
     fn test_profile(network_default: PolicyDefault) -> Profile {
         Profile {
@@ -260,6 +262,7 @@ mod tests {
                 max_file_descriptors: 1024,
                 max_disk_write_mb: 10240,
             },
+            plugins: PluginPolicy::default(),
         }
     }
 
