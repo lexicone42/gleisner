@@ -70,14 +70,17 @@ impl NetworkFilter {
         };
 
         let mut allowed_endpoints = Vec::new();
+        let mut ipv6_only_domains = Vec::new();
 
         for domain in &all_domains {
+            let mut has_ipv4 = false;
             for &port in &ports {
                 let addr_str = format!("{domain}:{port}");
                 match addr_str.to_socket_addrs() {
                     Ok(addrs) => {
                         for addr in addrs {
                             if addr.is_ipv4() {
+                                has_ipv4 = true;
                                 allowed_endpoints.push((addr.ip(), port));
                                 debug!(domain, ip = %addr.ip(), port, "resolved domain");
                             }
@@ -88,10 +91,20 @@ impl NetworkFilter {
                     }
                 }
             }
+            if !has_ipv4 {
+                ipv6_only_domains.push(*domain);
+            }
+        }
+
+        if !ipv6_only_domains.is_empty() {
+            warn!(
+                domains = ?ipv6_only_domains,
+                "domains resolved only to IPv6 — not reachable through slirp4netns, traffic will be blocked"
+            );
         }
 
         if allowed_endpoints.is_empty() && !all_domains.is_empty() {
-            warn!("no domains could be resolved — all outbound traffic will be blocked");
+            warn!("no domains could be resolved to IPv4 — all outbound traffic will be blocked");
         }
 
         info!(

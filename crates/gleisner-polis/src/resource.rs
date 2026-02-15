@@ -66,18 +66,29 @@ impl CgroupScope {
         Ok(())
     }
 
-    /// Write resource limit values to the cgroup control files.
     fn write_limits(&self, limits: &ResourceLimits) -> Result<(), SandboxError> {
         // memory.max: bytes
-        let memory_bytes = limits.max_memory_mb * 1024 * 1024;
-        self.write_control("memory.max", &memory_bytes.to_string())?;
+        if limits.max_memory_mb == 0 {
+            warn!("max_memory_mb is 0 — skipping memory limit (no limit applied)");
+        } else {
+            let memory_bytes = limits.max_memory_mb * 1024 * 1024;
+            self.write_control("memory.max", &memory_bytes.to_string())?;
+        }
 
         // cpu.max: "quota period" where period is 100000us
-        let quota = u64::from(limits.max_cpu_percent) * 1000;
-        self.write_control("cpu.max", &format!("{quota} 100000"))?;
+        if limits.max_cpu_percent == 0 {
+            warn!("max_cpu_percent is 0 — skipping CPU limit (no limit applied)");
+        } else {
+            let quota = u64::from(limits.max_cpu_percent) * 1000;
+            self.write_control("cpu.max", &format!("{quota} 100000"))?;
+        }
 
         // pids.max
-        self.write_control("pids.max", &limits.max_pids.to_string())?;
+        if limits.max_pids == 0 {
+            warn!("max_pids is 0 — skipping PID limit (no limit applied)");
+        } else {
+            self.write_control("pids.max", &limits.max_pids.to_string())?;
+        }
 
         debug!(
             memory_mb = limits.max_memory_mb,

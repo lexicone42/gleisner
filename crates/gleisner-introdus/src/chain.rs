@@ -5,11 +5,13 @@
 //! attestation in a directory, compute payload digests, and walk the chain
 //! backwards from any starting point.
 
-use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
+use tracing::warn;
 
 use crate::bundle::AttestationBundle;
 use crate::error::AttestationError;
@@ -120,6 +122,7 @@ pub fn walk_chain(start: &Path, dir: &Path) -> Result<Vec<ChainEntry>, Attestati
 
     let mut chain = Vec::new();
     let mut current_path = start.to_path_buf();
+    let mut visited = HashSet::new();
 
     // Safety bound to prevent infinite loops on malformed chains.
     let max_depth = index.len() + 1;
@@ -134,6 +137,15 @@ pub fn walk_chain(start: &Path, dir: &Path) -> Result<Vec<ChainEntry>, Attestati
         let git_commit = extract_git_commit(&bundle);
         let started_on = extract_started_on(&bundle);
         let finished_on = extract_finished_on(&bundle);
+
+        // Detect cycles: if we've already visited this digest, stop.
+        if !visited.insert(payload_digest.clone()) {
+            warn!(
+                digest = %payload_digest,
+                "cycle detected in attestation chain — stopping walk"
+            );
+            break;
+        }
 
         chain.push(ChainEntry {
             path: current_path.clone(),
@@ -199,7 +211,19 @@ fn build_digest_index(dir: &Path) -> Result<HashMap<String, PathBuf>, Attestatio
         };
 
         let digest = compute_payload_digest(&bundle);
-        index.insert(digest, path);
+        match index.entry(digest) {
+            Entry::Vacant(e) => {
+                e.insert(path);
+            }
+            Entry::Occupied(e) => {
+                warn!(
+                    digest = %e.key(),
+                    existing = %e.get().display(),
+                    duplicate = %path.display(),
+                    "duplicate payload digest — keeping first occurrence"
+                );
+            }
+        }
     }
 
     Ok(index)
@@ -393,5 +417,150 @@ mod tests {
         // Only entry 3 — parent d2 not found in dir.
         assert_eq!(chain.len(), 1);
         assert!(chain[0].parent_digest.is_some());
+    }
+
+    #[test]
+    fn self_referential_chain_terminates() {
+        let dir = TempDir::new().unwrap();
+
+        // Create a bundle that references itself as parent
+        let bundle_json = make_bundle(None, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+        let bundle: AttestationBundle = serde_json::from_str(&bundle_json).unwrap();
+        let digest = compute_payload_digest(&bundle);
+
+        // Re-create with self-reference
+        let self_ref_json = make_bundle(
+            Some((&digest, "attestation-self.json")),
+            "2025-01-01T00:00:00Z",
+            "2025-01-01T00:00:00Z",
+        );
+        let path = dir.path().join("attestation-self.json");
+        std::fs::write(&path, &self_ref_json).unwrap();
+
+        // This must terminate (cycle detection), not loop forever
+        let chain = walk_chain(&path, dir.path()).unwrap();
+        // Should have exactly 1 entry — the self-referential bundle.
+        // The parent digest lookup finds itself, but visited-set breaks the cycle.
+        assert!(!chain.is_empty());
+        assert!(
+            chain.len() <= 2,
+            "cycle detection should limit chain length"
+        );
+    }
+
+    #[test]
+    fn duplicate_digest_keeps_first() {
+        let dir = TempDir::new().unwrap();
+
+        // Two bundles with identical payloads (same digest)
+        let bundle_json = make_bundle(None, "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z");
+        std::fs::write(dir.path().join("attestation-aaa.json"), &bundle_json).unwrap();
+        std::fs::write(dir.path().join("attestation-zzz.json"), &bundle_json).unwrap();
+
+        // build_digest_index should keep exactly one entry
+        let index = build_digest_index(dir.path()).unwrap();
+        let bundle: AttestationBundle = serde_json::from_str(&bundle_json).unwrap();
+        let digest = compute_payload_digest(&bundle);
+        assert!(index.contains_key(&digest));
+        // Only one entry for this digest
+        assert_eq!(
+            index
+                .values()
+                .filter(|p| {
+                    let name = p.file_name().unwrap().to_str().unwrap();
+                    name.starts_with("attestation-")
+                })
+                .count(),
+            1
+        );
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Generate a minimal valid `AttestationBundle` with arbitrary payload content.
+        fn arb_bundle() -> impl Strategy<Value = AttestationBundle> {
+            ".*".prop_map(|payload_content| {
+                let payload = format!(
+                    r#"{{"_type":"https://in-toto.io/Statement/v1","subject":[],"predicateType":"https://slsa.dev/provenance/v1","predicate":{{"buildType":"https://gleisner.dev/GleisnerProvenance/v1","builder":{{"id":"test"}},"metadata":{{"buildStartedOn":"2025-01-01T00:00:00Z","buildFinishedOn":"2025-01-01T00:00:00Z"}},"materials":[],"data":"{payload_content}"}}}}"#,
+                );
+                AttestationBundle {
+                    payload,
+                    signature: String::new(),
+                    verification_material: crate::bundle::VerificationMaterial::None,
+                }
+            })
+        }
+
+        proptest! {
+            /// compute_payload_digest is deterministic for any payload.
+            #[test]
+            fn digest_is_deterministic(bundle in arb_bundle()) {
+                let d1 = compute_payload_digest(&bundle);
+                let d2 = compute_payload_digest(&bundle);
+                prop_assert_eq!(&d1, &d2);
+                prop_assert_eq!(d1.len(), 64); // SHA-256 hex = 64 chars
+            }
+
+            /// walk_chain always terminates regardless of chain structure.
+            #[test]
+            fn walk_chain_always_terminates(bundles in prop::collection::vec(arb_bundle(), 1..20)) {
+                let dir = TempDir::new().unwrap();
+
+                // Write bundles without chain links — all independent roots.
+                // The key invariant: walk_chain terminates for any directory content.
+                for (i, bundle) in bundles.iter().enumerate() {
+                    let path = dir.path().join(format!("attestation-{i:04}.json"));
+                    let json = serde_json::to_string(bundle).unwrap();
+                    std::fs::write(&path, json).unwrap();
+                }
+
+                // Start from the first bundle
+                let start = dir.path().join("attestation-0000.json");
+                if start.exists() {
+                    let chain = walk_chain(&start, dir.path()).unwrap();
+                    // Must terminate and return at least the starting bundle.
+                    prop_assert!(!chain.is_empty());
+                }
+            }
+
+            /// walk_chain never returns duplicate payload digests (cycle detection works).
+            #[test]
+            fn walk_chain_no_duplicate_entries(chain_len in 2..10usize) {
+                let dir = TempDir::new().unwrap();
+
+                // Build a linear chain of the requested length
+                let mut prev_digest: Option<String> = None;
+                for i in 0..chain_len {
+                    let chain_ref = prev_digest.as_deref().map(|d| (d, ""));
+                    let ts = format!("2025-{:02}-01T00:00:00Z", (i % 12) + 1);
+                    let bundle_json = make_bundle(chain_ref, &ts, &ts);
+                    let path = dir.path().join(format!("attestation-{i:04}.json"));
+                    std::fs::write(&path, &bundle_json).unwrap();
+
+                    let bundle: AttestationBundle =
+                        serde_json::from_str(&bundle_json).unwrap();
+                    prev_digest = Some(compute_payload_digest(&bundle));
+                }
+
+                // Walk from the last bundle
+                let start = dir.path().join(format!(
+                    "attestation-{:04}.json",
+                    chain_len - 1
+                ));
+                let chain = walk_chain(&start, dir.path()).unwrap();
+
+                // No duplicate digests in the result
+                let mut seen = HashSet::new();
+                for entry in &chain {
+                    prop_assert!(
+                        seen.insert(&entry.payload_digest),
+                        "duplicate digest in chain: {}",
+                        entry.payload_digest
+                    );
+                }
+            }
+        }
     }
 }

@@ -55,6 +55,12 @@ pub fn verify_signature_with_key(
     signature_b64: &str,
     public_key_pem: &str,
 ) -> Result<(), VerificationError> {
+    if signature_b64.is_empty() {
+        return Err(VerificationError::InvalidSignature(
+            "empty signature".to_owned(),
+        ));
+    }
+
     let sig_bytes = base64::engine::general_purpose::STANDARD
         .decode(signature_b64)
         .map_err(|e| {
@@ -231,5 +237,53 @@ mod tests {
             result.is_err(),
             "empty certificate chain should fail verification"
         );
+    }
+
+    #[test]
+    fn empty_signature_rejected_early() {
+        let (_, pub_pem) = generate_test_keypair();
+        let result = verify_signature_with_key(b"payload", "", &pub_pem);
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("empty signature"),
+            "should report empty signature, got: {err_msg}"
+        );
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// Any payload signed with a key can be verified with the same key.
+            #[test]
+            fn sign_verify_roundtrip(payload in prop::collection::vec(any::<u8>(), 0..1024)) {
+                let (key_pair, pub_pem) = generate_test_keypair();
+                let sig_b64 = sign_payload(&key_pair, &payload);
+                let result = verify_signature_with_key(&payload, &sig_b64, &pub_pem);
+                prop_assert!(result.is_ok(), "valid signature should verify: {:?}", result.err());
+            }
+
+            /// Tampered payloads always fail verification.
+            #[test]
+            fn tampered_payload_always_fails(
+                payload in prop::collection::vec(any::<u8>(), 1..1024),
+                flip_idx in any::<prop::sample::Index>(),
+            ) {
+                let (key_pair, pub_pem) = generate_test_keypair();
+                let sig_b64 = sign_payload(&key_pair, &payload);
+
+                // Tamper with one byte
+                let mut tampered = payload;
+                let idx = flip_idx.index(tampered.len());
+                tampered[idx] ^= 0xFF;
+
+                // Tampered payload must not verify (unless we flipped to same value,
+                // which can't happen with XOR 0xFF on a byte)
+                let result = verify_signature_with_key(&tampered, &sig_b64, &pub_pem);
+                prop_assert!(result.is_err(), "tampered payload should fail verification");
+            }
+        }
     }
 }

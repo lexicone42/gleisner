@@ -2210,6 +2210,7 @@ dependencies = [
  "der",
  "gleisner-introdus",
  "hex",
+ "proptest",
  "serde",
  "serde_json",
  "sha2",

@@ -38,3 +38,57 @@ pub enum VerificationMaterial {
     #[serde(rename = "none")]
     None,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// AttestationBundle survives JSON roundtrip for any payload and signature.
+        #[test]
+        fn bundle_json_roundtrip(
+            payload in ".*",
+            sig in "[a-zA-Z0-9+/=]*",
+        ) {
+            let bundle = AttestationBundle {
+                payload: payload.clone(),
+                signature: sig.clone(),
+                verification_material: VerificationMaterial::None,
+            };
+
+            let json = serde_json::to_string(&bundle).unwrap();
+            let restored: AttestationBundle = serde_json::from_str(&json).unwrap();
+
+            prop_assert_eq!(&restored.payload, &payload);
+            prop_assert_eq!(&restored.signature, &sig);
+            assert!(matches!(restored.verification_material, VerificationMaterial::None));
+        }
+
+        /// AttestationBundle with LocalKey material survives JSON roundtrip.
+        #[test]
+        fn bundle_local_key_roundtrip(
+            payload in ".*",
+            key in "-----BEGIN PUBLIC KEY-----\n[a-zA-Z0-9+/=\n]+-----END PUBLIC KEY-----",
+        ) {
+            let bundle = AttestationBundle {
+                payload: payload.clone(),
+                signature: "dGVzdA==".to_owned(),
+                verification_material: VerificationMaterial::LocalKey {
+                    public_key: key.clone(),
+                },
+            };
+
+            let json = serde_json::to_string(&bundle).unwrap();
+            let restored: AttestationBundle = serde_json::from_str(&json).unwrap();
+
+            prop_assert_eq!(&restored.payload, &payload);
+            match &restored.verification_material {
+                VerificationMaterial::LocalKey { public_key } => {
+                    prop_assert_eq!(public_key, &key);
+                }
+                other => prop_assert!(false, "expected LocalKey, got {:?}", other),
+            }
+        }
+    }
+}

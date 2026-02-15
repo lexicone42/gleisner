@@ -108,7 +108,15 @@ impl PolicyEngine for BuiltinPolicy {
         }
 
         if let Some(max_secs) = self.max_session_duration_secs {
-            if let Some(duration) = input.session_duration_secs {
+            if max_secs <= 0.0 {
+                results.push(PolicyResult {
+                    rule: "max_session_duration_secs".to_owned(),
+                    passed: false,
+                    message: format!(
+                        "invalid policy: max_session_duration_secs must be positive, got {max_secs}"
+                    ),
+                });
+            } else if let Some(duration) = input.session_duration_secs {
                 let passed = duration <= max_secs;
                 results.push(PolicyResult {
                     rule: "max_session_duration_secs".to_owned(),
@@ -453,5 +461,116 @@ mod tests {
 
         let input = extract_policy_input(&payload);
         assert!(input.has_parent_attestation);
+    }
+
+    #[test]
+    fn negative_duration_fails() {
+        let policy = BuiltinPolicy {
+            max_session_duration_secs: Some(-100.0),
+            ..Default::default()
+        };
+        let input = make_input(true, "default", true);
+        let results = policy.evaluate(&input).expect("evaluate");
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed);
+        assert!(results[0].message.contains("must be positive"));
+    }
+
+    #[test]
+    fn zero_duration_fails() {
+        let policy = BuiltinPolicy {
+            max_session_duration_secs: Some(0.0),
+            ..Default::default()
+        };
+        let input = make_input(true, "default", true);
+        let results = policy.evaluate(&input).expect("evaluate");
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed);
+        assert!(results[0].message.contains("must be positive"));
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_policy_input() -> impl Strategy<Value = PolicyInput> {
+            (
+                any::<bool>(),
+                ".*",
+                prop::option::of(0.0..1e6f64),
+                any::<bool>(),
+                any::<bool>(),
+            )
+                .prop_map(|(sandboxed, profile, duration, audit, parent)| {
+                    PolicyInput {
+                        sandboxed: Some(sandboxed),
+                        sandbox_profile: Some(profile),
+                        session_duration_secs: duration,
+                        has_audit_log: audit,
+                        builder_id: Some("test-builder".to_owned()),
+                        has_materials: true,
+                        has_parent_attestation: parent,
+                        chain_length: None,
+                    }
+                })
+        }
+
+        proptest! {
+            /// Any policy with require_sandbox=true rejects unsandboxed sessions.
+            #[test]
+            fn require_sandbox_always_rejects_unsandboxed(
+                profile in ".*",
+                duration in 0.0..1e6f64,
+            ) {
+                let policy = BuiltinPolicy {
+                    require_sandbox: Some(true),
+                    ..Default::default()
+                };
+                let input = PolicyInput {
+                    sandboxed: Some(false),
+                    sandbox_profile: Some(profile),
+                    session_duration_secs: Some(duration),
+                    has_audit_log: true,
+                    builder_id: Some("test".to_owned()),
+                    has_materials: true,
+                    has_parent_attestation: false,
+                    chain_length: None,
+                };
+                let results = policy.evaluate(&input).unwrap();
+                prop_assert!(!results.is_empty());
+                let sandbox_result = results.iter().find(|r| r.rule == "require_sandbox").unwrap();
+                prop_assert!(!sandbox_result.passed, "unsandboxed session must fail require_sandbox");
+            }
+
+            /// max_session_duration_secs: non-positive values always produce a failing result.
+            #[test]
+            fn non_positive_duration_always_fails(max in -1000.0..=0.0f64, actual in 0.0..1e6f64) {
+                let policy = BuiltinPolicy {
+                    max_session_duration_secs: Some(max),
+                    ..Default::default()
+                };
+                let input = PolicyInput {
+                    sandboxed: Some(true),
+                    sandbox_profile: None,
+                    session_duration_secs: Some(actual),
+                    has_audit_log: true,
+                    builder_id: None,
+                    has_materials: true,
+                    has_parent_attestation: false,
+                    chain_length: None,
+                };
+                let results = policy.evaluate(&input).unwrap();
+                let dur_result = results.iter().find(|r| r.rule == "max_session_duration_secs").unwrap();
+                prop_assert!(!dur_result.passed, "non-positive duration limit must always fail");
+            }
+
+            /// Empty policy always returns empty results.
+            #[test]
+            fn empty_policy_always_empty(input in arb_policy_input()) {
+                let policy = BuiltinPolicy::default();
+                let results = policy.evaluate(&input).unwrap();
+                prop_assert!(results.is_empty(), "default policy has no rules");
+            }
+        }
     }
 }
