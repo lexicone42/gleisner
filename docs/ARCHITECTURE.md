@@ -4,6 +4,12 @@ Supply chain security for Claude Code sessions. Sandbox every action, attest eve
 
 Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligence housed in constrained physical bodies. The metaphor is precise: Claude Code is a software intelligence; Gleisner gives it a constrained body (sandbox) and an unforgeable record of everything it did (attestation chain).
 
+**Related documents:**
+- [SECURITY.md](SECURITY.md) -- cryptographic design, key management, policy
+  engine usage, supply chain hardening, security checklist
+- [THREAT_MODEL.md](THREAT_MODEL.md) -- threat actors, attack surface analysis,
+  LACERTA threat scenarios, mitigations matrix, assumptions
+
 ---
 
 ## Table of Contents

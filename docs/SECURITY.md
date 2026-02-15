@@ -5,7 +5,7 @@
 **Status:** Living document
 **Companion:** This document covers practical security guidance. For threat
 scenarios, attack surface analysis, and residual risk assessment, see
-[THREAT_MODEL.md](../THREAT_MODEL.md).
+[THREAT_MODEL.md](THREAT_MODEL.md).
 
 ---
 
@@ -115,79 +115,25 @@ is recorded but not required (to support air-gapped verification).
 
 ## 3. Sandbox Layers
 
-Gleisner implements defense in depth through six independent isolation layers.
-Each layer is enforced by a different Linux kernel subsystem, so compromising
-one does not automatically compromise the others.
+> For full implementation details, architecture diagrams, and design
+> rationale, see
+> [ARCHITECTURE.md § Sandbox Architecture](ARCHITECTURE.md#sandbox-architecture).
 
-### Layer 1: User Namespaces
+Gleisner implements defense in depth through six independent isolation layers,
+each enforced by a different Linux kernel subsystem:
 
-`gleisner-polis` creates unprivileged user namespaces via `clone(2)` with
-`CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET`. The sandboxed
-process sees itself as UID 0 inside the namespace but has no real privileges on
-the host. PID namespace isolation means the process cannot see or signal host
-processes.
+| Layer | Mechanism | Purpose |
+|-------|-----------|---------|
+| 1 | User namespaces | Unprivileged isolation -- sandboxed process has no real host privileges |
+| 2 | Bubblewrap (bwrap) | Mount namespace -- bind-mounts, tmpfs deny, `--die-with-parent` |
+| 3 | Landlock LSM | Fine-grained filesystem access control (independent of mount namespace) |
+| 4 | Seccomp BPF | Syscall filtering, `PR_SET_NO_NEW_PRIVS` |
+| 5 | Cgroups v2 | Memory, CPU, and PID limits |
+| 6 | Network filtering | slirp4netns + nftables/iptables for domain-level allowlisting |
 
-### Layer 2: Bubblewrap (bwrap)
-
-[Bubblewrap](https://github.com/containers/bubblewrap) constructs the mount
-namespace. It bind-mounts only the paths declared in the sandbox profile:
-
-- `readonly_bind` -- project-relevant paths visible read-only.
-- `readwrite_bind` -- project directory and designated temp paths, writable.
-- `deny` -- sensitive paths replaced with empty tmpfs (e.g., `~/.ssh/`,
-  `~/.aws/`, `~/.config/gcloud/`).
-- `tmpfs` -- ephemeral scratch space that does not persist.
-
-Bubblewrap also sets `--die-with-parent` (sandbox dies if the parent exits)
-and `--new-session` (prevents terminal signal injection).
-
-### Layer 3: Landlock LSM
-
-[Landlock](https://landlock.io/) provides fine-grained filesystem access
-control at the kernel level. Even if bubblewrap's mount namespace is somehow
-bypassed, Landlock rules independently restrict which paths the process can
-read, write, or execute. Requires Linux 5.13+.
-
-### Layer 4: Seccomp BPF
-
-Optional seccomp BPF profiles filter the system calls available to the
-sandboxed process. The `ProcessPolicy` in the sandbox profile can reference
-a custom seccomp JSON profile. Additionally, `prctl(PR_SET_NO_NEW_PRIVS, 1)`
-is set before `exec`, preventing SUID/SGID escalation.
-
-### Layer 5: Cgroups v2
-
-`gleisner-polis` creates a dedicated cgroup under
-`/sys/fs/cgroup/gleisner-{uuid}/` and enforces:
-
-| Control file | Profile field | Effect |
-|---|---|---|
-| `memory.max` | `max_memory_mb` | Hard memory limit |
-| `cpu.max` | `max_cpu_percent` | CPU bandwidth cap |
-| `pids.max` | `max_pids` | Fork bomb prevention |
-
-The cgroup is automatically cleaned up on drop (processes moved to parent,
-directory removed).
-
-### Layer 6: Network Filtering
-
-When the profile sets `network.default = "deny"` with `allow_domains`:
-
-1. A user + network namespace pair is created via `unshare`.
-2. **slirp4netns** provides a TAP device (`tap0`) inside the network namespace,
-   giving the sandbox a private network stack (guest IP `10.0.2.100/24`,
-   gateway `10.0.2.2`).
-3. **nftables** (preferred) or **iptables** (fallback) rules are applied inside
-   the namespace:
-   - Default OUTPUT policy: DROP (blocks both IPv4 and IPv6 with nft).
-   - Loopback traffic: ACCEPT.
-   - DNS (UDP 53): ACCEPT only if `allow_dns: true`.
-   - Allowed domains: resolved to IPs and explicitly permitted on ports 443/80.
-4. Bubblewrap enters this pre-configured namespace via `nsenter` instead of
-   creating its own with `--unshare-net`.
-
-This architecture ensures that even if Claude Code spawns arbitrary subprocesses,
-they inherit the filtered network namespace.
+Compromising one layer does not automatically compromise the others. For
+example, even if bubblewrap's mount namespace is bypassed, Landlock
+independently restricts filesystem access.
 
 ---
 
@@ -345,75 +291,31 @@ evaluate `data.gleisner.allow` to `true` or `false` based on these fields.
 
 ## 6. Attestation Chain
 
-### 6.1 How Chains Work
+> For the full chain algorithm (walk_chain pseudocode, digest indexing, cycle
+> detection, mermaid diagrams), see
+> [ARCHITECTURE.md § Chain Verification](ARCHITECTURE.md#chain-verification).
 
-When multiple Gleisner sessions build on each other's output, each attestation
-records the SHA-256 digest of its parent attestation's payload in the
-`gleisner:chain.parentDigest` field. This creates a linked chain of attestations
-where each session's provenance is connected to the session that produced its
-inputs.
+Each attestation records the SHA-256 digest of its parent's payload in the
+`gleisner:chain.parentDigest` field, creating a verifiable history of Claude
+Code sessions.
 
-```
-Session 3          Session 2          Session 1 (root)
-+-----------+      +-----------+      +-----------+
-| payload   |      | payload   |      | payload   |
-| signature |      | signature |      | signature |
-| chain:    |      | chain:    |      | chain:    |
-|  parent = |----->|  parent = |----->|  (none)   |
-|  sha256(2)|      |  sha256(1)|      |           |
-+-----------+      +-----------+      +-----------+
-```
+**Key security properties:**
 
-### 6.2 Chain Verification
+- **Digest integrity** -- each link's `parentDigest` must match the actual
+  `sha256(payload)` of the parent bundle.
+- **Unsigned link detection** -- chain verification flags bundles with
+  `VerificationMaterial::None` as failures.
+- **Cycle detection** -- visited digest tracking prevents infinite loops
+  on malformed chains.
 
-`gleisner-lacerta` walks the chain backwards from the newest attestation:
+**What "broken chain" means:** A gap in the attestation history -- an
+intermediate bundle was deleted, a session was run without Gleisner, or the
+chain directory is incomplete. Policies can enforce chain completeness via
+`require_parent_attestation`.
 
-1. Load the bundle at the starting path.
-2. Extract `gleisner:chain.parentDigest`.
-3. Scan the chain directory for a bundle whose payload digest matches.
-4. Repeat until no parent is found (chain root) or the parent is missing.
-
-Verification checks:
-
-- **Digest integrity:** Each link's `parentDigest` must match the actual
-  `sha256(payload)` of the parent bundle. A mismatch produces:
-  `"chain link N: parent digest mismatch"`.
-- **Chain completeness:** If a `parentDigest` references a bundle that cannot
-  be found in the chain directory, the verifier reports:
-  `"chain link N: parent attestation not found (broken chain)"`.
-- **Cycle detection:** The chain walker tracks visited payload digests in a
-  `HashSet`. If a digest is encountered twice, the walk terminates with a
-  warning, preventing infinite loops on cyclic chains.
-- **Unsigned link detection:** Each chain entry tracks whether its bundle has
-  `VerificationMaterial` other than `None`. If any link in the chain is
-  unsigned, the verifier emits a failure:
-  `"chain contains N unsigned link(s) (VerificationMaterial::None)"`.
-- **Duplicate digest handling:** When building the digest index,
-  `build_digest_index()` keeps the first file for each payload digest and
-  logs a warning about duplicates, ensuring deterministic chain walking.
-
-### 6.3 What "Broken Chain" Means
-
-A broken chain means there is a gap in the attestation history. Possible causes:
-
-- An intermediate attestation bundle was deleted or moved.
-- A session was run without Gleisner (`claude` instead of `gleisner wrap`),
-  producing no attestation for that step.
-- The chain directory does not contain all relevant bundles.
-
-A broken chain does not necessarily indicate an attack, but it means the
-provenance of the current artifacts cannot be fully verified back to the root.
-Policies can enforce chain completeness via `require_parent_attestation`.
-
-### 6.4 Payload Digest vs. Bundle Digest
-
-- **Payload digest** (`sha256(bundle.payload)`) -- the canonical identifier for
-  an attestation in the chain. This is what `parentDigest` references. It covers
-  the statement, subjects, materials, timestamps, and all provenance metadata.
-- **Bundle digest** (`sha256(entire JSON file)`) -- covers payload + signature +
-  verification material. Not used for chaining because the same logical
-  attestation could be re-signed with a different key without changing its
-  content.
+**Payload digest vs. bundle digest:** The chain links on
+`sha256(bundle.payload)`, not `sha256(entire file)`. This means re-signing
+(key rotation) does not break the chain.
 
 ---
 
@@ -583,5 +485,5 @@ Practical steps for users setting up Gleisner in a new environment.
       commands, especially `curl`, `wget`, `nc`, or any command targeting
       credential paths.
 - [ ] **Rotate local signing keys** periodically (see Section 4.3).
-- [ ] **Re-read the [threat model](../THREAT_MODEL.md)** when Gleisner is
+- [ ] **Re-read the [threat model](THREAT_MODEL.md)** when Gleisner is
       updated -- new features may introduce new attack surface.

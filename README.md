@@ -135,7 +135,7 @@ Policies can be JSON (built-in rules) or WASM (custom OPA/Rego):
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, data flows, crate responsibilities, and design decisions |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security model, key management, policy engine, sandbox layers, and hardening checklist |
 | [docs/RUST_PATTERNS.md](docs/RUST_PATTERNS.md) | Rust patterns and idioms used in the codebase (learning guide) |
-| [THREAT_MODEL.md](THREAT_MODEL.md) | Threat model covering attack surfaces, trust boundaries, and mitigations |
+| [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Threat model covering attack surfaces, trust boundaries, and mitigations |
 
 ## Contributing
 

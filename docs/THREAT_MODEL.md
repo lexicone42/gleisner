@@ -62,68 +62,13 @@ Gleisner's attestation pipeline targets:
 
 ## 2. System Architecture
 
-```
-Developer workstation
-+-----------------------------------------------------------+
-|                                                           |
-|  Terminal                                                 |
-|  +-----------------------------------------------------+ |
-|  | $ gleisner wrap --profile strict claude "fix the bug"| |
-|  +-----------------------------------------------------+ |
-|           |                                               |
-|           v                                               |
-|  +-----------------------------------------------------+ |
-|  | gleisner-cli                                         | |
-|  |  - Resolves sandbox profile (TOML)                   | |
-|  |  - Initializes audit log (gleisner-scapes)           | |
-|  |  - Spawns sandboxed Claude Code (gleisner-polis)     | |
-|  +-----------------------------------------------------+ |
-|           |                                               |
-|           v                                               |
-|  +-----------------------------------------------------+ |
-|  | gleisner-polis  (sandbox boundary)                   | |
-|  |  - bubblewrap: PID/network/mount namespaces          | |
-|  |  - Landlock: filesystem access control               | |
-|  |  - cgroups v2: memory, CPU, PID, disk limits         | |
-|  |  - seccomp BPF: syscall filtering                    | |
-|  |  - Network filtering: slirp4netns + nftables/iptables| |
-|  |    (user+net namespace, TAP device, firewall rules)  | |
-|  +-----------------------------------------------------+ |
-|           |                                               |
-|           v                                               |
-|  +-----------------------------------------------------+ |
-|  | Claude Code  (inside sandbox)                        | |
-|  |  Tools: Bash, Read, Write, Glob, Grep, WebFetch     | |
-|  |  Reads: CLAUDE.md, source files, lockfiles           | |
-|  |  Writes: source files, commits, shell commands       | |
-|  +-----|----------|------------------------------------+ |
-|        |          |                                       |
-|        v          v                                       |
-|  +----------+ +---------------------------------------+   |
-|  | Anthropic| | gleisner-scapes                       |   |
-|  | Messages | |  - JSONL audit log                    |   |
-|  | API      | |  - Broadcast channel to recorder/TUI  |   |
-|  | (HTTPS)  | +----------|----------------------------+   |
-|  +----------+            |                                |
-|                          v                                |
-|  +-----------------------------------------------------+ |
-|  | gleisner-introdus  (attestation)                     | |
-|  |  - in-toto v1 statement builder                      | |
-|  |  - SLSA v1.0 provenance predicate                    | |
-|  |  - Sigstore / local ECDSA signing                    | |
-|  +-----------------------------------------------------+ |
-|           |                                               |
-|           v                                               |
-|  +-----------------------------------------------------+ |
-|  | gleisner-lacerta  (verification)                     | |
-|  |  - Signature verification                            | |
-|  |  - Digest integrity checks                           | |
-|  |  - Attestation chain verification (--chain)          | |
-|  |  - OPA/Rego policy evaluation (Wasmtime)             | |
-|  +-----------------------------------------------------+ |
-|                                                           |
-+-----------------------------------------------------------+
-```
+> For the full system architecture, crate map, data flow diagrams, and
+> implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+Gleisner consists of six crates orchestrated by `gleisner-cli`: sandbox
+enforcement (`gleisner-polis`), attestation creation (`gleisner-introdus`),
+verification (`gleisner-lacerta`), audit logging (`gleisner-scapes`), and SBOM
+generation (`gleisner-bridger`).
 
 The critical trust boundary is the `gleisner-polis` sandbox. Everything inside
 it is untrusted -- Claude Code may execute arbitrary commands, read arbitrary
@@ -350,22 +295,15 @@ process has the necessary permissions. Critical targets include:
 - `~/.config/gleisner/` -- modify Gleisner's own configuration
 - Cron files, systemd user units -- scheduled persistence
 
-### 6.7 Network Filtering Architecture
+### 6.7 Network Filtering Attack Surface
 
-When `allow_domains` is configured in a sandbox profile, Gleisner creates a
-multi-layer network filtering stack:
+> For the full network filtering architecture (namespace creation,
+> slirp4netns, firewall rule application), see
+> [ARCHITECTURE.md § Sandbox Architecture](ARCHITECTURE.md#sandbox-architecture).
 
-1. **User + network namespace** -- `slirp4netns` creates a TAP device
-   (`tap0`) inside a new user and network namespace, providing an isolated
-   network stack with a virtual gateway (`10.0.2.2`) and DNS resolver
-   (`10.0.2.3`).
-2. **Domain resolution** -- allowed domains are resolved to IP addresses
-   before the sandbox starts. Only these IPs are permitted in firewall rules.
-3. **Firewall rules** -- nftables (preferred) or iptables (fallback) rules
-   are applied inside the namespace, restricting outbound traffic to the
-   resolved IPs on ports 80 and 443, plus DNS to the slirp4netns resolver.
+When `allow_domains` is configured, Gleisner creates a user+network namespace
+with slirp4netns and applies firewall rules. The attack surface includes:
 
-Attack surface includes:
 - **Firewall backend detection** -- Gleisner probes for nftables then falls
   back to iptables. If neither is available, the sandbox starts without
   network filtering (fail-open for usability).
@@ -376,20 +314,14 @@ Attack surface includes:
   the sandbox and must be properly cleaned up. Process leaks were identified
   and fixed (explicit `drop()` before `exit()`).
 
-### 6.8 Attestation Chain
+### 6.8 Attestation Chain Attack Surface
 
-Each `gleisner record` session can link to the previous attestation via a
-`gleisner:chain` field in the provenance predicate. This creates a hash-linked
-chain of attestation bundles:
+> For how attestation chains work (linking algorithm, digest indexing,
+> walk_chain pseudocode), see
+> [ARCHITECTURE.md § Chain Verification](ARCHITECTURE.md#chain-verification).
 
-```
-attestation-003.json  (latest)
-  └─ parentDigest: sha256(attestation-002.json.payload)
-       └─ parentDigest: sha256(attestation-001.json.payload)
-            └─ (root -- no parent)
-```
-
-Attack surface includes:
+Each `gleisner record` session links to the previous attestation via a
+`gleisner:chain.parentDigest` field. Attack surface includes:
 - **Chain gap injection** -- deleting an intermediate attestation breaks the
   chain but does not invalidate individual attestations.
 - **Parent digest forgery** -- an attacker who can write to `.gleisner/`
