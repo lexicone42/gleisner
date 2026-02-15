@@ -482,7 +482,6 @@ fn assemble_statement(
         },
     }
 }
-
 /// Sign and write the attestation to disk.
 async fn write_attestation(
     statement: &InTotoStatement,
@@ -492,11 +491,19 @@ async fn write_attestation(
     no_sign: bool,
 ) -> Result<()> {
     if no_sign {
-        let json = serde_json::to_string_pretty(statement)?;
+        // Write as an AttestationBundle with no signature so that the
+        // chain module can discover it using the same format as signed bundles.
+        let payload = serde_json::to_string(statement)?;
+        let bundle = gleisner_introdus::bundle::AttestationBundle {
+            payload,
+            signature: String::new(),
+            verification_material: gleisner_introdus::bundle::VerificationMaterial::None,
+        };
+        let json = serde_json::to_string_pretty(&bundle)?;
         std::fs::write(output_path, &json)?;
 
         eprintln!(
-            "Attestation statement (unsigned) written to: {}",
+            "Attestation bundle (unsigned) written to: {}",
             output_path.display()
         );
         eprintln!("Audit log: {}", audit_log_path.display());
