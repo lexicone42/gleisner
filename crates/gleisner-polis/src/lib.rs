@@ -9,6 +9,7 @@ pub mod error;
 pub mod fanotify;
 pub mod monitor;
 mod namespace;
+pub mod netfilter;
 pub mod policy;
 pub mod procmon;
 pub mod profile;
@@ -16,6 +17,7 @@ pub mod resource;
 
 pub use bwrap::BwrapSandbox;
 pub use monitor::{FsMonitorConfig, ProcMonitorConfig};
+pub use netfilter::{NetworkFilter, SlirpHandle};
 pub use policy::FileAccessType;
 pub use profile::{Profile, resolve_profile};
 pub use resource::CgroupScope;

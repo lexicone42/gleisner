@@ -49,7 +49,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Linux system interfaces
-nix = { version = "0.29", features = ["process", "mount", "sched", "resource", "hostname", "fanotify"] }
+nix = { version = "0.29", features = ["process", "signal", "mount", "sched", "resource", "hostname", "fanotify"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 landlock = "0.4"
 

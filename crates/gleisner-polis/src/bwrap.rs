@@ -13,6 +13,7 @@ use std::process::Command;
 use tracing::{debug, info};
 
 use crate::error::SandboxError;
+use crate::netfilter::NetworkFilter;
 use crate::profile::{PolicyDefault, Profile};
 
 /// Constructs and executes a bubblewrap sandbox from a [`Profile`].
@@ -63,10 +64,18 @@ impl BwrapSandbox {
 
     /// Build the `bwrap` invocation for the given inner command.
     ///
+    /// When a [`NetworkFilter`] is provided, the inner command is wrapped
+    /// in a shell script that waits for the slirp4netns TAP device and
+    /// applies iptables rules before exec-ing the actual command.
+    ///
     /// The resulting [`Command`] is ready to spawn. The inner command
     /// and its arguments are appended after all bwrap flags.
     #[must_use]
-    pub fn build_command(&self, inner_command: &[String]) -> Command {
+    pub fn build_command(
+        &self,
+        inner_command: &[String],
+        filter: Option<&NetworkFilter>,
+    ) -> Command {
         let mut cmd = Command::new("bwrap");
 
         // Order matters: filesystem → process → network → working dir → die-with-parent
@@ -80,8 +89,14 @@ impl BwrapSandbox {
         // Kill sandbox if parent process dies — prevents orphaned sandboxes
         cmd.arg("--die-with-parent");
 
-        // The actual command to run inside the sandbox
-        cmd.args(inner_command);
+        // The actual command to run inside the sandbox — optionally wrapped
+        // with iptables setup when selective network filtering is active
+        if let Some(f) = filter {
+            let wrapped = f.wrap_command(inner_command);
+            cmd.args(wrapped);
+        } else {
+            cmd.args(inner_command);
+        }
 
         debug!(
             args = ?cmd.get_args().collect::<Vec<_>>(),
@@ -153,31 +168,23 @@ impl BwrapSandbox {
 
     /// Apply network isolation.
     ///
-    /// When the profile default is `Deny`, the entire network namespace
-    /// is unshared. Selective domain re-enablement (via slirp4netns or
-    /// nftables in a network namespace) is planned for Phase 2.
+    /// When the profile default is `Deny`, the network namespace is
+    /// always unshared. Selective domain filtering (via slirp4netns +
+    /// iptables) is applied by the `NetworkFilter` wrapper passed to
+    /// `build_command()`.
     fn apply_network_policy(&self, cmd: &mut Command) {
         if matches!(self.profile.network.default, PolicyDefault::Deny) {
             cmd.arg("--unshare-net");
-
-            // Log what would be allowed if selective networking were implemented
-            let all_domains: Vec<&str> = self
-                .profile
-                .network
-                .allow_domains
-                .iter()
-                .chain(self.extra_allow_domains.iter())
-                .map(String::as_str)
-                .collect();
-
-            if !all_domains.is_empty() {
-                info!(
-                    domains = ?all_domains,
-                    "network deny mode — selective domain allowlisting not yet implemented, \
-                     all network access is blocked"
-                );
-            }
         }
+    }
+
+    /// Get the extra domains added via CLI flags.
+    ///
+    /// Used by callers that need to pass these to [`NetworkFilter::resolve()`]
+    /// alongside the profile's built-in domain list.
+    #[must_use]
+    pub fn extra_allow_domains(&self) -> &[String] {
+        &self.extra_allow_domains
     }
 
     /// Get a reference to the loaded profile.
@@ -277,7 +284,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["echo".to_owned(), "hello".to_owned()]);
+        let cmd = sandbox.build_command(&["echo".to_owned(), "hello".to_owned()], None);
         let args = args_of(&cmd);
 
         assert!(
@@ -313,7 +320,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()]);
+        let cmd = sandbox.build_command(&["true".to_owned()], None);
         let args = args_of(&cmd);
 
         assert!(
@@ -332,7 +339,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()]);
+        let cmd = sandbox.build_command(&["true".to_owned()], None);
         let args = args_of(&cmd);
 
         assert!(
@@ -351,7 +358,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()]);
+        let cmd = sandbox.build_command(&["true".to_owned()], None);
         let args = args_of(&cmd);
 
         assert!(

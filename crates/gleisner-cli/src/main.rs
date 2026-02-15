@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Wrap(args) => commands::wrap::execute(args),
+        Commands::Wrap(args) => commands::wrap::execute(args).await,
         Commands::Record(args) => commands::record::execute(args).await,
         Commands::Verify(args) => commands::verify::execute(args),
         Commands::Inspect(args) => commands::inspect::execute(&args),

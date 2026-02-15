@@ -6,9 +6,12 @@
 //! isolation but don't need cryptographic provenance.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::Args;
 use color_eyre::eyre::{Result, eyre};
+
+use gleisner_polis::profile::PolicyDefault;
 
 /// Run Claude Code inside a Gleisner sandbox (isolation only, no attestation).
 #[derive(Args)]
@@ -50,7 +53,8 @@ pub struct WrapArgs {
 ///
 /// Returns an error if profile resolution, sandbox creation, or
 /// the inner process fails.
-pub fn execute(args: WrapArgs) -> Result<()> {
+#[allow(clippy::unused_async)] // async for consistency with other command handlers
+pub async fn execute(args: WrapArgs) -> Result<()> {
     let project_dir = args
         .project_dir
         .unwrap_or_else(|| std::env::current_dir().expect("cannot determine cwd"));
@@ -74,6 +78,32 @@ pub fn execute(args: WrapArgs) -> Result<()> {
         sandbox.allow_paths(args.allow_path);
     }
 
+    // Resolve selective network filter if profile denies network but has allowed domains
+    let profile = sandbox.profile();
+    let needs_filter = matches!(profile.network.default, PolicyDefault::Deny)
+        && (!profile.network.allow_domains.is_empty() || !sandbox.extra_allow_domains().is_empty());
+
+    let filter = if needs_filter {
+        if !gleisner_polis::netfilter::slirp4netns_available() {
+            return Err(eyre!(
+                "slirp4netns not found — install slirp4netns for selective network filtering\n\
+                 Hint: The profile '{}' declares allow_domains with network deny, \
+                 which requires slirp4netns to create a filtered network namespace.\n\
+                 Without it, use --profile carter-zimmerman for full network access, \
+                 or install slirp4netns (apt install slirp4netns / dnf install slirp4netns).",
+                profile.name,
+            ));
+        }
+        let network_policy = &sandbox.profile().network;
+        let extra = sandbox.extra_allow_domains().to_vec();
+        Some(gleisner_polis::NetworkFilter::resolve(
+            network_policy,
+            &extra,
+        )?)
+    } else {
+        None
+    };
+
     // Detect Claude Code version for logging
     if let Some(version) = detect_claude_code_version(&args.claude_bin) {
         tracing::info!(claude_version = %version, "detected Claude Code version");
@@ -83,16 +113,30 @@ pub fn execute(args: WrapArgs) -> Result<()> {
     let mut inner_command = vec![args.claude_bin];
     inner_command.extend(args.claude_args);
 
-    let mut cmd = sandbox.build_command(&inner_command);
+    let mut cmd = sandbox.build_command(&inner_command, filter.as_ref());
 
     // Inherit stdin/stdout/stderr so Claude Code's interactive UI works
     cmd.stdin(std::process::Stdio::inherit());
     cmd.stdout(std::process::Stdio::inherit());
     cmd.stderr(std::process::Stdio::inherit());
 
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
+
+    // Start slirp4netns if we have a network filter
+    let _slirp = if filter.is_some() {
+        let bwrap_pid = child.id();
+        let inner_pid =
+            gleisner_polis::netfilter::wait_for_child_pid(bwrap_pid, Duration::from_secs(5))?;
+        Some(gleisner_polis::SlirpHandle::start(inner_pid)?)
+    } else {
+        None
+    };
+
+    let status = child
+        .wait()
+        .map_err(|e| eyre!("failed to wait on sandboxed process: {e}"))?;
 
     if status.success() {
         tracing::info!("sandboxed session completed successfully");

@@ -152,7 +152,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
 
     // ── 5. Spawn sandbox child (don't await exit yet) ────────────────
     let profile_for_sandbox = profile.clone();
-    let mut child = spawn_sandbox_child(
+    let sandbox_child = spawn_sandbox_child(
         profile_for_sandbox,
         project_dir.clone(),
         args.wrap.allow_network,
@@ -160,6 +160,11 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
         args.wrap.claude_bin,
         args.wrap.claude_args,
     )?;
+
+    let SandboxChild {
+        mut child,
+        _slirp, // kept alive until session ends
+    } = sandbox_child;
 
     let child_pid = child.id().unwrap_or(0);
 
@@ -285,8 +290,19 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     std::process::exit(exit_code);
 }
 
+/// Result of spawning a sandboxed child process, including an optional
+/// slirp4netns handle that must be kept alive for the session duration.
+struct SandboxChild {
+    child: tokio::process::Child,
+    /// Keeps slirp4netns alive — dropped when the session ends.
+    _slirp: Option<gleisner_polis::SlirpHandle>,
+}
+
 /// Spawn the sandboxed Claude Code process. Returns the child handle
 /// without waiting for exit, so monitors can start while it runs.
+///
+/// When the profile uses selective network filtering, also starts
+/// slirp4netns and returns its handle alongside the child.
 fn spawn_sandbox_child(
     profile: gleisner_polis::Profile,
     project_dir: PathBuf,
@@ -294,7 +310,7 @@ fn spawn_sandbox_child(
     allow_path: Vec<PathBuf>,
     claude_bin: String,
     claude_args: Vec<String>,
-) -> Result<tokio::process::Child> {
+) -> Result<SandboxChild> {
     let mut sandbox = gleisner_polis::BwrapSandbox::new(profile, project_dir)?;
 
     if !allow_network.is_empty() {
@@ -304,10 +320,37 @@ fn spawn_sandbox_child(
         sandbox.allow_paths(allow_path);
     }
 
+    // Resolve selective network filter if applicable
+    let profile = sandbox.profile();
+    let needs_filter = matches!(
+        profile.network.default,
+        gleisner_polis::profile::PolicyDefault::Deny
+    ) && (!profile.network.allow_domains.is_empty()
+        || !sandbox.extra_allow_domains().is_empty());
+
+    let filter = if needs_filter {
+        if !gleisner_polis::netfilter::slirp4netns_available() {
+            return Err(eyre!(
+                "slirp4netns not found — install slirp4netns for selective network filtering\n\
+                 Hint: The profile '{}' declares allow_domains with network deny, \
+                 which requires slirp4netns to create a filtered network namespace.",
+                profile.name,
+            ));
+        }
+        let network_policy = &sandbox.profile().network;
+        let extra = sandbox.extra_allow_domains().to_vec();
+        Some(gleisner_polis::NetworkFilter::resolve(
+            network_policy,
+            &extra,
+        )?)
+    } else {
+        None
+    };
+
     let mut inner_command = vec![claude_bin];
     inner_command.extend(claude_args);
 
-    let std_cmd = sandbox.build_command(&inner_command);
+    let std_cmd = sandbox.build_command(&inner_command, filter.as_ref());
     let mut cmd = tokio::process::Command::from(std_cmd);
     cmd.stdin(std::process::Stdio::inherit());
     cmd.stdout(std::process::Stdio::inherit());
@@ -317,7 +360,27 @@ fn spawn_sandbox_child(
         .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-    Ok(child)
+    // Start slirp4netns if we have a network filter
+    let slirp = if filter.is_some() {
+        let bwrap_pid = child.id().unwrap_or(0);
+        if bwrap_pid > 0 {
+            let inner_pid = gleisner_polis::netfilter::wait_for_child_pid(
+                bwrap_pid,
+                std::time::Duration::from_secs(5),
+            )?;
+            Some(gleisner_polis::SlirpHandle::start(inner_pid)?)
+        } else {
+            tracing::warn!("could not get bwrap PID — skipping network filter");
+            None
+        }
+    } else {
+        None
+    };
+
+    Ok(SandboxChild {
+        child,
+        _slirp: slirp,
+    })
 }
 
 /// Assemble the in-toto attestation statement from recorder output.

@@ -40,4 +40,12 @@ pub enum SandboxError {
     /// An event monitor encountered an error.
     #[error("monitor error: {0}")]
     MonitorError(String),
+
+    /// slirp4netns binary not found on PATH.
+    #[error("slirp4netns not found — install slirp4netns for selective network filtering")]
+    SlirpNotFound,
+
+    /// Network setup (slirp4netns, iptables, or child PID detection) failed.
+    #[error("network setup failed: {0}")]
+    NetworkSetupFailed(String),
 }

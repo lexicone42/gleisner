@@ -17,7 +17,7 @@ fn gleisner() -> Command {
 }
 
 /// Helper: generate a keypair, sign a payload, and write the bundle to a file.
-/// Returns (bundle_path, public_key_pem_path).
+/// Returns (`bundle_path`, `public_key_pem_path`).
 fn create_signed_bundle(dir: &Path, payload: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     use aws_lc_rs::rand::SystemRandom;
     use aws_lc_rs::signature::{ECDSA_P256_SHA256_ASN1_SIGNING, EcdsaKeyPair, KeyPair};
