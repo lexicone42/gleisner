@@ -66,6 +66,23 @@ pub struct LandlockStatus {
     pub scope_enforced: bool,
 }
 
+/// Serializable policy for the sandbox-init binary.
+///
+/// The parent orchestrator writes this to a tempfile as JSON, bind-mounts
+/// it into the bwrap sandbox, and the `gleisner-sandbox-init` binary reads
+/// it to apply Landlock restrictions before exec-ing the inner command.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LandlockPolicy {
+    /// Filesystem access rules (readonly binds, readwrite binds, deny paths, tmpfs).
+    pub filesystem: FilesystemPolicy,
+    /// Network access rules (default deny/allow, allowed domains/ports).
+    pub network: NetworkPolicy,
+    /// Project directory — always gets read-write access.
+    pub project_dir: PathBuf,
+    /// Additional paths from `--allow-path` CLI flags.
+    pub extra_rw_paths: Vec<PathBuf>,
+}
+
 /// Apply Landlock restrictions based on the sandbox profile.
 ///
 /// Restricts the calling thread (and all descendants) to only the paths

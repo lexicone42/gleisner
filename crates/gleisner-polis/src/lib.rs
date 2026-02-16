@@ -18,7 +18,7 @@ pub mod profile;
 pub mod resource;
 
 pub use bwrap::BwrapSandbox;
-pub use landlock::{LandlockEnforcement, LandlockStatus, apply_landlock};
+pub use landlock::{LandlockEnforcement, LandlockPolicy, LandlockStatus, apply_landlock};
 pub use learner::{
     LearnerConfig, LearningSummary, ProfileLearner, format_profile_toml, format_summary,
 };

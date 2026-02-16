@@ -434,9 +434,10 @@ fn build_sandboxed_command(
     let mut full_inner: Vec<String> = vec![config.claude_bin.clone()];
     full_inner.extend(inner_args);
 
-    // Build bwrap command — pass bool indicating external netns
+    // Build bwrap command — pass bool indicating external netns.
+    // _policy_file (if Landlock is enabled) must stay alive until child exits.
     let has_filter = filter.is_some();
-    let bwrap_cmd = sandbox.build_command(&full_inner, has_filter);
+    let (bwrap_cmd, _policy_file) = sandbox.build_command(&full_inner, has_filter);
 
     // ── Set up namespace + slirp4netns when filtering ───────────
     // These handles must stay alive for the subprocess duration.

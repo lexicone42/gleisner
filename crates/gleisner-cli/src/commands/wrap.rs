@@ -111,18 +111,15 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
         None
     };
 
-    // NOTE: Landlock is NOT applied to the parent orchestrator.
-    //
-    // On kernels with Landlock ABI >= v5 (Linux 6.12+), landlock_restrict_self()
-    // prevents mount namespace creation (CLONE_NEWNS), which bwrap requires.
-    // The parent must keep full capabilities to set up the sandbox.
-    //
-    // TODO: Apply Landlock INSIDE the bwrap sandbox via a helper binary that
-    // runs between bwrap's mount setup and the inner command (Claude Code).
-    // This is the correct architecture: the orchestrator is trusted, only the
-    // sandboxed process needs Landlock restrictions.
+    // Enable Landlock-inside-bwrap if the sandbox-init binary is available.
+    // Landlock cannot be applied to the parent orchestrator (ABI v5+ restricts
+    // mount namespace creation), so we use a trampoline binary inside bwrap.
     if !args.no_landlock {
-        tracing::debug!("landlock deferred — will be applied inside sandbox in a future release");
+        if let Some(init_bin) = detect_sandbox_init() {
+            sandbox.enable_landlock(init_bin);
+        } else {
+            tracing::warn!("gleisner-sandbox-init not found — running without Landlock");
+        }
     }
 
     // Detect Claude Code version for logging
@@ -135,7 +132,7 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     inner_command.extend(args.claude_args);
 
     let has_filter = filter.is_some();
-    let bwrap_cmd = sandbox.build_command(&inner_command, has_filter);
+    let (bwrap_cmd, _policy_file) = sandbox.build_command(&inner_command, has_filter);
 
     // When filtering is active, we need to:
     // 1. Create a user+net namespace pair (NamespaceHandle)
@@ -143,6 +140,8 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     // 3. Apply firewall rules via nsenter (before bwrap starts)
     // 4. Run bwrap inside the namespace via nsenter
     // All handles must stay alive until the child exits.
+    // _policy_file (if Landlock is enabled) must also stay alive — bwrap
+    // bind-mounts the host tempfile into the sandbox.
     let (ns_handle, slirp, mut cmd) = if let Some(ref f) = filter {
         let ns = gleisner_polis::NamespaceHandle::create()?;
         let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
@@ -194,4 +193,22 @@ fn detect_claude_code_version(bin: &str) -> Option<String> {
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
+}
+
+/// Try to find the `gleisner-sandbox-init` binary.
+///
+/// Checks:
+/// 1. Same directory as the running `gleisner` binary
+/// 2. On `PATH` via `which`
+fn detect_sandbox_init() -> Option<PathBuf> {
+    // Check alongside the current executable
+    if let Ok(exe) = std::env::current_exe() {
+        let sibling = exe.with_file_name("gleisner-sandbox-init");
+        if sibling.is_file() {
+            return Some(sibling);
+        }
+    }
+
+    // Fall back to PATH lookup
+    which::which("gleisner-sandbox-init").ok()
 }

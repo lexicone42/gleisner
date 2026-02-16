@@ -364,10 +364,13 @@ fn spawn_sandbox_child(
         sandbox.allow_paths(allow_path);
     }
 
-    // NOTE: Landlock is NOT applied to the parent orchestrator.
-    // See wrap.rs for detailed rationale (ABI v5+ restricts mount namespace creation).
+    // Enable Landlock-inside-bwrap if the sandbox-init binary is available
     if !no_landlock {
-        tracing::debug!("landlock deferred — will be applied inside sandbox in a future release");
+        if let Some(init_bin) = detect_sandbox_init() {
+            sandbox.enable_landlock(init_bin);
+        } else {
+            tracing::warn!("gleisner-sandbox-init not found — running without Landlock");
+        }
     }
 
     // Resolve selective network filter if applicable
@@ -401,10 +404,11 @@ fn spawn_sandbox_child(
     inner_command.extend(claude_args);
 
     let has_filter = filter.is_some();
-    let bwrap_cmd = sandbox.build_command(&inner_command, has_filter);
+    let (bwrap_cmd, _policy_file) = sandbox.build_command(&inner_command, has_filter);
 
     // When filtering is active, create namespace + slirp, apply firewall
-    // rules via nsenter, and wrap bwrap in nsenter
+    // rules via nsenter, and wrap bwrap in nsenter.
+    // _policy_file must stay alive until the child exits (bwrap bind-mounts it).
     let (ns, slirp, std_cmd) = if let Some(ref f) = filter {
         let ns = gleisner_polis::NamespaceHandle::create()?;
         let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
@@ -572,4 +576,17 @@ fn hash_file(path: &std::path::Path) -> Option<String> {
     let content = std::fs::read(path).ok()?;
     let hash = Sha256::digest(&content);
     Some(hex::encode(hash))
+}
+
+/// Try to find the `gleisner-sandbox-init` binary.
+///
+/// Checks alongside the running `gleisner` binary first, then `PATH`.
+fn detect_sandbox_init() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        let sibling = exe.with_file_name("gleisner-sandbox-init");
+        if sibling.is_file() {
+            return Some(sibling);
+        }
+    }
+    which::which("gleisner-sandbox-init").ok()
 }

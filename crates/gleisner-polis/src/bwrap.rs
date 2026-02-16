@@ -26,6 +26,10 @@ pub struct BwrapSandbox {
     extra_allow_domains: Vec<String>,
     /// Additional paths to mount read-write beyond the profile.
     extra_rw_paths: Vec<PathBuf>,
+    /// Path to the `gleisner-sandbox-init` binary on the host filesystem.
+    /// When set, Landlock restrictions are applied inside the sandbox
+    /// via a trampoline binary that runs before the inner command.
+    landlock_init_bin: Option<PathBuf>,
 }
 
 impl BwrapSandbox {
@@ -48,6 +52,7 @@ impl BwrapSandbox {
             project_dir,
             extra_allow_domains: Vec::new(),
             extra_rw_paths: Vec::new(),
+            landlock_init_bin: None,
         })
     }
 
@@ -61,6 +66,20 @@ impl BwrapSandbox {
         self.extra_rw_paths.extend(paths);
     }
 
+    /// Enable Landlock-inside-bwrap via the sandbox-init trampoline binary.
+    ///
+    /// When enabled, `build_command()` will:
+    /// 1. Serialize the profile's filesystem/network policy to a JSON tempfile
+    /// 2. Bind-mount the init binary and policy file into the sandbox
+    /// 3. Prepend the inner command with `/.gleisner/sandbox-init /.gleisner/policy.json --`
+    ///
+    /// The caller must hold the returned tempfile handle alive until the
+    /// child process exits (the bwrap bind-mount references the host file).
+    pub fn enable_landlock(&mut self, init_bin: PathBuf) {
+        info!(init_bin = %init_bin.display(), "enabling landlock inside bwrap");
+        self.landlock_init_bin = Some(init_bin);
+    }
+
     /// Build the `bwrap` invocation for the given inner command.
     ///
     /// When `use_external_netns` is true:
@@ -69,10 +88,15 @@ impl BwrapSandbox {
     /// - Firewall rules must be applied separately via
     ///   [`NetworkFilter::apply_firewall_via_nsenter`] before spawning bwrap
     ///
-    /// The resulting [`Command`] is ready to spawn (or to have its args
-    /// appended to an nsenter command).
-    #[must_use]
-    pub fn build_command(&self, inner_command: &[String], use_external_netns: bool) -> Command {
+    /// Returns `(Command, Option<NamedTempFile>)`. When Landlock is enabled,
+    /// the tempfile contains the serialized `LandlockPolicy` JSON. The caller
+    /// **must** hold this handle alive until after the child process exits —
+    /// bwrap bind-mounts the host file into the sandbox.
+    pub fn build_command(
+        &self,
+        inner_command: &[String],
+        use_external_netns: bool,
+    ) -> (Command, Option<tempfile::NamedTempFile>) {
         let mut cmd = Command::new("bwrap");
 
         // Order matters: filesystem → process → network → working dir → die-with-parent
@@ -85,11 +109,21 @@ impl BwrapSandbox {
             self.apply_network_policy(&mut cmd);
         }
 
+        // Landlock-inside-bwrap: serialize policy, bind-mount init binary + policy file,
+        // and prepend the inner command with the sandbox-init trampoline.
+        let policy_tempfile = self.apply_landlock_policy(&mut cmd);
+
         // Working directory inside the sandbox
         cmd.args(["--chdir", &self.project_dir.display().to_string()]);
 
         // Kill sandbox if parent process dies — prevents orphaned sandboxes
         cmd.arg("--die-with-parent");
+
+        // When Landlock is enabled, the inner command is wrapped:
+        //   /.gleisner/sandbox-init /.gleisner/policy.json -- <inner_command>
+        if self.landlock_init_bin.is_some() {
+            cmd.args(["/.gleisner/sandbox-init", "/.gleisner/policy.json", "--"]);
+        }
 
         cmd.args(inner_command);
 
@@ -98,7 +132,7 @@ impl BwrapSandbox {
             "built bwrap command"
         );
 
-        cmd
+        (cmd, policy_tempfile)
     }
 
     /// Apply filesystem isolation: readonly binds, readwrite binds,
@@ -185,6 +219,45 @@ impl BwrapSandbox {
         if matches!(self.profile.network.default, PolicyDefault::Deny) {
             cmd.arg("--unshare-net");
         }
+    }
+
+    /// When Landlock is enabled, serialize the policy to a tempfile and add
+    /// bind-mounts for the init binary and policy file inside the sandbox.
+    ///
+    /// Returns `Some(tempfile)` that the caller must keep alive, or `None`
+    /// if Landlock is not enabled.
+    fn apply_landlock_policy(&self, cmd: &mut Command) -> Option<tempfile::NamedTempFile> {
+        let init_bin = self.landlock_init_bin.as_ref()?;
+
+        let policy = crate::landlock::LandlockPolicy {
+            filesystem: self.profile.filesystem.clone(),
+            network: self.profile.network.clone(),
+            project_dir: self.project_dir.clone(),
+            extra_rw_paths: self.extra_rw_paths.clone(),
+        };
+
+        // Write policy JSON to a tempfile on the host
+        let mut tmpfile =
+            tempfile::NamedTempFile::new().expect("failed to create Landlock policy tempfile");
+        serde_json::to_writer(&mut tmpfile, &policy)
+            .expect("failed to serialize LandlockPolicy to JSON");
+
+        let policy_path = tmpfile.path().display().to_string();
+        let init_path = init_bin.display().to_string();
+
+        // Bind-mount the init binary (read-only) into /.gleisner/sandbox-init
+        cmd.args(["--ro-bind", &init_path, "/.gleisner/sandbox-init"]);
+
+        // Bind-mount the policy file (read-only) into /.gleisner/policy.json
+        cmd.args(["--ro-bind", &policy_path, "/.gleisner/policy.json"]);
+
+        debug!(
+            init_bin = %init_path,
+            policy = %policy_path,
+            "added landlock policy bind-mounts"
+        );
+
+        Some(tmpfile)
     }
 
     /// Get the extra domains added via CLI flags.
@@ -338,7 +411,8 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["echo".to_owned(), "hello".to_owned()], false);
+        let (cmd, _policy_file) =
+            sandbox.build_command(&["echo".to_owned(), "hello".to_owned()], false);
         let args = args_of(&cmd);
 
         assert!(
@@ -374,7 +448,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()], false);
+        let (cmd, _policy_file) = sandbox.build_command(&["true".to_owned()], false);
         let args = args_of(&cmd);
 
         assert!(
@@ -393,7 +467,7 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()], false);
+        let (cmd, _policy_file) = sandbox.build_command(&["true".to_owned()], false);
         let args = args_of(&cmd);
 
         assert!(
@@ -412,12 +486,101 @@ mod tests {
         let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
             .expect("bwrap should be found");
 
-        let cmd = sandbox.build_command(&["true".to_owned()], false);
+        let (cmd, _policy_file) = sandbox.build_command(&["true".to_owned()], false);
         let args = args_of(&cmd);
 
         assert!(
             args.iter().any(|a| a == "--unshare-pid"),
             "should unshare PID namespace"
         );
+    }
+
+    #[test]
+    fn landlock_enabled_adds_init_bind_mounts() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+
+        let profile = test_profile(PolicyDefault::Allow);
+        let mut sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
+            .expect("bwrap should be found");
+
+        // Use a fake path — we're only checking args, not executing
+        sandbox.enable_landlock(PathBuf::from("/usr/bin/gleisner-sandbox-init"));
+
+        let (cmd, policy_file) =
+            sandbox.build_command(&["echo".to_owned(), "hello".to_owned()], false);
+        let args = args_of(&cmd);
+
+        // Should have bind-mounts for the init binary and policy file
+        assert!(
+            args.iter().any(|a| a == "/.gleisner/sandbox-init"),
+            "should bind-mount sandbox-init"
+        );
+        assert!(
+            args.iter().any(|a| a == "/.gleisner/policy.json"),
+            "should bind-mount policy.json"
+        );
+
+        // Inner command should be prefixed with sandbox-init invocation
+        let args_str = args.join(" ");
+        assert!(
+            args_str.contains("/.gleisner/sandbox-init /.gleisner/policy.json -- echo hello"),
+            "inner command should be wrapped by sandbox-init: {args_str}"
+        );
+
+        // Policy tempfile should be present
+        assert!(policy_file.is_some(), "should return policy tempfile");
+    }
+
+    #[test]
+    fn landlock_disabled_returns_no_tempfile() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+
+        let profile = test_profile(PolicyDefault::Allow);
+        let sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
+            .expect("bwrap should be found");
+
+        let (cmd, policy_file) = sandbox.build_command(&["echo".to_owned()], false);
+        let args = args_of(&cmd);
+
+        // Should NOT have Landlock bind-mounts
+        assert!(
+            !args.iter().any(|a| a == "/.gleisner/sandbox-init"),
+            "should not have sandbox-init without enable_landlock"
+        );
+
+        assert!(policy_file.is_none(), "should not return policy tempfile");
+    }
+
+    #[test]
+    fn landlock_policy_json_roundtrips() {
+        use crate::landlock::LandlockPolicy;
+        use crate::profile::{FilesystemPolicy, NetworkPolicy};
+
+        let policy = LandlockPolicy {
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![PathBuf::from("/usr")],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![PathBuf::from("/tmp")],
+            },
+            network: NetworkPolicy {
+                default: PolicyDefault::Deny,
+                allow_domains: vec!["api.anthropic.com".to_owned()],
+                allow_ports: vec![443],
+                allow_dns: true,
+            },
+            project_dir: PathBuf::from("/home/user/project"),
+            extra_rw_paths: vec![],
+        };
+
+        let json = serde_json::to_string(&policy).expect("serialize");
+        let parsed: LandlockPolicy = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.project_dir, PathBuf::from("/home/user/project"));
+        assert_eq!(parsed.filesystem.readonly_bind.len(), 1);
+        assert_eq!(parsed.network.allow_ports, vec![443]);
     }
 }

@@ -1,0 +1,23 @@
+[package]
+name = "gleisner-sandbox-init"
+version = "0.1.0"
+description = "Landlock init wrapper — runs inside bwrap sandbox"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "gleisner-sandbox-init"
+path = "src/main.rs"
+
+[dependencies]
+gleisner-polis.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

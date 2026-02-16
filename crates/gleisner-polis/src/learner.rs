@@ -71,6 +71,8 @@ pub struct PathGroups {
     pub other_readonly: BTreeSet<PathBuf>,
     /// Non-home paths that were written.
     pub other_readwrite: BTreeSet<PathBuf>,
+    /// `~/.claude/<subdir>` paths → `plugins.add_dirs`.
+    pub claude_dirs: BTreeSet<PathBuf>,
     /// Paths that were skipped (system, project, virtual FS).
     pub skipped_count: usize,
 }
@@ -79,6 +81,8 @@ pub struct PathGroups {
 enum PathClass {
     /// Path should be skipped (project dir, system prefix, virtual FS).
     Skip,
+    /// Path is under `~/.claude/<subdir>` — routed to `plugins.add_dirs`.
+    ClaudeDir(PathBuf),
     /// Path is under $HOME — stored as `~/.component`.
     HomeRelative(PathBuf),
     /// Path is outside $HOME and not a system prefix.
@@ -101,6 +105,10 @@ const SYSTEM_PREFIXES: &[&str] = &["/usr", "/lib", "/lib64", "/etc", "/bin", "/s
 
 /// Virtual filesystem prefixes — handled by tmpfs or kernel, skip in learning.
 const VIRTUAL_PREFIXES: &[&str] = &["/tmp", "/proc", "/dev", "/sys", "/run"];
+
+/// Claude Code's own infrastructure domains — these go into `network.allow_domains`.
+/// Everything else observed on the network goes into `plugins.mcp_network_domains`.
+const CLAUDE_CODE_DOMAINS: &[&str] = &["api.anthropic.com", "sentry.io", "statsig.anthropic.com"];
 
 impl ProfileLearner {
     /// Create a new learner with the given configuration.
@@ -184,6 +192,7 @@ impl ProfileLearner {
         let mut home_readwrite = BTreeSet::new();
         let mut other_readonly = BTreeSet::new();
         let mut other_readwrite = BTreeSet::new();
+        let mut claude_dirs = BTreeSet::new();
         let mut skipped_count: usize = 0;
 
         // Collect all unique paths
@@ -205,6 +214,9 @@ impl ProfileLearner {
             match classify_single_path(path, &self.config.home_dir, &self.config.project_dir) {
                 PathClass::Skip => {
                     skipped_count += 1;
+                }
+                PathClass::ClaudeDir(rel) => {
+                    claude_dirs.insert(rel);
                 }
                 PathClass::HomeRelative(rel) => {
                     // Check against credential deny list
@@ -238,6 +250,7 @@ impl ProfileLearner {
             home_readwrite,
             other_readonly,
             other_readwrite,
+            claude_dirs,
             skipped_count,
         }
     }
@@ -266,14 +279,22 @@ impl ProfileLearner {
             .map(|d| PathBuf::from(format!("~/{d}")))
             .collect();
 
-        // Deduplicate network targets into domains + ports
-        let allow_domains: Vec<String> = self
+        // Split network targets: core Claude Code domains vs MCP server domains
+        let all_hosts: BTreeSet<String> = self
             .network_targets
             .iter()
             .map(|(host, _)| host.clone())
-            .collect::<BTreeSet<_>>()
-            .into_iter()
             .collect();
+
+        let mut allow_domains = Vec::new();
+        let mut mcp_network_domains = Vec::new();
+        for host in &all_hosts {
+            if CLAUDE_CODE_DOMAINS.iter().any(|d| *d == host) {
+                allow_domains.push(host.clone());
+            } else {
+                mcp_network_domains.push(host.clone());
+            }
+        }
 
         let allow_ports: Vec<u16> = self
             .network_targets
@@ -285,6 +306,13 @@ impl ProfileLearner {
 
         let has_network = !self.network_targets.is_empty();
         let has_dns = !self.dns_queries.is_empty();
+
+        // Collect ~/.claude/ subdirs for plugins.add_dirs
+        let add_dirs: Vec<PathBuf> = groups
+            .claude_dirs
+            .iter()
+            .map(|p| PathBuf::from(format!("~/{}", p.display())))
+            .collect();
 
         Profile {
             name: self.config.name.clone(),
@@ -314,7 +342,11 @@ impl ProfileLearner {
                 max_file_descriptors: 1024,
                 max_disk_write_mb: 10240,
             },
-            plugins: PluginPolicy::default(),
+            plugins: PluginPolicy {
+                add_dirs,
+                mcp_network_domains,
+                ..PluginPolicy::default()
+            },
         }
     }
 
@@ -356,12 +388,23 @@ impl ProfileLearner {
             }
         }
 
-        // Add new network domains
-        let existing_domains: BTreeSet<String> =
+        // Route new network domains: core → allow_domains, MCP → mcp_network_domains
+        let existing_core_domains: BTreeSet<String> =
             profile.network.allow_domains.iter().cloned().collect();
+        let existing_mcp_domains: BTreeSet<String> = profile
+            .plugins
+            .mcp_network_domains
+            .iter()
+            .cloned()
+            .collect();
+
         for (host, _) in &self.network_targets {
-            if !existing_domains.contains(host) {
-                profile.network.allow_domains.push(host.clone());
+            if CLAUDE_CODE_DOMAINS.iter().any(|d| d == host) {
+                if !existing_core_domains.contains(host) {
+                    profile.network.allow_domains.push(host.clone());
+                }
+            } else if !existing_mcp_domains.contains(host) {
+                profile.plugins.mcp_network_domains.push(host.clone());
             }
         }
 
@@ -370,6 +413,16 @@ impl ProfileLearner {
         for (_, port) in &self.network_targets {
             if !existing_ports.contains(port) {
                 profile.network.allow_ports.push(*port);
+            }
+        }
+
+        // Add new ~/.claude/ dirs to plugins.add_dirs
+        let existing_add_dirs: BTreeSet<PathBuf> =
+            profile.plugins.add_dirs.iter().cloned().collect();
+        for p in &groups.claude_dirs {
+            let full = PathBuf::from(format!("~/{}", p.display()));
+            if !existing_add_dirs.contains(&full) {
+                profile.plugins.add_dirs.push(full);
             }
         }
 
@@ -382,6 +435,7 @@ impl ProfileLearner {
             }
         }
 
+        // Note: base disallowed_tools are preserved — never overwritten by learner
         profile
     }
 }
@@ -411,6 +465,19 @@ fn classify_single_path(path: &Path, home_dir: &Path, project_dir: &Path) -> Pat
     if let Ok(rel) = path.strip_prefix(home_dir) {
         let mut components = rel.components();
         if let Some(first) = components.next() {
+            let first_str = first.as_os_str().to_string_lossy();
+
+            // ~/.claude/<subdir> → route to plugins.add_dirs
+            if first_str == ".claude" {
+                if let Some(second) = components.next() {
+                    let claude_subpath =
+                        PathBuf::from(format!(".claude/{}", second.as_os_str().to_string_lossy()));
+                    return PathClass::ClaudeDir(claude_subpath);
+                }
+                // Path is exactly ~/.claude — skip (not a useful bind target)
+                return PathClass::Skip;
+            }
+
             return PathClass::HomeRelative(PathBuf::from(first.as_os_str()));
         }
         // Path is exactly $HOME — skip
@@ -464,6 +531,11 @@ pub fn format_summary(summary: &LearningSummary) -> String {
         out,
         "  Other readwrite:    {}",
         summary.path_groups.other_readwrite.len()
+    );
+    let _ = writeln!(
+        out,
+        "  Claude dirs:        {}",
+        summary.path_groups.claude_dirs.len()
     );
     let _ = writeln!(
         out,
@@ -722,17 +794,18 @@ mod tests {
 
         let (profile, _) = learner.generate_profile();
 
-        // Should keep existing domain and add new one
+        // Should keep existing core domain
         assert!(
             profile
                 .network
                 .allow_domains
                 .contains(&"api.anthropic.com".to_owned())
         );
+        // New non-core domain goes to mcp_network_domains
         assert!(
             profile
-                .network
-                .allow_domains
+                .plugins
+                .mcp_network_domains
                 .contains(&"registry.npmjs.org".to_owned())
         );
         // Should add new readonly path
@@ -828,6 +901,263 @@ mod tests {
         assert_eq!(
             parsed.network.allow_domains.len(),
             profile.network.allow_domains.len()
+        );
+    }
+
+    #[test]
+    fn mcp_domains_separated_from_core_domains() {
+        let mut learner = ProfileLearner::new(default_config());
+        // Core Claude Code domain
+        learner.observe(&make_event(
+            0,
+            EventKind::NetworkConnect {
+                target: "api.anthropic.com".to_owned(),
+                port: 443,
+            },
+            EventResult::Allowed,
+        ));
+        // MCP server domain
+        learner.observe(&make_event(
+            1,
+            EventKind::NetworkConnect {
+                target: "context7.com".to_owned(),
+                port: 443,
+            },
+            EventResult::Allowed,
+        ));
+        // Another MCP domain
+        learner.observe(&make_event(
+            2,
+            EventKind::NetworkConnect {
+                target: "api.greptile.com".to_owned(),
+                port: 443,
+            },
+            EventResult::Allowed,
+        ));
+        let (profile, _) = learner.generate_profile();
+
+        // Core domain → network.allow_domains
+        assert!(
+            profile
+                .network
+                .allow_domains
+                .contains(&"api.anthropic.com".to_owned())
+        );
+        assert!(
+            !profile
+                .network
+                .allow_domains
+                .contains(&"context7.com".to_owned())
+        );
+
+        // MCP domains → plugins.mcp_network_domains
+        assert!(
+            profile
+                .plugins
+                .mcp_network_domains
+                .contains(&"context7.com".to_owned())
+        );
+        assert!(
+            profile
+                .plugins
+                .mcp_network_domains
+                .contains(&"api.greptile.com".to_owned())
+        );
+        assert!(
+            !profile
+                .plugins
+                .mcp_network_domains
+                .contains(&"api.anthropic.com".to_owned())
+        );
+    }
+
+    #[test]
+    fn claude_dirs_routed_to_plugins_add_dirs() {
+        let mut learner = ProfileLearner::new(default_config());
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.claude/exo-self/journal.md"),
+                sha256: "abc".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        learner.observe(&make_event(
+            1,
+            EventKind::FileWrite {
+                path: PathBuf::from("/home/user/.claude/projects/foo/notes.md"),
+                sha256_before: None,
+                sha256_after: "def".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        let (profile, summary) = learner.generate_profile();
+
+        // Should be in plugins.add_dirs, NOT in filesystem readonly/readwrite
+        assert!(
+            profile
+                .plugins
+                .add_dirs
+                .contains(&PathBuf::from("~/.claude/exo-self"))
+        );
+        assert!(
+            profile
+                .plugins
+                .add_dirs
+                .contains(&PathBuf::from("~/.claude/projects"))
+        );
+        assert!(
+            summary
+                .path_groups
+                .claude_dirs
+                .contains(&PathBuf::from(".claude/exo-self"))
+        );
+        assert!(
+            summary
+                .path_groups
+                .claude_dirs
+                .contains(&PathBuf::from(".claude/projects"))
+        );
+
+        // Should NOT appear in home_readonly or home_readwrite
+        assert!(
+            !summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".claude"))
+        );
+        assert!(
+            !summary
+                .path_groups
+                .home_readwrite
+                .contains(&PathBuf::from(".claude"))
+        );
+    }
+
+    #[test]
+    fn merge_routes_new_domains_to_mcp_network_domains() {
+        let base = Profile {
+            name: "base".to_owned(),
+            description: "base profile".to_owned(),
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![PathBuf::from("/usr")],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![PathBuf::from("/tmp")],
+            },
+            network: NetworkPolicy {
+                default: PolicyDefault::Deny,
+                allow_domains: vec!["api.anthropic.com".to_owned()],
+                allow_ports: vec![443],
+                allow_dns: true,
+            },
+            process: ProcessPolicy {
+                pid_namespace: true,
+                no_new_privileges: true,
+                command_allowlist: vec![],
+                seccomp_profile: None,
+            },
+            resources: ResourceLimits {
+                max_memory_mb: 4096,
+                max_cpu_percent: 100,
+                max_pids: 256,
+                max_file_descriptors: 1024,
+                max_disk_write_mb: 10240,
+            },
+            plugins: PluginPolicy::default(),
+        };
+
+        let mut config = default_config();
+        config.base_profile = Some(base);
+        let mut learner = ProfileLearner::new(config);
+
+        // New MCP domain (not a core domain)
+        learner.observe(&make_event(
+            0,
+            EventKind::NetworkConnect {
+                target: "registry.npmjs.org".to_owned(),
+                port: 443,
+            },
+            EventResult::Allowed,
+        ));
+
+        let (profile, _) = learner.generate_profile();
+
+        // Base core domain preserved
+        assert!(
+            profile
+                .network
+                .allow_domains
+                .contains(&"api.anthropic.com".to_owned())
+        );
+        // New domain goes to mcp_network_domains, not allow_domains
+        assert!(
+            profile
+                .plugins
+                .mcp_network_domains
+                .contains(&"registry.npmjs.org".to_owned())
+        );
+        assert!(
+            !profile
+                .network
+                .allow_domains
+                .contains(&"registry.npmjs.org".to_owned())
+        );
+    }
+
+    #[test]
+    fn merge_preserves_base_disallowed_tools() {
+        let mut base = Profile {
+            name: "base".to_owned(),
+            description: "base profile".to_owned(),
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![PathBuf::from("/usr")],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![PathBuf::from("/tmp")],
+            },
+            network: NetworkPolicy {
+                default: PolicyDefault::Deny,
+                allow_domains: vec![],
+                allow_ports: vec![],
+                allow_dns: false,
+            },
+            process: ProcessPolicy {
+                pid_namespace: true,
+                no_new_privileges: true,
+                command_allowlist: vec![],
+                seccomp_profile: None,
+            },
+            resources: ResourceLimits {
+                max_memory_mb: 4096,
+                max_cpu_percent: 100,
+                max_pids: 256,
+                max_file_descriptors: 1024,
+                max_disk_write_mb: 10240,
+            },
+            plugins: PluginPolicy::default(),
+        };
+        base.plugins.disallowed_tools = vec!["mcp__dangerous_tool".to_owned()];
+
+        let mut config = default_config();
+        config.base_profile = Some(base);
+        let mut learner = ProfileLearner::new(config);
+
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.npm/cache/foo"),
+                sha256: "abc".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+
+        let (profile, _) = learner.generate_profile();
+
+        // disallowed_tools must be preserved from base
+        assert_eq!(
+            profile.plugins.disallowed_tools,
+            vec!["mcp__dangerous_tool".to_owned()]
         );
     }
 }

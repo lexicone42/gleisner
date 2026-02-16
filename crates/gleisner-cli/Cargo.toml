@@ -24,6 +24,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 color-eyre.workspace = true
 directories.workspace = true
+which.workspace = true
 tokio-util.workspace = true
 
 # Internal crates

@@ -2371,6 +2371,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
+ "which 7.0.3",
 ]
 
 [[package]]
@@ -2430,6 +2431,7 @@ dependencies = [
  "nix 0.29.0",
  "proptest",
  "serde",
+ "serde_json",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
@@ -2438,6 +2440,16 @@ dependencies = [
  "toml",
  "tracing",
  "which 7.0.3",
+]
+
+[[package]]
+name = "gleisner-sandbox-init"
+version = "0.1.0"
+dependencies = [
+ "gleisner-polis",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
