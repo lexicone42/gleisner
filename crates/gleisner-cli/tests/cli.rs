@@ -9,6 +9,8 @@ use std::io::Write;
 use std::path::Path;
 
 use assert_cmd::Command;
+use chrono::DateTime;
+use gleisner_scapes::audit::{AuditEvent, EventKind, EventResult, JsonlWriter};
 use predicates::prelude::*;
 
 /// Convenience: get a `Command` for the `gleisner` binary.
@@ -412,4 +414,286 @@ fn verify_chain_reports_broken_link() {
         .assert()
         .failure()
         .stdout(predicate::str::contains("broken chain").or(predicate::str::contains("1 link(s)")));
+}
+
+// ─── learn tests ────────────────────────────────────────────
+
+/// Helper: create a JSONL audit log from a list of events using the real writer.
+fn write_audit_log(dir: &Path, events: &[AuditEvent]) -> std::path::PathBuf {
+    let log_path = dir.join("audit.jsonl");
+    let file = std::fs::File::create(&log_path).expect("create audit log");
+    let mut writer = JsonlWriter::new(std::io::BufWriter::new(file));
+    for event in events {
+        writer.write_event(event).expect("write event");
+    }
+    log_path
+}
+
+fn make_audit_event(seq: u64, kind: EventKind, result: EventResult) -> AuditEvent {
+    AuditEvent {
+        timestamp: DateTime::from_timestamp(
+            1_700_000_000 + i64::try_from(seq).expect("seq fits i64"),
+            0,
+        )
+        .expect("valid timestamp"),
+        sequence: seq,
+        event: kind,
+        result,
+    }
+}
+
+#[test]
+fn learn_generates_profile_from_audit_log() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = vec![
+        make_audit_event(
+            0,
+            EventKind::FileRead {
+                path: "/home/testuser/.rustup/toolchains/stable/lib/libstd.so".into(),
+                sha256: "abc".to_owned(),
+            },
+            EventResult::Allowed,
+        ),
+        make_audit_event(
+            1,
+            EventKind::NetworkConnect {
+                target: "api.anthropic.com".to_owned(),
+                port: 443,
+            },
+            EventResult::Allowed,
+        ),
+        make_audit_event(
+            2,
+            EventKind::FileWrite {
+                path: "/home/testuser/.cargo/registry/cache/foo".into(),
+                sha256_before: None,
+                sha256_after: "def".to_owned(),
+            },
+            EventResult::Allowed,
+        ),
+        make_audit_event(
+            3,
+            EventKind::ProcessExec {
+                command: "cargo".to_owned(),
+                args: vec!["build".to_owned()],
+                cwd: "/home/testuser/project".into(),
+            },
+            EventResult::Allowed,
+        ),
+    ];
+    let log_path = write_audit_log(dir.path(), &events);
+
+    let output = gleisner()
+        .args([
+            "learn",
+            "--audit-log",
+            log_path.to_str().unwrap(),
+            "--name",
+            "integration-test",
+            "--project-dir",
+            "/home/testuser/project",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(output).expect("valid UTF-8");
+
+    // Profile name and description
+    assert!(stdout.contains("integration-test"));
+    // Network allowlist
+    assert!(stdout.contains("api.anthropic.com"));
+    // Home-relative paths
+    assert!(stdout.contains(".rustup"));
+    assert!(stdout.contains(".cargo"));
+    // Command allowlist
+    assert!(stdout.contains("cargo"));
+    // Credential deny list
+    assert!(stdout.contains(".ssh"));
+}
+
+#[test]
+fn learn_writes_profile_to_output_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = vec![make_audit_event(
+        0,
+        EventKind::FileRead {
+            path: "/home/testuser/.npm/cache/pkg".into(),
+            sha256: "abc".to_owned(),
+        },
+        EventResult::Allowed,
+    )];
+    let log_path = write_audit_log(dir.path(), &events);
+    let output_path = dir.path().join("learned.toml");
+
+    gleisner()
+        .args([
+            "learn",
+            "--audit-log",
+            log_path.to_str().unwrap(),
+            "--output",
+            output_path.to_str().unwrap(),
+            "--project-dir",
+            "/home/testuser/project",
+        ])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(&output_path).expect("read output file");
+    // Should be valid TOML that parses as a profile
+    assert!(content.contains("name = \"learned\""));
+    assert!(content.contains(".npm"));
+    // File should start with the header comment
+    assert!(content.starts_with("# learned"));
+}
+
+#[test]
+fn learn_quiet_suppresses_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let events = vec![make_audit_event(
+        0,
+        EventKind::FileRead {
+            path: "/home/testuser/.rustup/bin/rustc".into(),
+            sha256: "abc".to_owned(),
+        },
+        EventResult::Allowed,
+    )];
+    let log_path = write_audit_log(dir.path(), &events);
+
+    let assert = gleisner()
+        .args([
+            "learn",
+            "--audit-log",
+            log_path.to_str().unwrap(),
+            "--quiet",
+            "--project-dir",
+            "/home/testuser/project",
+        ])
+        .assert()
+        .success();
+
+    // stdout should have the TOML profile
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("name = \"learned\""));
+
+    // stderr should NOT have the summary
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(
+        !stderr.contains("Profile Learning Summary"),
+        "quiet mode should suppress summary, got: {stderr}"
+    );
+}
+
+#[test]
+fn learn_empty_audit_log_produces_minimal_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let log_path = write_audit_log(dir.path(), &[]);
+
+    let output = gleisner()
+        .args([
+            "learn",
+            "--audit-log",
+            log_path.to_str().unwrap(),
+            "--name",
+            "empty",
+            "--project-dir",
+            "/tmp/nonexistent",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(output).unwrap();
+    // Should still produce a valid profile with system prefixes
+    assert!(stdout.contains("name = \"empty\""));
+    assert!(stdout.contains("/usr"));
+    assert!(stdout.contains("/lib"));
+}
+
+#[test]
+fn learn_with_base_profile_merges() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Write a base profile TOML
+    let profile_path = dir.path().join("base.toml");
+    std::fs::write(
+        &profile_path,
+        r#"
+name = "base"
+description = "base profile"
+
+[filesystem]
+readonly_bind = ["/usr"]
+readwrite_bind = []
+deny = ["~/.ssh"]
+tmpfs = ["/tmp"]
+
+[network]
+default = "deny"
+allow_domains = ["api.anthropic.com"]
+allow_ports = [443]
+allow_dns = true
+
+[process]
+pid_namespace = true
+no_new_privileges = true
+command_allowlist = []
+
+[resources]
+max_memory_mb = 4096
+max_cpu_percent = 100
+max_pids = 256
+max_file_descriptors = 1024
+max_disk_write_mb = 10240
+"#,
+    )
+    .unwrap();
+
+    // Create events with a new domain
+    let events = vec![make_audit_event(
+        0,
+        EventKind::NetworkConnect {
+            target: "registry.npmjs.org".to_owned(),
+            port: 443,
+        },
+        EventResult::Allowed,
+    )];
+    let log_path = write_audit_log(dir.path(), &events);
+
+    let output = gleisner()
+        .args([
+            "learn",
+            "--audit-log",
+            log_path.to_str().unwrap(),
+            "--base-profile",
+            profile_path.to_str().unwrap(),
+            "--name",
+            "merged",
+            "--project-dir",
+            "/home/testuser/project",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(output).unwrap();
+    // Should have both the original and new domain
+    assert!(stdout.contains("api.anthropic.com"));
+    assert!(stdout.contains("registry.npmjs.org"));
+    // Should keep original readonly
+    assert!(stdout.contains("/usr"));
+}
+
+#[test]
+fn learn_missing_audit_log_fails() {
+    gleisner()
+        .args(["learn", "--audit-log", "/nonexistent/audit.jsonl"])
+        .assert()
+        .failure();
 }

@@ -11,8 +11,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use serde::Deserialize;
 use serde::de::Error as _;
+use serde::{Deserialize, Serialize};
 
 use crate::error::SandboxError;
 
@@ -38,7 +38,7 @@ static DEFAULT_PROFILE_DIRS: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
 ///
 /// Profiles are loaded from TOML files and define filesystem, network,
 /// process, and resource constraints for the sandboxed environment.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Profile {
     /// Human-readable profile name.
     pub name: String,
@@ -58,7 +58,7 @@ pub struct Profile {
 }
 
 /// Controls which filesystem paths are visible and writable.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemPolicy {
     /// Paths mounted read-only (e.g., `/usr`, `/lib`, `/etc`).
     pub readonly_bind: Vec<PathBuf>,
@@ -72,7 +72,7 @@ pub struct FilesystemPolicy {
 }
 
 /// Controls outbound network access.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkPolicy {
     /// Default disposition: `deny` (recommended) or `allow`.
     pub default: PolicyDefault,
@@ -85,7 +85,7 @@ pub struct NetworkPolicy {
 }
 
 /// Controls process-level isolation.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessPolicy {
     /// Isolate PID namespace (sandboxed process sees itself as PID 1).
     pub pid_namespace: bool,
@@ -94,6 +94,7 @@ pub struct ProcessPolicy {
     /// Command allowlist. Empty means all commands are permitted (but logged).
     pub command_allowlist: Vec<String>,
     /// Optional seccomp BPF profile path.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub seccomp_profile: Option<PathBuf>,
 }
 
@@ -102,7 +103,7 @@ pub struct ProcessPolicy {
 /// Controls which MCP tools are blocked, which additional directories
 /// Claude Code can access (e.g. for exo-self), and network domains
 /// needed by MCP servers.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginPolicy {
     /// Tools to explicitly deny via `--disallowedTools`.
     /// e.g. `["mcp__plugin_serena_serena__execute_shell_command"]`
@@ -139,7 +140,7 @@ impl Default for PluginPolicy {
 }
 
 /// Resource limits enforced via cgroups v2.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourceLimits {
     /// Maximum memory in megabytes.
     pub max_memory_mb: u64,
@@ -154,7 +155,7 @@ pub struct ResourceLimits {
 }
 
 /// Whether the default disposition is to allow or deny.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PolicyDefault {
     /// Allow by default.

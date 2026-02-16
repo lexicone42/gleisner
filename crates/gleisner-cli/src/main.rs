@@ -41,6 +41,8 @@ enum Commands {
     Inspect(commands::inspect::InspectArgs),
     /// Generate a Software Bill of Materials (`CycloneDX` 1.5).
     Sbom(commands::sbom::SbomArgs),
+    /// Generate a sandbox profile from audit log observations.
+    Learn(commands::learn::LearnArgs),
 }
 
 #[tokio::main]
@@ -72,5 +74,6 @@ async fn main() -> Result<()> {
         Commands::Verify(args) => commands::verify::execute(args),
         Commands::Inspect(args) => commands::inspect::execute(&args),
         Commands::Sbom(args) => commands::sbom::execute(&args),
+        Commands::Learn(args) => commands::learn::execute(args),
     }
 }

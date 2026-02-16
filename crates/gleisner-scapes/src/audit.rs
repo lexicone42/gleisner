@@ -7,16 +7,16 @@
 //! Events are serialized as newline-delimited JSON (JSONL) for
 //! machine consumption and forensic analysis.
 
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::AuditError;
 
 /// A single auditable action observed during a sandboxed session.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditEvent {
     /// When the event occurred.
     pub timestamp: DateTime<Utc>,
@@ -32,7 +32,7 @@ pub struct AuditEvent {
 ///
 /// Uses adjacently-tagged serde representation so each JSON line
 /// self-describes its event type for easy `jq` filtering.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", content = "detail")]
 pub enum EventKind {
     /// A file was read. Includes content digest.
@@ -106,7 +106,7 @@ pub enum EventKind {
 }
 
 /// Whether the action was allowed or denied by the sandbox policy.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EventResult {
     /// The action was permitted by policy.
@@ -148,6 +148,59 @@ impl<W: Write> JsonlWriter<W> {
     }
 }
 
+/// Reads audit events from newline-delimited JSON (JSONL).
+///
+/// Symmetric to [`JsonlWriter`]. Each call to [`next_event`](JsonlReader::next_event)
+/// reads and deserializes one JSON line, skipping blank lines.
+pub struct JsonlReader<R: BufRead> {
+    reader: R,
+    line_number: u64,
+    buf: String,
+}
+
+impl<R: BufRead> JsonlReader<R> {
+    /// Create a new JSONL reader wrapping the given input.
+    pub const fn new(reader: R) -> Self {
+        Self {
+            reader,
+            line_number: 0,
+            buf: String::new(),
+        }
+    }
+
+    /// Read and deserialize the next audit event.
+    ///
+    /// Returns `Ok(None)` at end of input.
+    /// Skips blank lines.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuditError`] if deserialization or I/O fails.
+    pub fn next_event(&mut self) -> Result<Option<AuditEvent>, AuditError> {
+        loop {
+            self.buf.clear();
+            let bytes_read = self.reader.read_line(&mut self.buf)?;
+            if bytes_read == 0 {
+                return Ok(None);
+            }
+            self.line_number += 1;
+
+            let trimmed = self.buf.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let event: AuditEvent = serde_json::from_str(trimmed)?;
+            return Ok(Some(event));
+        }
+    }
+
+    /// The 1-based line number of the most recently read line.
+    pub const fn line_number(&self) -> u64 {
+        self.line_number
+    }
+}
+
 /// Create a [`JsonlWriter`] backed by a file at the given path.
 ///
 /// Creates the file if it doesn't exist, appends if it does.
@@ -163,6 +216,18 @@ pub fn open_audit_log(
         .append(true)
         .open(path)?;
     Ok(JsonlWriter::new(std::io::BufWriter::new(file)))
+}
+
+/// Create a [`JsonlReader`] backed by a file at the given path.
+///
+/// # Errors
+///
+/// Returns [`AuditError`] if the file cannot be opened.
+pub fn open_audit_log_reader(
+    path: &Path,
+) -> Result<JsonlReader<std::io::BufReader<std::fs::File>>, AuditError> {
+    let file = std::fs::File::open(path)?;
+    Ok(JsonlReader::new(std::io::BufReader::new(file)))
 }
 
 #[cfg(test)]
@@ -253,5 +318,101 @@ mod tests {
         assert!(json.contains("ANTHROPIC_API_KEY"));
         assert!(json.contains("value_sha256"));
         assert!(!json.contains("sk-ant-")); // No API key prefix
+    }
+
+    fn make_test_event(seq: u64, kind: EventKind, result: EventResult) -> AuditEvent {
+        AuditEvent {
+            timestamp: DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp"),
+            sequence: seq,
+            event: kind,
+            result,
+        }
+    }
+
+    #[test]
+    fn jsonl_round_trip_write_then_read() {
+        let events = vec![
+            make_test_event(
+                0,
+                EventKind::FileRead {
+                    path: PathBuf::from("/project/src/main.rs"),
+                    sha256: "abc123".to_owned(),
+                },
+                EventResult::Allowed,
+            ),
+            make_test_event(
+                1,
+                EventKind::NetworkConnect {
+                    target: "api.anthropic.com".to_owned(),
+                    port: 443,
+                },
+                EventResult::Denied {
+                    reason: "not in allowlist".to_owned(),
+                },
+            ),
+            make_test_event(
+                2,
+                EventKind::ProcessExec {
+                    command: "cargo".to_owned(),
+                    args: vec!["build".to_owned()],
+                    cwd: PathBuf::from("/project"),
+                },
+                EventResult::Allowed,
+            ),
+        ];
+
+        // Write
+        let mut buf = Vec::new();
+        {
+            let mut writer = JsonlWriter::new(&mut buf);
+            for event in &events {
+                writer.write_event(event).expect("write should succeed");
+            }
+        }
+
+        // Read back
+        let mut reader = JsonlReader::new(std::io::Cursor::new(buf));
+        for (i, original) in events.iter().enumerate() {
+            let read_back = reader
+                .next_event()
+                .expect("read should succeed")
+                .unwrap_or_else(|| panic!("expected event {i}"));
+            assert_eq!(read_back.sequence, original.sequence);
+            assert_eq!(read_back.result, original.result);
+        }
+        assert!(
+            reader.next_event().expect("read should succeed").is_none(),
+            "should be at end"
+        );
+    }
+
+    #[test]
+    fn jsonl_reader_skips_blank_lines() {
+        let input = b"{\"timestamp\":\"2023-11-14T22:13:20Z\",\"sequence\":0,\
+            \"event\":{\"type\":\"FileRead\",\"detail\":{\"path\":\"/a\",\"sha256\":\"abc\"}},\
+            \"result\":\"allowed\"}\n\
+            \n\
+            \n\
+            {\"timestamp\":\"2023-11-14T22:13:20Z\",\"sequence\":1,\
+            \"event\":{\"type\":\"FileRead\",\"detail\":{\"path\":\"/b\",\"sha256\":\"def\"}},\
+            \"result\":\"allowed\"}\n";
+
+        let mut reader = JsonlReader::new(std::io::Cursor::new(&input[..]));
+
+        let first = reader.next_event().expect("ok").expect("event 0");
+        assert_eq!(first.sequence, 0);
+
+        let second = reader.next_event().expect("ok").expect("event 1");
+        assert_eq!(second.sequence, 1);
+
+        assert!(reader.next_event().expect("ok").is_none());
+        assert_eq!(reader.line_number(), 4); // 4 lines total (including 2 blank)
+    }
+
+    #[test]
+    fn jsonl_reader_empty_input() {
+        let mut reader = JsonlReader::new(std::io::Cursor::new(b""));
+        assert!(reader.next_event().expect("ok").is_none());
+        assert_eq!(reader.line_number(), 0);
     }
 }
