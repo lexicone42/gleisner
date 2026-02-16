@@ -226,10 +226,13 @@ pub fn spawn_query(config: QueryConfig, buffer_size: usize) -> mpsc::Receiver<Dr
 ///
 /// When selective network filtering is active, these hold the
 /// `unshare` namespace holder and `slirp4netns` processes alive.
+/// When Landlock is enabled, `_policy_file` keeps the serialized
+/// policy JSON alive (bwrap bind-mounts the host tempfile).
 /// Dropped automatically when the query future completes.
 struct SandboxHandles {
     _ns: Option<gleisner_polis::NamespaceHandle>,
     _slirp: Option<gleisner_polis::SlirpHandle>,
+    _policy_file: Option<tempfile::NamedTempFile>,
 }
 
 /// Internal: run the claude subprocess and stream events.
@@ -299,6 +302,7 @@ async fn run_query(
             SandboxHandles {
                 _ns: None,
                 _slirp: None,
+                _policy_file: None,
             },
         )
     };
@@ -455,9 +459,9 @@ fn build_sandboxed_command(
     full_inner.extend(inner_args);
 
     // Build bwrap command — pass bool indicating external netns.
-    // _policy_file (if Landlock is enabled) must stay alive until child exits.
+    // policy_file (if Landlock is enabled) must stay alive until child exits.
     let has_filter = filter.is_some();
-    let (bwrap_cmd, _policy_file) = sandbox.build_command(&full_inner, has_filter);
+    let (bwrap_cmd, policy_file) = sandbox.build_command(&full_inner, has_filter);
 
     // ── Set up namespace + slirp4netns when filtering ───────────
     // These handles must stay alive for the subprocess duration.
@@ -490,6 +494,7 @@ fn build_sandboxed_command(
     let handles = SandboxHandles {
         _ns: ns_handle,
         _slirp: slirp_handle,
+        _policy_file: policy_file,
     };
 
     Ok((tokio_cmd, handles))

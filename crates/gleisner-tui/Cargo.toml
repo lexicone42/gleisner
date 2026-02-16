@@ -28,6 +28,7 @@ tracing-subscriber.workspace = true
 
 # Utilities
 which.workspace = true
+tempfile.workspace = true
 
 # Internal
 gleisner-scapes.workspace = true

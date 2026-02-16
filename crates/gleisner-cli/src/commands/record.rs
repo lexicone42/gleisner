@@ -168,8 +168,9 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
 
     let SandboxChild {
         mut child,
-        slirp, // kept alive until session ends
-        ns,    // kept alive until session ends
+        slirp,                          // kept alive until session ends
+        ns,                             // kept alive until session ends
+        _policy_file: _landlock_policy, // kept alive until session ends
     } = sandbox_child;
 
     let child_pid = child.id().unwrap_or(0);
@@ -338,6 +339,8 @@ struct SandboxChild {
     slirp: Option<gleisner_polis::SlirpHandle>,
     /// Keeps the user+net namespace alive — dropped when the session ends.
     ns: Option<gleisner_polis::NamespaceHandle>,
+    /// Keeps the Landlock policy JSON alive — bwrap bind-mounts this host file.
+    _policy_file: Option<tempfile::NamedTempFile>,
 }
 
 /// Spawn the sandboxed Claude Code process. Returns the child handle
@@ -419,11 +422,11 @@ fn spawn_sandbox_child(
     inner_command.extend(claude_args);
 
     let has_filter = filter.is_some();
-    let (bwrap_cmd, _policy_file) = sandbox.build_command(&inner_command, has_filter);
+    let (bwrap_cmd, policy_file) = sandbox.build_command(&inner_command, has_filter);
 
     // When filtering is active, create namespace + slirp, apply firewall
     // rules via nsenter, and wrap bwrap in nsenter.
-    // _policy_file must stay alive until the child exits (bwrap bind-mounts it).
+    // policy_file must stay alive until the child exits (bwrap bind-mounts it).
     let (ns, slirp, std_cmd) = if let Some(ref f) = filter {
         let ns = gleisner_polis::NamespaceHandle::create()?;
         let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
@@ -450,7 +453,12 @@ fn spawn_sandbox_child(
         .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-    Ok(SandboxChild { child, slirp, ns })
+    Ok(SandboxChild {
+        child,
+        slirp,
+        ns,
+        _policy_file: policy_file,
+    })
 }
 
 /// Assemble the in-toto attestation statement from recorder output.
