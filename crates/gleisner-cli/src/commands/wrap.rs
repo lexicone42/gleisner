@@ -66,7 +66,7 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
         .project_dir
         .unwrap_or_else(|| std::env::current_dir().expect("cannot determine cwd"));
 
-    let profile = gleisner_polis::resolve_profile(&args.profile)?;
+    let mut profile = gleisner_polis::resolve_profile(&args.profile)?;
 
     tracing::info!(
         profile = %profile.name,
@@ -74,6 +74,16 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
         claude_bin = %args.claude_bin,
         "starting sandboxed Claude Code session"
     );
+
+    // Claude Code needs access to its config directory (~/.claude/).
+    // Add $HOME as readonly so it can find settings, MCP config, hooks, etc.
+    // The profile's deny paths (tmpfs overlays) shadow sensitive dirs.
+    if let Ok(home) = std::env::var("HOME") {
+        let home_path = PathBuf::from(&home);
+        if !profile.filesystem.readonly_bind.contains(&home_path) {
+            profile.filesystem.readonly_bind.push(home_path);
+        }
+    }
 
     let mut sandbox = gleisner_polis::BwrapSandbox::new(profile, project_dir)?;
 
@@ -229,9 +239,15 @@ fn detect_sandbox_init() -> Option<PathBuf> {
 
 /// Merge the profile's `[plugins]` policy into the sandbox configuration.
 ///
-/// Adds MCP network domains to the network allowlist and expands + mounts
-/// `add_dirs` as read-write paths.
+/// - Expands and mounts plugin `add_dirs` as read-write
+/// - Adds `~/.claude` as read-write (session state, settings)
+/// - Merges MCP network domains into the sandbox allowlist
 fn apply_plugin_sandbox_policy(sandbox: &mut gleisner_polis::BwrapSandbox) {
+    // ~/.claude needs to be writable for session state and settings
+    if let Ok(home) = std::env::var("HOME") {
+        sandbox.allow_paths(std::iter::once(PathBuf::from(format!("{home}/.claude"))));
+    }
+
     let plugins = &sandbox.profile().plugins;
     let mcp_domains: Vec<String> = plugins.mcp_network_domains.clone();
     let add_dirs: Vec<PathBuf> = plugins

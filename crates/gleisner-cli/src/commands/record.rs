@@ -350,7 +350,7 @@ struct SandboxChild {
 /// user+net namespace pair, starts slirp4netns, and runs bwrap inside
 /// the namespace via nsenter.
 fn spawn_sandbox_child(
-    profile: gleisner_polis::Profile,
+    mut profile: gleisner_polis::Profile,
     project_dir: PathBuf,
     allow_network: Vec<String>,
     allow_path: Vec<PathBuf>,
@@ -358,6 +358,14 @@ fn spawn_sandbox_child(
     claude_args: Vec<String>,
     no_landlock: bool,
 ) -> Result<SandboxChild> {
+    // Claude Code needs access to its config directory (~/.claude/).
+    if let Ok(home) = std::env::var("HOME") {
+        let home_path = PathBuf::from(&home);
+        if !profile.filesystem.readonly_bind.contains(&home_path) {
+            profile.filesystem.readonly_bind.push(home_path);
+        }
+    }
+
     let mut sandbox = gleisner_polis::BwrapSandbox::new(profile, project_dir)?;
 
     if !allow_network.is_empty() {
@@ -616,6 +624,11 @@ fn detect_sandbox_init() -> Option<PathBuf> {
 
 /// Merge the profile's `[plugins]` policy into the sandbox configuration.
 fn apply_plugin_sandbox_policy(sandbox: &mut gleisner_polis::BwrapSandbox) {
+    // ~/.claude needs to be writable for session state and settings
+    if let Ok(home) = std::env::var("HOME") {
+        sandbox.allow_paths(std::iter::once(PathBuf::from(format!("{home}/.claude"))));
+    }
+
     let plugins = &sandbox.profile().plugins;
     let mcp_domains: Vec<String> = plugins.mcp_network_domains.clone();
     let add_dirs: Vec<PathBuf> = plugins
