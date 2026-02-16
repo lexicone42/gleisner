@@ -26,6 +26,9 @@ color-eyre.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+# Utilities
+which.workspace = true
+
 # Internal
 gleisner-scapes.workspace = true
 gleisner-polis.workspace = true

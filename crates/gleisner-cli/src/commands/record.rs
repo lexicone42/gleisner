@@ -364,6 +364,9 @@ fn spawn_sandbox_child(
         sandbox.allow_paths(allow_path);
     }
 
+    // Merge plugin policy into sandbox (MCP network domains + add_dirs)
+    apply_plugin_sandbox_policy(&mut sandbox);
+
     // Enable Landlock-inside-bwrap if the sandbox-init binary is available
     if !no_landlock {
         if let Some(init_bin) = detect_sandbox_init() {
@@ -400,7 +403,19 @@ fn spawn_sandbox_child(
         None
     };
 
+    // Build command: claude [plugin policy args...] [user args...]
     let mut inner_command = vec![claude_bin];
+
+    // Inject plugin policy flags from the profile's [plugins] section
+    let plugins = &sandbox.profile().plugins;
+    if plugins.skip_permissions {
+        inner_command.push("--dangerously-skip-permissions".into());
+    }
+    if !plugins.disallowed_tools.is_empty() {
+        inner_command.push("--disallowedTools".into());
+        inner_command.push(plugins.disallowed_tools.join(","));
+    }
+
     inner_command.extend(claude_args);
 
     let has_filter = filter.is_some();
@@ -589,4 +604,17 @@ fn detect_sandbox_init() -> Option<PathBuf> {
         }
     }
     which::which("gleisner-sandbox-init").ok()
+}
+
+/// Merge the profile's `[plugins]` policy into the sandbox configuration.
+fn apply_plugin_sandbox_policy(sandbox: &mut gleisner_polis::BwrapSandbox) {
+    let plugins = &sandbox.profile().plugins;
+    let mcp_domains: Vec<String> = plugins.mcp_network_domains.clone();
+    let add_dirs: Vec<PathBuf> = plugins
+        .add_dirs
+        .iter()
+        .map(|p| gleisner_polis::expand_tilde(p))
+        .collect();
+    sandbox.allow_domains(mcp_domains);
+    sandbox.allow_paths(add_dirs);
 }

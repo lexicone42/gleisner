@@ -2487,6 +2487,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vt100",
+ "which 7.0.3",
 ]
 
 [[package]]

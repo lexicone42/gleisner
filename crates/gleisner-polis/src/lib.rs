@@ -17,7 +17,7 @@ pub mod procmon;
 pub mod profile;
 pub mod resource;
 
-pub use bwrap::BwrapSandbox;
+pub use bwrap::{BwrapSandbox, expand_tilde};
 pub use landlock::{LandlockEnforcement, LandlockPolicy, LandlockStatus, apply_landlock};
 pub use learner::{
     LearnerConfig, LearningSummary, ProfileLearner, format_profile_toml, format_summary,

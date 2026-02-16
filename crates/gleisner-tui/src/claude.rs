@@ -179,6 +179,19 @@ fn expand_tilde(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// Try to find the `gleisner-sandbox-init` binary.
+///
+/// Checks alongside the running binary first, then falls back to PATH.
+fn detect_sandbox_init() -> Option<PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        let sibling = exe.with_file_name("gleisner-sandbox-init");
+        if sibling.is_file() {
+            return Some(sibling);
+        }
+    }
+    which::which("gleisner-sandbox-init").ok()
+}
+
 /// Messages sent from the Claude driver task to the TUI.
 #[derive(Debug)]
 pub enum DriverMessage {
@@ -401,6 +414,13 @@ fn build_sandboxed_command(
             .iter()
             .cloned(),
     );
+
+    // Enable Landlock-inside-bwrap if the sandbox-init binary is available
+    if let Some(init_bin) = detect_sandbox_init() {
+        sandbox.enable_landlock(init_bin);
+    } else {
+        tracing::warn!("gleisner-sandbox-init not found — running without Landlock");
+    }
 
     // ── Resolve selective network filter ────────────────────────
     // When the profile denies network but has allowed domains, we need

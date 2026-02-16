@@ -327,7 +327,6 @@ impl BwrapSandbox {
 ///
 /// Only expands a leading `~` — embedded tildes are left alone.
 /// Returns the path unchanged if `$HOME` is not set.
-#[allow(unreachable_pub)]
 pub fn expand_tilde(path: &Path) -> PathBuf {
     let path_str = path.display().to_string();
     if path_str.starts_with('~') {
