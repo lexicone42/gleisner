@@ -6,7 +6,7 @@
 
 mod bwrap;
 pub mod error;
-pub mod fanotify;
+pub mod inotify_mon;
 mod landlock;
 pub mod learner;
 pub mod monitor;

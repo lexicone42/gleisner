@@ -33,7 +33,7 @@ Optional:
     │ (sandbox) │ │ (attest) │ │ (verify)  │ │  (SBOM)  │
     +-----------+ +----------+ +-----------+ +----------+
 
-    polis ─────► Landlock/cgroup sandbox, fanotify monitoring
+    polis ─────► Landlock/cgroup sandbox, inotify monitoring
     introdus ──► in-toto attestation bundles, ECDSA signing
     lacerta ───► signature/digest verification, policy engine
     bridger ───► Cargo.lock → CycloneDX 1.5 SBOM generation
@@ -103,7 +103,7 @@ Use `--no-chain` with `gleisner record` to start a new chain (e.g., after a majo
 | Crate | Description |
 |-------|-------------|
 | `gleisner-cli` | CLI binary with `wrap`, `record`, `verify`, `inspect`, `sbom` commands |
-| `gleisner-polis` | Sandbox enforcement: Landlock LSM, cgroup resource limits, fanotify file monitoring |
+| `gleisner-polis` | Sandbox enforcement: Landlock LSM, cgroup resource limits, inotify file monitoring with snapshot reconciliation |
 | `gleisner-introdus` | Attestation bundle creation: in-toto statements, ECDSA P-256 signing |
 | `gleisner-lacerta` | Verification: signature checking (local key + Sigstore), digest verification, policy engine (JSON + WASM) |
 | `gleisner-bridger` | SBOM generation: Cargo.lock parsing, CycloneDX 1.5 JSON output |

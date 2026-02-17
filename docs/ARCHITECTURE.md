@@ -51,7 +51,7 @@ The project is a Cargo workspace with six crates. All version numbers and lint c
 | Crate | Role | Key Types |
 |-------|------|-----------|
 | `gleisner-cli` | Binary entry point. CLI parsing, command dispatch, pipeline orchestration. | `RecordArgs`, `WrapArgs`, `VerifyArgs` |
-| `gleisner-polis` | Sandbox enforcement. Bubblewrap command construction, Landlock LSM, cgroup v2 resource limits, fanotify filesystem monitoring, `/proc` process monitoring, network filtering. | `BwrapSandbox`, `Profile`, `CgroupScope`, `NetworkFilter`, `NamespaceHandle`, `SlirpHandle` |
+| `gleisner-polis` | Sandbox enforcement. Bubblewrap command construction, Landlock LSM, cgroup v2 resource limits, inotify filesystem monitoring with snapshot reconciliation, `/proc` process monitoring, network filtering. | `BwrapSandbox`, `Profile`, `CgroupScope`, `NetworkFilter`, `NamespaceHandle`, `SlirpHandle` |
 | `gleisner-introdus` | Attestation creation. In-toto statement assembly, ECDSA P-256 signing, chain discovery, git state capture, Claude Code context capture, session recording. | `InTotoStatement`, `GleisnerProvenance`, `AttestationBundle`, `LocalSigner`, `ChainLink` |
 | `gleisner-lacerta` | Verification. Signature verification (local key + Sigstore), digest checking, policy evaluation (builtin JSON + WASM/OPA), chain walking. | `Verifier`, `VerificationReport`, `BuiltinPolicy`, `WasmPolicy` |
 | `gleisner-scapes` | Event infrastructure. Audit event types, broadcast channel event bus, JSONL audit log writer. | `EventBus`, `EventPublisher`, `AuditEvent`, `EventKind`, `JsonlWriter` |
@@ -132,7 +132,7 @@ sequenceDiagram
     CLI->>Sandbox: SlirpHandle::start(ns.pid())
     Sandbox-->>CLI: child process handle
 
-    CLI->>Monitor: spawn fanotify monitor (publisher, cancel)
+    CLI->>Monitor: spawn inotify monitor (publisher, cancel)
     CLI->>Monitor: spawn proc monitor (publisher, cancel)
 
     Note over Sandbox: Claude Code session runs...
@@ -180,7 +180,8 @@ sequenceDiagram
 - Otherwise: plain bwrap with `--unshare-net` for full network denial
 
 **Phase 5: Monitoring**
-- Start fanotify filesystem monitor (watches mount point for `FAN_OPEN`, `FAN_CLOSE_WRITE`, `FAN_MODIFY`)
+- Capture pre-session filesystem snapshot (hash all project files for later reconciliation)
+- Start inotify filesystem monitor (recursive directory watches for file writes, creates, deletes)
 - Start `/proc` process monitor (polls process tree rooted at sandbox PID)
 - Both publish `AuditEvent`s to the event bus via cloned `EventPublisher` handles
 - Optionally create cgroup scope and add the sandbox PID
@@ -420,7 +421,7 @@ graph TB
         NS["unshare --user --map-root-user --net"]
     end
 
-    FAN["fanotify monitor"] -.->|observes| FS
+    INO["inotify monitor"] -.->|observes| FS
     PROC["/proc scanner"] -.->|observes| CC
 
     style CC fill:#e3f2fd,stroke:#1565c0
@@ -476,12 +477,13 @@ On drop, processes are migrated to the parent cgroup and the directory is remove
 
 ### Layer 4: Monitoring
 
-**Fanotify filesystem monitor**: Uses Linux fanotify to watch the mount point for `FAN_OPEN`, `FAN_CLOSE_WRITE`, and `FAN_MODIFY` events. Runs in a `spawn_blocking` thread. For each event:
-- Resolves the file path from the fd via `/proc/self/fd/{fd}`
+**Inotify filesystem monitor**: Uses the `notify` crate (inotify backend on Linux) for recursive directory watching. Runs in a `spawn_blocking` thread with `recv_timeout` for cancellation. For each event:
 - Filters out ignored patterns (`target/`, `.git/`, `node_modules/`, `.gleisner/`)
-- Hashes file content via SHA-256
-- Publishes `FileRead` (on open) or `FileWrite` (on close-write) events
-- Requires `CAP_SYS_ADMIN`
+- Hashes file content via SHA-256 on write-close and create
+- Publishes `FileWrite` (on close-write or create) and `FileDelete` events
+- Requires no special capabilities — works as any unprivileged user
+
+**Snapshot reconciliation**: Before the session starts, hashes all files in the project directory to create a baseline. After the session ends, creates a second snapshot and diffs against the baseline. Any file changes not already reported by the real-time inotify monitor are synthesized as events. This provides stronger completeness guarantees than real-time monitoring alone.
 
 **Process monitor**: Polls `/proc` at configurable intervals to detect process creation and exit within the sandbox process tree. Uses `/proc/{pid}/task/{pid}/children` (fast path) with fallback to scanning `/proc/*/stat` for matching PPIDs. Publishes `ProcessExec` and `ProcessExit` events.
 
@@ -644,7 +646,7 @@ Security note: `EnvRead` only records a SHA-256 digest of the environment variab
 ```mermaid
 graph LR
     subgraph Producers
-        FS["fanotify<br/>monitor"]
+        FS["inotify<br/>monitor"]
         PROC["/proc<br/>monitor"]
     end
 
@@ -743,4 +745,4 @@ A security configuration has many interdependent parameters (filesystem rules, n
 
 ### Why materials: false in Completeness
 
-The `completeness.materials` field is always `false` because the fanotify monitor cannot guarantee it captured every file read. Fanotify is mount-scoped and event-based -- it can miss reads that happen before monitoring starts, reads from cached pages, or reads via file descriptors inherited from before the sandbox. Claiming complete material coverage would be dishonest. The SLSA spec explicitly supports this partial completeness.
+The `completeness.materials` field is always `false` because the filesystem monitor cannot guarantee it captured every file read. The inotify real-time monitor primarily tracks writes (creates, modifications, deletions). Reads are partially captured via the before/after snapshot reconciliation (files whose metadata changed) but reads from memory-mapped files, inherited file descriptors, or pipes are invisible. For *write completeness*, the snapshot reconciliation provides a strong guarantee: any file that changed during the session will be detected in the before/after diff even if inotify missed the real-time event. The SLSA spec explicitly supports this partial completeness.

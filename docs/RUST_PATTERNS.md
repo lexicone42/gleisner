@@ -498,7 +498,7 @@ The caller does not care which type it gets back. It only knows it can call
 multiple concurrent tasks with structured shutdown.
 
 **Why it matters:** The `record` command runs multiple things simultaneously: a
-sandboxed Claude Code process, a filesystem monitor (fanotify), a process monitor
+sandboxed Claude Code process, a filesystem monitor (inotify), a process monitor
 (`/proc` scanner), an audit log writer, and a session recorder. All of these must
 start concurrently, run for the session duration, and shut down cleanly when the
 child process exits.
@@ -515,7 +515,7 @@ if !args.no_fs_monitor {
     let fs_cancel = cancel.clone();
     let handle = tokio::spawn(async move {
         if let Err(e) =
-            gleisner_polis::fanotify::run_fs_monitor(fs_config, fs_publisher, fs_cancel).await
+            gleisner_polis::inotify_mon::run_fs_monitor(fs_config, fs_publisher, fs_cancel).await
         {
             tracing::warn!(error = %e, "filesystem monitor failed");
         }

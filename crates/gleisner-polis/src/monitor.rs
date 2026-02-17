@@ -1,12 +1,14 @@
 //! Shared types and utilities for event monitors.
 //!
-//! Provides configuration structs for the filesystem (fanotify) and
+//! Shared types and utilities for event monitors.
+//!
+//! Provides configuration structs for the filesystem (inotify) and
 //! process (/proc) monitors, plus glob-matching helpers.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Configuration for the filesystem monitor (fanotify).
+/// Configuration for the filesystem monitor (inotify).
 pub struct FsMonitorConfig {
     /// Path to watch (e.g., the project directory mount).
     pub mount_path: PathBuf,

@@ -49,7 +49,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Linux system interfaces
-nix = { version = "0.29", features = ["process", "signal", "mount", "sched", "resource", "hostname", "fanotify", "user"] }
+nix = { version = "0.29", features = ["process", "signal", "mount", "sched", "resource", "hostname", "user"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 landlock = "0.4"
 
@@ -71,6 +71,7 @@ crossterm = "0.29"
 wasmtime = "27"
 
 # Filesystem
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 directories = "6"
 which = "7"
 

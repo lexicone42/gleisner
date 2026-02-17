@@ -189,9 +189,20 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     cmd.stdout(std::process::Stdio::inherit());
     cmd.stderr(std::process::Stdio::inherit());
 
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
+
+    // Apply RLIMIT_NOFILE to the child process before it starts doing real work.
+    let child_pid = child.id();
+    #[expect(clippy::cast_possible_wrap, reason = "PID fits in i32")]
+    if let Err(e) = sandbox.apply_rlimits(nix::unistd::Pid::from_raw(child_pid as i32)) {
+        tracing::warn!(error = %e, "failed to apply rlimits — continuing without fd limits");
+    }
+
+    let status = child
+        .wait()
+        .map_err(|e| eyre!("failed to wait on sandboxed process: {e}"))?;
 
     if status.success() {
         tracing::info!("sandboxed session completed successfully");

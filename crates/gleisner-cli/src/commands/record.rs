@@ -3,7 +3,7 @@
 //! Orchestrates the complete attestation pipeline:
 //! 1. Capture pre-session state (git, Claude Code context)
 //! 2. Set up event bus with JSONL writer and session recorder
-//! 3. Start event monitors (fanotify filesystem, /proc process)
+//! 3. Start event monitors (inotify filesystem, /proc process)
 //! 4. Run Claude Code in a bwrap sandbox
 //! 5. On exit: cancel monitors, finalize recorder, assemble in-toto statement, sign
 //! 6. Write attestation bundle (or unsigned statement) to disk
@@ -65,7 +65,7 @@ pub struct RecordArgs {
     #[arg(long)]
     pub no_sign: bool,
 
-    /// Disable filesystem monitoring (fanotify).
+    /// Disable filesystem monitoring (inotify + snapshot reconciliation).
     #[arg(long)]
     pub no_fs_monitor: bool,
 
@@ -200,21 +200,36 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     let cancel = CancellationToken::new();
     let mut monitor_handles = Vec::new();
 
+    let fs_ignore_patterns = vec![
+        "target".to_owned(),
+        ".git".to_owned(),
+        "node_modules".to_owned(),
+        ".gleisner".to_owned(),
+    ];
+
+    // Snapshot the project directory before starting monitors.
+    // This baseline enables post-session reconciliation for completeness.
+    let pre_snapshot = if args.no_fs_monitor {
+        None
+    } else {
+        tracing::info!("capturing pre-session filesystem snapshot");
+        Some(gleisner_polis::inotify_mon::snapshot_directory(
+            &project_dir,
+            &fs_ignore_patterns,
+        ))
+    };
+
     if !args.no_fs_monitor {
         let fs_config = gleisner_polis::FsMonitorConfig {
             mount_path: project_dir.clone(),
-            ignore_patterns: vec![
-                "target".to_owned(),
-                ".git".to_owned(),
-                "node_modules".to_owned(),
-                ".gleisner".to_owned(),
-            ],
+            ignore_patterns: fs_ignore_patterns.clone(),
         };
         let fs_publisher = publisher.clone();
         let fs_cancel = cancel.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) =
-                gleisner_polis::fanotify::run_fs_monitor(fs_config, fs_publisher, fs_cancel).await
+                gleisner_polis::inotify_mon::run_fs_monitor(fs_config, fs_publisher, fs_cancel)
+                    .await
             {
                 tracing::warn!(error = %e, "filesystem monitor failed — continuing without fs monitoring");
             }
@@ -257,6 +272,29 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     cancel.cancel();
     for handle in monitor_handles {
         let _ = handle.await;
+    }
+
+    // ── 9b. Post-session snapshot reconciliation ────────────────────
+    // Compare the current filesystem state against the pre-session
+    // snapshot and publish events for any changes inotify missed.
+    if let Some(ref before) = pre_snapshot {
+        tracing::info!("running post-session filesystem reconciliation");
+        let after =
+            gleisner_polis::inotify_mon::snapshot_directory(&project_dir, &fs_ignore_patterns);
+        // Use an empty seen-set: reconcile publishes only for changes
+        // where the hash differs — duplicates from inotify are harmless
+        // since the recorder de-duplicates by path.
+        let seen = std::collections::HashSet::new();
+        let stats =
+            gleisner_polis::inotify_mon::reconcile_snapshots(before, &after, &seen, &publisher);
+        if stats.total_missed() > 0 {
+            tracing::info!(
+                missed_writes = stats.missed_writes,
+                missed_creates = stats.missed_creates,
+                missed_deletes = stats.missed_deletes,
+                "reconciliation captured events missed by real-time monitor"
+            );
+        }
     }
 
     // ── 10. Finalize recording ───────────────────────────────────────
@@ -460,6 +498,14 @@ fn spawn_sandbox_child(
     let child = cmd
         .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
+
+    // Apply RLIMIT_NOFILE to the child process.
+    if let Some(pid) = child.id() {
+        #[expect(clippy::cast_possible_wrap, reason = "PID fits in i32")]
+        if let Err(e) = sandbox.apply_rlimits(nix::unistd::Pid::from_raw(pid as i32)) {
+            tracing::warn!(error = %e, "failed to apply rlimits — continuing without fd limits");
+        }
+    }
 
     Ok(SandboxChild {
         child,

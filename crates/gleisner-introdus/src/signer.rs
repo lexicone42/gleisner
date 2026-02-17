@@ -1,7 +1,9 @@
 //! Signing backends for attestation bundles.
 //!
-//! Supports Sigstore keyless signing (Fulcio + Rekor) and local
-//! ECDSA P-256 keys for air-gapped environments.
+//! Currently supports local ECDSA P-256 keys for air-gapped
+//! environments. Sigstore keyless signing (Fulcio + Rekor) is planned
+//! but not yet implemented — the verification side already supports
+//! Sigstore certificates (see `gleisner-lacerta::signature`).
 //!
 //! Uses `aws-lc-rs` as the cryptographic provider — formally verified
 //! C crypto from AWS-LC. Post-quantum signing (ML-DSA / FIPS 204)
