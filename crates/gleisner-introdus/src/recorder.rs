@@ -88,14 +88,10 @@ pub async fn run(mut rx: broadcast::Receiver<AuditEvent>) -> RecorderOutput {
             if let Some(base_end) = name.find(".tmp.") {
                 let base_name = &name[..base_end];
                 let base_path = p.with_file_name(base_name);
-                match (subjects_map.get(*p), subjects_map.get(&base_path)) {
-                    // Same digest: clear atomic-write artifact
-                    (Some(t), Some(b)) if t == b => true,
-                    // Temp file was already deleted ("unavailable") but base exists:
-                    // this is a normal atomic-write where the temp was cleaned up
-                    (Some(t), Some(_)) if t == "unavailable" => true,
-                    _ => false,
-                }
+                // If the base file exists as a subject, the temp file is
+                // definitionally an atomic-write artifact — drop it.
+                // The base file's final digest is the meaningful output.
+                subjects_map.contains_key(&base_path)
             } else {
                 false
             }
@@ -104,6 +100,21 @@ pub async fn run(mut rx: broadcast::Receiver<AuditEvent>) -> RecorderOutput {
         .collect();
     for tmp_path in &atomic_temps {
         subjects_map.remove(tmp_path);
+    }
+
+    // Drop ephemeral sandbox artifacts: files that no longer exist on disk
+    // AND have no usable digest. These are files that only existed inside
+    // the sandbox's private mount namespace (e.g., cargo build artifacts
+    // in bwrap's tmpfs target dirs). We keep deleted files that had a real
+    // digest — those represent meaningful deletions during the session.
+    let ephemeral: Vec<PathBuf> = subjects_map
+        .iter()
+        .filter(|(path, digest)| !path.exists() && digest.as_str() == "unavailable")
+        .map(|(path, _)| path.clone())
+        .collect();
+    for path in &ephemeral {
+        debug!(path = %path.display(), "dropping ephemeral sandbox artifact from subjects");
+        subjects_map.remove(path);
     }
 
     let subjects = subjects_map
@@ -305,24 +316,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recorder_keeps_temp_file_with_different_digest() {
+    async fn recorder_deduplicates_temp_file_with_different_digest() {
         let bus = EventBus::new();
         let rx = bus.subscribe();
 
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let log_path = tmp.path().join("audit.jsonl");
-        std::fs::write(&log_path, "").expect("create log");
-
-        // Temp file with DIFFERENT digest than base — could be a real artifact
+        // Temp file with different digest (intermediate edit) — still an
+        // atomic-write artifact when the base file exists as a subject.
         bus.publish(make_event(EventKind::FileWrite {
             path: PathBuf::from("/project/src/main.rs.tmp.2.999"),
             sha256_before: None,
-            sha256_after: "different_hash".to_owned(),
+            sha256_after: "intermediate_hash".to_owned(),
         }));
         bus.publish(make_event(EventKind::FileWrite {
             path: PathBuf::from("/project/src/main.rs"),
             sha256_before: None,
-            sha256_after: "abc123".to_owned(),
+            sha256_after: "final_hash".to_owned(),
         }));
 
         drop(bus);
@@ -330,9 +338,10 @@ mod tests {
 
         assert_eq!(
             output.subjects.len(),
-            2,
-            "temp file with different digest must NOT be dropped"
+            1,
+            "temp file should be dropped when base file exists"
         );
+        assert_eq!(output.subjects[0].name, "/project/src/main.rs");
     }
 
     #[tokio::test]
@@ -362,20 +371,26 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recorder_deduplicates_unavailable_temp_files() {
+    async fn recorder_deduplicates_multiple_temp_files() {
         let bus = EventBus::new();
         let rx = bus.subscribe();
 
-        // Temp file already deleted (hash "unavailable") + base file exists
+        // Two edits to the same file produce two temp files with different
+        // intermediate digests — both should be dropped
         bus.publish(make_event(EventKind::FileWrite {
-            path: PathBuf::from("/project/src/notes.txt.tmp.2.1771348347665"),
+            path: PathBuf::from("/project/src/main.rs.tmp.2.111"),
+            sha256_before: None,
+            sha256_after: "first_intermediate".to_owned(),
+        }));
+        bus.publish(make_event(EventKind::FileWrite {
+            path: PathBuf::from("/project/src/main.rs.tmp.2.222"),
             sha256_before: None,
             sha256_after: "unavailable".to_owned(),
         }));
         bus.publish(make_event(EventKind::FileWrite {
-            path: PathBuf::from("/project/src/notes.txt"),
+            path: PathBuf::from("/project/src/main.rs"),
             sha256_before: None,
-            sha256_after: "real_hash".to_owned(),
+            sha256_after: "final_hash".to_owned(),
         }));
 
         drop(bus);
@@ -384,9 +399,9 @@ mod tests {
         assert_eq!(
             output.subjects.len(),
             1,
-            "unavailable temp file should be deduplicated when base exists"
+            "all temp files should be dropped when base exists"
         );
-        assert_eq!(output.subjects[0].name, "/project/src/notes.txt");
+        assert_eq!(output.subjects[0].name, "/project/src/main.rs");
     }
 
     #[tokio::test]
