@@ -46,6 +46,10 @@ pub struct SandboxConfig {
     pub profile: gleisner_polis::profile::Profile,
     /// Project directory to mount read-write inside the sandbox.
     pub project_dir: PathBuf,
+    /// Additional domains to allow network access (merged into profile).
+    pub extra_allow_network: Vec<String>,
+    /// Additional paths to mount read-write inside the sandbox.
+    pub extra_allow_paths: Vec<PathBuf>,
 }
 
 /// Configuration for a Claude query.
@@ -418,6 +422,14 @@ fn build_sandboxed_command(
             .iter()
             .cloned(),
     );
+
+    // Apply CLI overrides (--allow-network, --allow-path)
+    if !sandbox_cfg.extra_allow_network.is_empty() {
+        sandbox.allow_domains(sandbox_cfg.extra_allow_network.iter().cloned());
+    }
+    if !sandbox_cfg.extra_allow_paths.is_empty() {
+        sandbox.allow_paths(sandbox_cfg.extra_allow_paths.iter().cloned());
+    }
 
     // Enable Landlock-inside-bwrap if the sandbox-init binary is available
     if let Some(init_bin) = detect_sandbox_init() {

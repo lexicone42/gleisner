@@ -1,0 +1,75 @@
+# Developer — Development-oriented profile for gleisner-in-gleisner
+#
+# Named to reflect its purpose: working on code inside a sandbox.
+# Allows access to the Rust toolchain, cargo registry, and crates.io
+# while keeping credential isolation and network filtering active.
+#
+# Network: Anthropic API + crates.io + GitHub (filtered via nftables)
+# Filesystem: System paths read-only, dev toolchain read-write, credentials hidden
+# Process: PID namespace isolated, limits raised for cargo builds
+
+name = "developer"
+description = "Development profile — Rust toolchain, crates.io, GitHub access, credentials hidden"
+
+[filesystem]
+readonly_bind = [
+    "/usr",
+    "/lib",
+    "/lib64",
+    "/etc",
+    "/bin",
+    "/sbin",
+    "/opt",
+]
+readwrite_bind = [
+    "~/.cargo",
+    "~/.rustup",
+]
+deny = [
+    "~/.ssh",
+    "~/.aws",
+    "~/.gnupg",
+    "~/.config/gcloud",
+    "~/.azure",
+    "~/.kube",
+    "~/.docker",
+]
+tmpfs = ["/tmp"]
+
+[network]
+default = "deny"
+allow_domains = [
+    "api.anthropic.com",
+    "sentry.io",
+    "crates.io",
+    "static.crates.io",
+    "index.crates.io",
+    "github.com",
+    "objects.githubusercontent.com",
+]
+allow_ports = [443, 80]
+allow_dns = true
+
+[process]
+pid_namespace = true
+no_new_privileges = true
+command_allowlist = []
+
+[resources]
+max_memory_mb = 16384
+max_cpu_percent = 100
+max_pids = 1024
+max_file_descriptors = 4096
+max_disk_write_mb = 20480
+
+[plugins]
+skip_permissions = true
+add_dirs = ["~/.claude/exo-self"]
+disallowed_tools = [
+    "mcp__plugin_serena_serena__execute_shell_command",
+    "mcp__plugin_serena_serena__create_text_file",
+]
+mcp_network_domains = [
+    "context7.com",
+    "api.greptile.com",
+]

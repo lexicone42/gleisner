@@ -188,17 +188,12 @@ pub type FileSnapshot = HashMap<PathBuf, String>;
 /// Symlinks are followed. Files that can't be read produce "unavailable".
 pub fn snapshot_directory(root: &Path, ignore_patterns: &[String]) -> FileSnapshot {
     let mut snapshot = HashMap::new();
-    walk_and_hash(root, root, ignore_patterns, &mut snapshot);
+    walk_and_hash(root, ignore_patterns, &mut snapshot);
     snapshot
 }
 
 /// Recursive directory walker.
-fn walk_and_hash(
-    current: &Path,
-    root: &Path,
-    ignore_patterns: &[String],
-    snapshot: &mut FileSnapshot,
-) {
+fn walk_and_hash(current: &Path, ignore_patterns: &[String], snapshot: &mut FileSnapshot) {
     let entries = match std::fs::read_dir(current) {
         Ok(e) => e,
         Err(e) => {
@@ -215,7 +210,7 @@ fn walk_and_hash(
         }
 
         if path.is_dir() {
-            walk_and_hash(&path, root, ignore_patterns, snapshot);
+            walk_and_hash(&path, ignore_patterns, snapshot);
         } else if path.is_file() {
             let hash = hash_file_at_path(&path);
             snapshot.insert(path, hash);

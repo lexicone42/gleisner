@@ -146,14 +146,18 @@ impl BwrapSandbox {
 
         // Read-only bind mounts (system paths like /usr, /lib, /etc)
         for path in &fs.readonly_bind {
-            let p = path.display().to_string();
+            let expanded = expand_tilde(path);
+            let p = expanded.display().to_string();
             cmd.args(["--ro-bind", &p, &p]);
         }
 
-        // Read-write bind mounts from profile
+        // Read-write bind mounts from profile (expand ~ to $HOME)
         for path in &fs.readwrite_bind {
-            let p = path.display().to_string();
-            cmd.args(["--bind", &p, &p]);
+            let expanded = expand_tilde(path);
+            if expanded.exists() {
+                let p = expanded.display().to_string();
+                cmd.args(["--bind", &p, &p]);
+            }
         }
 
         // Extra read-write paths from CLI flags

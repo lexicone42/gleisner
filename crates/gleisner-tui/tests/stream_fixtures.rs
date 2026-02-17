@@ -1029,6 +1029,8 @@ fn sandbox_config_round_trips_through_query_config() {
     config.sandbox = Some(SandboxConfig {
         profile,
         project_dir: PathBuf::from("/tmp/test-project"),
+        extra_allow_network: vec![],
+        extra_allow_paths: vec![],
     });
 
     // Clone should work (needed for tokio::spawn)
@@ -1065,6 +1067,8 @@ fn sandboxed_query_builds_bwrap_command() {
     config.sandbox = Some(SandboxConfig {
         profile: profile.clone(),
         project_dir: PathBuf::from("/tmp/test-project"),
+        extra_allow_network: vec![],
+        extra_allow_paths: vec![],
     });
 
     // Build the sandbox directly to verify the command structure

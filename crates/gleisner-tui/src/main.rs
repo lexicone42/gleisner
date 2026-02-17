@@ -57,6 +57,22 @@ async fn main() -> color_eyre::Result<()> {
         .and_then(|i| args.get(i + 1))
         .cloned();
 
+    // Parse --allow-network arguments (repeatable)
+    let allow_network: Vec<String> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| *a == "--allow-network")
+        .filter_map(|(i, _)| args.get(i + 1).cloned())
+        .collect();
+
+    // Parse --allow-path arguments (repeatable)
+    let allow_path: Vec<PathBuf> = args
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| *a == "--allow-path")
+        .filter_map(|(i, _)| args.get(i + 1).map(PathBuf::from))
+        .collect();
+
     // Load the gleisner security profile
     let profile = gleisner_polis::profile::resolve_profile(&profile_name)?;
 
@@ -65,6 +81,8 @@ async fn main() -> color_eyre::Result<()> {
         Some(SandboxConfig {
             profile: profile.clone(),
             project_dir: project_dir.clone(),
+            extra_allow_network: allow_network,
+            extra_allow_paths: allow_path,
         })
     } else {
         None
