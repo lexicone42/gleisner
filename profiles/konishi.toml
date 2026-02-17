@@ -35,7 +35,7 @@ tmpfs = ["/tmp"]
 
 [network]
 default = "deny"
-allow_domains = ["api.anthropic.com", "sentry.io"]
+allow_domains = ["api.anthropic.com", "sentry.io", "statsig.anthropic.com"]
 allow_ports = [443]
 allow_dns = true
 

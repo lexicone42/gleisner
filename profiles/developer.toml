@@ -41,6 +41,7 @@ default = "deny"
 allow_domains = [
     "api.anthropic.com",
     "sentry.io",
+    "statsig.anthropic.com",
     "crates.io",
     "static.crates.io",
     "index.crates.io",

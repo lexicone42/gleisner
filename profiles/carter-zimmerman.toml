@@ -41,6 +41,7 @@ default = "allow"
 allow_domains = [
     "api.anthropic.com",
     "sentry.io",
+    "statsig.anthropic.com",
     "registry.npmjs.org",
     "pypi.org",
     "files.pythonhosted.org",
