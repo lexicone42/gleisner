@@ -27,8 +27,6 @@ pub struct RecorderOutput {
     pub subjects: Vec<Subject>,
     /// Total number of events processed.
     pub event_count: u64,
-    /// SHA-256 hex digest of the JSONL audit log file.
-    pub audit_log_digest: String,
     /// When the recording started.
     pub start_time: DateTime<Utc>,
     /// When the recording finished.
@@ -40,10 +38,7 @@ pub struct RecorderOutput {
 ///
 /// The `audit_log_path` is hashed after the channel closes to include
 /// the audit log's integrity digest in the attestation.
-pub async fn run(
-    mut rx: broadcast::Receiver<AuditEvent>,
-    audit_log_path: PathBuf,
-) -> RecorderOutput {
+pub async fn run(mut rx: broadcast::Receiver<AuditEvent>) -> RecorderOutput {
     let start_time = Utc::now();
 
     // Materials: keyed by path, first digest wins (initial state of inputs)
@@ -73,9 +68,6 @@ pub async fn run(
 
     let finish_time = Utc::now();
 
-    // Hash the completed audit log file
-    let audit_log_digest = hash_file(&audit_log_path).unwrap_or_default();
-
     let materials = materials_map
         .into_iter()
         .map(|(path, sha256)| Material {
@@ -83,6 +75,36 @@ pub async fn run(
             digest: DigestSet { sha256 },
         })
         .collect();
+
+    // Deduplicate atomic-write temp files: if `foo.rs.tmp.X.Y` exists
+    // as a subject AND `foo.rs` also exists with the same digest, drop
+    // the temp entry. This is safe because we require *both* the base
+    // file to exist as a subject AND the digests to match — an attacker
+    // can't hide writes by naming files with `.tmp.` in the name.
+    let atomic_temps: Vec<PathBuf> = subjects_map
+        .keys()
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if let Some(base_end) = name.find(".tmp.") {
+                let base_name = &name[..base_end];
+                let base_path = p.with_file_name(base_name);
+                match (subjects_map.get(*p), subjects_map.get(&base_path)) {
+                    // Same digest: clear atomic-write artifact
+                    (Some(t), Some(b)) if t == b => true,
+                    // Temp file was already deleted ("unavailable") but base exists:
+                    // this is a normal atomic-write where the temp was cleaned up
+                    (Some(t), Some(_)) if t == "unavailable" => true,
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        })
+        .cloned()
+        .collect();
+    for tmp_path in &atomic_temps {
+        subjects_map.remove(tmp_path);
+    }
 
     let subjects = subjects_map
         .into_iter()
@@ -96,7 +118,6 @@ pub async fn run(
         materials,
         subjects,
         event_count,
-        audit_log_digest,
         start_time,
         finish_time,
     }
@@ -133,7 +154,7 @@ fn classify_event(
 }
 
 /// Hash a file with SHA-256 and return the hex digest.
-fn hash_file(path: &PathBuf) -> Option<String> {
+pub fn hash_file(path: &PathBuf) -> Option<String> {
     let content = std::fs::read(path).ok()?;
     let hash = Sha256::digest(&content);
     Some(hex::encode(hash))
@@ -181,7 +202,7 @@ mod tests {
         // Drop bus to close channel
         drop(bus);
 
-        let output = run(rx, log_path).await;
+        let output = run(rx).await;
 
         assert_eq!(output.event_count, 3);
         assert_eq!(output.materials.len(), 1, "one file read → one material");
@@ -209,7 +230,7 @@ mod tests {
 
         drop(bus);
 
-        let output = run(rx, log_path).await;
+        let output = run(rx).await;
 
         assert_eq!(output.materials.len(), 1);
         assert_eq!(
@@ -241,13 +262,131 @@ mod tests {
 
         drop(bus);
 
-        let output = run(rx, log_path).await;
+        let output = run(rx).await;
 
         assert_eq!(output.subjects.len(), 1);
         assert_eq!(
             output.subjects[0].digest.sha256, "final",
             "last digest should win for subjects"
         );
+    }
+
+    #[tokio::test]
+    async fn recorder_deduplicates_atomic_write_temp_files() {
+        let bus = EventBus::new();
+        let rx = bus.subscribe();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_path = tmp.path().join("audit.jsonl");
+        std::fs::write(&log_path, "").expect("create log");
+
+        // Simulate Claude Code's atomic write pattern:
+        // writes to main.rs.tmp.2.1771347619103 then renames to main.rs
+        bus.publish(make_event(EventKind::FileWrite {
+            path: PathBuf::from("/project/src/main.rs.tmp.2.1771347619103"),
+            sha256_before: None,
+            sha256_after: "abc123".to_owned(),
+        }));
+        bus.publish(make_event(EventKind::FileWrite {
+            path: PathBuf::from("/project/src/main.rs"),
+            sha256_before: Some("old".to_owned()),
+            sha256_after: "abc123".to_owned(),
+        }));
+
+        drop(bus);
+        let output = run(rx).await;
+
+        assert_eq!(
+            output.subjects.len(),
+            1,
+            "temp file should be deduplicated when base file has same digest"
+        );
+        assert_eq!(output.subjects[0].name, "/project/src/main.rs");
+    }
+
+    #[tokio::test]
+    async fn recorder_keeps_temp_file_with_different_digest() {
+        let bus = EventBus::new();
+        let rx = bus.subscribe();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_path = tmp.path().join("audit.jsonl");
+        std::fs::write(&log_path, "").expect("create log");
+
+        // Temp file with DIFFERENT digest than base — could be a real artifact
+        bus.publish(make_event(EventKind::FileWrite {
+            path: PathBuf::from("/project/src/main.rs.tmp.2.999"),
+            sha256_before: None,
+            sha256_after: "different_hash".to_owned(),
+        }));
+        bus.publish(make_event(EventKind::FileWrite {
+            path: PathBuf::from("/project/src/main.rs"),
+            sha256_before: None,
+            sha256_after: "abc123".to_owned(),
+        }));
+
+        drop(bus);
+        let output = run(rx).await;
+
+        assert_eq!(
+            output.subjects.len(),
+            2,
+            "temp file with different digest must NOT be dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn recorder_keeps_temp_file_without_base() {
+        let bus = EventBus::new();
+        let rx = bus.subscribe();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let log_path = tmp.path().join("audit.jsonl");
+        std::fs::write(&log_path, "").expect("create log");
+
+        // Temp file with NO corresponding base file — must not be dropped
+        bus.publish(make_event(EventKind::FileWrite {
+            path: PathBuf::from("/project/src/orphan.rs.tmp.2.999"),
+            sha256_before: None,
+            sha256_after: "abc123".to_owned(),
+        }));
+
+        drop(bus);
+        let output = run(rx).await;
+
+        assert_eq!(
+            output.subjects.len(),
+            1,
+            "orphan temp file must be preserved as subject"
+        );
+    }
+
+    #[tokio::test]
+    async fn recorder_deduplicates_unavailable_temp_files() {
+        let bus = EventBus::new();
+        let rx = bus.subscribe();
+
+        // Temp file already deleted (hash "unavailable") + base file exists
+        bus.publish(make_event(EventKind::FileWrite {
+            path: PathBuf::from("/project/src/notes.txt.tmp.2.1771348347665"),
+            sha256_before: None,
+            sha256_after: "unavailable".to_owned(),
+        }));
+        bus.publish(make_event(EventKind::FileWrite {
+            path: PathBuf::from("/project/src/notes.txt"),
+            sha256_before: None,
+            sha256_after: "real_hash".to_owned(),
+        }));
+
+        drop(bus);
+        let output = run(rx).await;
+
+        assert_eq!(
+            output.subjects.len(),
+            1,
+            "unavailable temp file should be deduplicated when base exists"
+        );
+        assert_eq!(output.subjects[0].name, "/project/src/notes.txt");
     }
 
     #[tokio::test]
@@ -261,7 +400,7 @@ mod tests {
 
         drop(bus);
 
-        let output = run(rx, log_path).await;
+        let output = run(rx).await;
 
         assert_eq!(output.event_count, 0);
         assert!(output.materials.is_empty());

@@ -152,7 +152,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     let writer_handle = spawn_jsonl_writer(rx_writer, &audit_log_path)
         .map_err(|e| eyre!("failed to start audit log writer: {e}"))?;
 
-    let recorder_handle = tokio::spawn(recorder::run(rx_recorder, audit_log_path.clone()));
+    let recorder_handle = tokio::spawn(recorder::run(rx_recorder));
 
     // ── 5. Spawn sandbox child (don't await exit yet) ────────────────
     let profile_for_sandbox = profile.clone();
@@ -298,6 +298,9 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     }
 
     // ── 10. Finalize recording ───────────────────────────────────────
+    // Drop publisher/bus to close channels, then await both tasks.
+    // IMPORTANT: await writer BEFORE hashing the audit log — the writer
+    // must flush all events (including reconciliation) before we hash.
     drop(publisher);
     drop(bus);
     let recorder_output = recorder_handle
@@ -306,6 +309,9 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     writer_handle
         .await
         .map_err(|e| eyre!("audit writer panicked: {e}"))?;
+
+    // Hash the fully-written audit log file
+    let audit_log_digest = recorder::hash_file(&audit_log_path).unwrap_or_default();
 
     tracing::info!(
         event_count = recorder_output.event_count,
@@ -344,6 +350,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     // ── 12. Assemble and sign ────────────────────────────────────────
     let statement = assemble_statement(
         recorder_output,
+        audit_log_digest,
         git_state.as_ref(),
         cc_context,
         sandbox_summary,
@@ -518,6 +525,7 @@ fn spawn_sandbox_child(
 /// Assemble the in-toto attestation statement from recorder output.
 fn assemble_statement(
     recorder_output: RecorderOutput,
+    audit_log_digest: String,
     git_state: Option<&vcs::GitState>,
     cc_context: ClaudeCodeContext,
     sandbox_summary: SandboxProfileSummary,
@@ -571,7 +579,7 @@ fn assemble_statement(
                 },
             },
             materials,
-            audit_log_digest: recorder_output.audit_log_digest,
+            audit_log_digest,
             sandbox_profile: sandbox_summary,
             chain,
         },
