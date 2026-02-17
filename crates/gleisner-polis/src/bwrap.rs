@@ -269,43 +269,72 @@ impl BwrapSandbox {
         &self.extra_allow_domains
     }
 
-    /// Apply resource limits (`RLIMIT_NOFILE`) to a running child process.
+    /// Apply resource limits to a running child process via `prlimit(1)`.
+    ///
+    /// Sets `RLIMIT_NOFILE` (file descriptors), `RLIMIT_AS` (virtual memory),
+    /// and `RLIMIT_NPROC` (max processes). These serve as a fallback when
+    /// cgroup-based limits cannot be applied (e.g., without `CAP_SYS_ADMIN`),
+    /// and as defense-in-depth when cgroups are active.
     ///
     /// Call this immediately after spawning the command returned by
-    /// [`build_command()`]. Uses `prlimit` to set limits on the child PID
-    /// without requiring `unsafe` or `pre_exec`.
+    /// [`build_command()`].
     ///
     /// # Errors
     ///
     /// Returns [`SandboxError::ResourceLimit`] if the rlimit cannot be applied.
     pub fn apply_rlimits(&self, pid: nix::unistd::Pid) -> Result<(), SandboxError> {
-        let max_fd = self.profile.resources.max_file_descriptors;
-        if max_fd > 0 {
-            // prlimit on a foreign PID requires same UID or CAP_SYS_RESOURCE.
-            // Since we just spawned this child, we own it.
-            // Note: nix::sys::resource::setrlimit only sets on current process.
-            // For child PID, we need prlimit(2) which nix doesn't wrap directly.
-            // Fall back to the prlimit CLI tool.
-            let status = Command::new("prlimit")
-                .args([
-                    &format!("--pid={}", pid.as_raw()),
-                    &format!("--nofile={max_fd}:{max_fd}"),
-                ])
-                .output()
-                .map_err(|e| SandboxError::ResourceLimit {
-                    resource: "RLIMIT_NOFILE",
-                    detail: format!("failed to run prlimit: {e}"),
-                })?;
+        let limits = &self.profile.resources;
+        let pid_arg = format!("--pid={}", pid.as_raw());
 
-            if !status.status.success() {
-                let stderr = String::from_utf8_lossy(&status.stderr);
-                return Err(SandboxError::ResourceLimit {
-                    resource: "RLIMIT_NOFILE",
-                    detail: format!("prlimit failed: {stderr}"),
-                });
-            }
+        // prlimit on a foreign PID requires same UID or CAP_SYS_RESOURCE.
+        // Since we just spawned this child, we own it.
 
-            debug!(pid = pid.as_raw(), max_fd, "applied RLIMIT_NOFILE to child");
+        // RLIMIT_NOFILE: max open file descriptors
+        if limits.max_file_descriptors > 0 {
+            let val = limits.max_file_descriptors;
+            Self::run_prlimit(&pid_arg, &format!("--nofile={val}:{val}"), "RLIMIT_NOFILE")?;
+            debug!(pid = pid.as_raw(), max_fd = val, "applied RLIMIT_NOFILE");
+        }
+
+        // RLIMIT_AS: max virtual memory (bytes). Provides a per-process
+        // memory ceiling that works without cgroup delegation.
+        if limits.max_memory_mb > 0 {
+            let bytes = limits.max_memory_mb * 1024 * 1024;
+            Self::run_prlimit(&pid_arg, &format!("--as={bytes}:{bytes}"), "RLIMIT_AS")?;
+            debug!(
+                pid = pid.as_raw(),
+                memory_mb = limits.max_memory_mb,
+                "applied RLIMIT_AS"
+            );
+        }
+
+        // RLIMIT_NPROC: max processes for this UID. This is per-user, not
+        // per-cgroup, so it's coarser than pids.max but still useful.
+        if limits.max_pids > 0 {
+            let val = limits.max_pids;
+            Self::run_prlimit(&pid_arg, &format!("--nproc={val}:{val}"), "RLIMIT_NPROC")?;
+            debug!(pid = pid.as_raw(), max_pids = val, "applied RLIMIT_NPROC");
+        }
+
+        Ok(())
+    }
+
+    /// Run a single `prlimit` invocation.
+    fn run_prlimit(pid_arg: &str, limit_arg: &str, name: &'static str) -> Result<(), SandboxError> {
+        let output = Command::new("prlimit")
+            .args([pid_arg, limit_arg])
+            .output()
+            .map_err(|e| SandboxError::ResourceLimit {
+                resource: name,
+                detail: format!("failed to run prlimit: {e}"),
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SandboxError::ResourceLimit {
+                resource: name,
+                detail: format!("prlimit failed: {stderr}"),
+            });
         }
         Ok(())
     }

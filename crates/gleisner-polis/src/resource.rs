@@ -3,18 +3,23 @@
 //! Applies memory, CPU, PID, and I/O limits to the sandboxed
 //! process via the cgroup v2 unified hierarchy.
 //!
-//! Creates a dedicated cgroup under `/sys/fs/cgroup/gleisner-{uuid}/`
-//! and removes it on drop.
+//! Discovers a writable cgroup base automatically:
+//! 1. OpenRC/elogind: `/sys/fs/cgroup/openrc.user.{username}/`
+//! 2. systemd: `/sys/fs/cgroup/user.slice/user-{uid}.slice/`
+//! 3. Direct root: `/sys/fs/cgroup/` (requires root or delegation)
+//!
+//! Creates `gleisner-{uuid}/` under the first writable base and
+//! removes it on drop.
 
 use std::path::PathBuf;
 
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::error::SandboxError;
 use crate::profile::ResourceLimits;
 
-/// The base path for cgroup v2 unified hierarchy.
-const CGROUP_BASE: &str = "/sys/fs/cgroup";
+/// The root of the cgroup v2 unified hierarchy.
+const CGROUP_ROOT: &str = "/sys/fs/cgroup";
 
 /// A scoped cgroup that applies resource limits and cleans up on drop.
 pub struct CgroupScope {
@@ -24,16 +29,17 @@ pub struct CgroupScope {
 impl CgroupScope {
     /// Create a new cgroup scope with the given resource limits.
     ///
-    /// Creates a directory under `/sys/fs/cgroup/gleisner-{uuid}/` and
-    /// writes the appropriate control files.
+    /// Discovers a writable cgroup base path automatically, then creates
+    /// `gleisner-{uuid}/` under it and writes the appropriate control files.
     ///
     /// # Errors
     ///
-    /// Returns [`SandboxError::CgroupError`] if the cgroup cannot be
-    /// created or configured (e.g., insufficient permissions).
+    /// Returns [`SandboxError::CgroupError`] if no writable cgroup base
+    /// can be found or the cgroup cannot be configured.
     pub fn create(limits: &ResourceLimits) -> Result<Self, SandboxError> {
+        let base = discover_cgroup_base()?;
         let id = simple_id();
-        let cgroup_path = PathBuf::from(CGROUP_BASE).join(format!("gleisner-{id}"));
+        let cgroup_path = base.join(format!("gleisner-{id}"));
 
         std::fs::create_dir_all(&cgroup_path).map_err(|source| SandboxError::CgroupError {
             operation: format!("create directory {}", cgroup_path.display()),
@@ -160,6 +166,77 @@ impl Drop for CgroupScope {
     }
 }
 
+/// Discover a writable cgroup v2 base directory.
+///
+/// Probes (in order):
+/// 1. **OpenRC/elogind**: `/sys/fs/cgroup/openrc.user.{username}/`
+/// 2. **systemd user slice**: `/sys/fs/cgroup/user.slice/user-{uid}.slice/`
+/// 3. **Direct root**: `/sys/fs/cgroup/`
+///
+/// Returns the first path that exists and is writable by the current user.
+fn discover_cgroup_base() -> Result<PathBuf, SandboxError> {
+    let uid = nix::unistd::getuid();
+
+    // Resolve username for OpenRC/elogind path
+    let username = nix::unistd::User::from_uid(uid)
+        .ok()
+        .flatten()
+        .map(|u| u.name);
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    // 1. OpenRC/elogind: /sys/fs/cgroup/openrc.user.{username}/
+    if let Some(ref name) = username {
+        candidates.push(PathBuf::from(CGROUP_ROOT).join(format!("openrc.user.{name}")));
+    }
+
+    // 2. systemd user slice: /sys/fs/cgroup/user.slice/user-{uid}.slice/
+    candidates.push(
+        PathBuf::from(CGROUP_ROOT)
+            .join("user.slice")
+            .join(format!("user-{uid}.slice")),
+    );
+
+    // 3. Direct root (works if running as root or cgroup is delegated)
+    candidates.push(PathBuf::from(CGROUP_ROOT));
+
+    for candidate in &candidates {
+        if candidate.is_dir() && is_writable(candidate) {
+            info!(base = %candidate.display(), "discovered writable cgroup base");
+            return Ok(candidate.clone());
+        }
+        debug!(path = %candidate.display(), "cgroup base candidate not writable — skipping");
+    }
+
+    Err(SandboxError::CgroupError {
+        operation: "discover writable cgroup base".to_string(),
+        source: std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "no writable cgroup base found (tried: {}). \
+                 Hint: run `sudo chown $USER /sys/fs/cgroup/openrc.user.$USER/` \
+                 to delegate cgroup access",
+                candidates
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ),
+    })
+}
+
+/// Check if a path is writable by attempting to create and remove a probe directory.
+fn is_writable(path: &std::path::Path) -> bool {
+    let probe = path.join(".gleisner-probe");
+    if std::fs::create_dir(&probe).is_ok() {
+        let _ = std::fs::remove_dir(&probe);
+        true
+    } else {
+        false
+    }
+}
+
 /// Generate a short unique-ish identifier (timestamp + random suffix).
 fn simple_id() -> String {
     use std::time::SystemTime;
@@ -192,7 +269,7 @@ mod tests {
         let result = CgroupScope::create(&limits);
 
         // This will fail without root/cgroup permissions, which is expected
-        if std::fs::metadata(CGROUP_BASE).is_err() {
+        if std::fs::metadata(CGROUP_ROOT).is_err() {
             assert!(result.is_err(), "should fail without cgroup filesystem");
         }
         // If /sys/fs/cgroup exists but isn't writable, also expect failure

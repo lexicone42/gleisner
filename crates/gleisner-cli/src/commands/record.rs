@@ -80,6 +80,24 @@ pub struct RecordArgs {
     /// Don't link to previous attestation (start a new chain).
     #[arg(long)]
     pub no_chain: bool,
+
+    /// Use Sigstore keyless signing (Fulcio + Rekor) instead of a local key.
+    ///
+    /// Authentication order: (1) --sigstore-token if provided,
+    /// (2) ambient CI credentials (GitHub Actions, GitLab CI),
+    /// (3) interactive browser OIDC flow.
+    #[cfg(feature = "keyless")]
+    #[arg(long)]
+    pub sigstore: bool,
+
+    /// Pre-supplied OIDC identity token JWT for Sigstore signing.
+    ///
+    /// Useful in headless environments or CI systems that don't support
+    /// ambient credential detection. Obtain a token from your OIDC
+    /// provider and pass it here.
+    #[cfg(feature = "keyless")]
+    #[arg(long, value_name = "JWT", requires = "sigstore")]
+    pub sigstore_token: Option<String>,
 }
 
 /// Execute the `record` command.
@@ -180,7 +198,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
         match gleisner_polis::CgroupScope::create(&profile.resources) {
             Ok(scope) => {
                 if let Err(e) = scope.add_pid(child_pid) {
-                    tracing::warn!(error = %e, "failed to add child to cgroup — continuing without resource limits");
+                    tracing::warn!(error = %e, "failed to add child to cgroup — rlimits will still apply");
                     None
                 } else {
                     tracing::info!(pid = child_pid, "applied cgroup resource limits");
@@ -188,7 +206,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
                 }
             }
             Err(e) => {
-                tracing::warn!(error = %e, "failed to create cgroup — continuing without resource limits");
+                tracing::warn!(error = %e, "failed to create cgroup — rlimits will still apply");
                 None
             }
         }
@@ -358,12 +376,24 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
         chain_metadata,
     );
 
+    #[cfg(feature = "keyless")]
+    let use_sigstore = args.sigstore;
+    #[cfg(not(feature = "keyless"))]
+    let use_sigstore = false;
+
+    #[cfg(feature = "keyless")]
+    let sigstore_token = args.sigstore_token;
+    #[cfg(not(feature = "keyless"))]
+    let sigstore_token: Option<String> = None;
+
     write_attestation(
         &statement,
         &output_path,
         &audit_log_path,
         &key_path,
         args.no_sign,
+        use_sigstore,
+        sigstore_token,
     )
     .await?;
 
@@ -506,11 +536,13 @@ fn spawn_sandbox_child(
         .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-    // Apply RLIMIT_NOFILE to the child process.
+    // Apply rlimits (NOFILE, AS, NPROC) to the child process.
+    // These serve as fallback when cgroup limits can't be applied
+    // (e.g., without CAP_SYS_ADMIN) and as defense-in-depth otherwise.
     if let Some(pid) = child.id() {
         #[expect(clippy::cast_possible_wrap, reason = "PID fits in i32")]
         if let Err(e) = sandbox.apply_rlimits(nix::unistd::Pid::from_raw(pid as i32)) {
-            tracing::warn!(error = %e, "failed to apply rlimits — continuing without fd limits");
+            tracing::warn!(error = %e, "failed to apply rlimits — continuing without resource limits");
         }
     }
 
@@ -586,12 +618,15 @@ fn assemble_statement(
     }
 }
 /// Sign and write the attestation to disk.
+#[expect(clippy::fn_params_excessive_bools, reason = "CLI passthrough")]
 async fn write_attestation(
     statement: &InTotoStatement,
     output_path: &std::path::Path,
     audit_log_path: &std::path::Path,
     key_path: &std::path::Path,
     no_sign: bool,
+    use_sigstore: bool,
+    #[cfg_attr(not(feature = "keyless"), allow(unused_variables))] sigstore_token: Option<String>,
 ) -> Result<()> {
     if no_sign {
         // Write as an AttestationBundle with no signature so that the
@@ -610,6 +645,36 @@ async fn write_attestation(
             output_path.display()
         );
         eprintln!("Audit log: {}", audit_log_path.display());
+    } else if use_sigstore {
+        #[cfg(feature = "keyless")]
+        {
+            use gleisner_introdus::signer::SigstoreSigner;
+
+            let sigstore_bundle_path = output_path.with_extension("sigstore.json");
+            let signer =
+                SigstoreSigner::new(Some(sigstore_bundle_path.clone()), sigstore_token.clone());
+
+            eprintln!("Signing with: {}", signer.description());
+
+            let bundle = signer
+                .sign(statement)
+                .await
+                .map_err(|e| eyre!("Sigstore signing failed: {e}"))?;
+
+            let json = serde_json::to_string_pretty(&bundle)?;
+            std::fs::write(output_path, &json)?;
+
+            eprintln!("Attestation bundle written to: {}", output_path.display());
+            eprintln!("Sigstore bundle (v0.3): {}", sigstore_bundle_path.display());
+            eprintln!("Audit log: {}", audit_log_path.display());
+        }
+        #[cfg(not(feature = "keyless"))]
+        {
+            return Err(eyre!(
+                "Sigstore keyless signing requires the `keyless` feature.\n\
+                 Rebuild with: cargo build --features keyless"
+            ));
+        }
     } else {
         let signer =
             LocalSigner::load_or_generate(key_path).map_err(|e| eyre!("signing key error: {e}"))?;

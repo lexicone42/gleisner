@@ -193,11 +193,11 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
         .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-    // Apply RLIMIT_NOFILE to the child process before it starts doing real work.
+    // Apply rlimits (NOFILE, AS, NPROC) — fallback for cgroup limits and defense-in-depth.
     let child_pid = child.id();
     #[expect(clippy::cast_possible_wrap, reason = "PID fits in i32")]
     if let Err(e) = sandbox.apply_rlimits(nix::unistd::Pid::from_raw(child_pid as i32)) {
-        tracing::warn!(error = %e, "failed to apply rlimits — continuing without fd limits");
+        tracing::warn!(error = %e, "failed to apply rlimits — continuing without resource limits");
     }
 
     let status = child
