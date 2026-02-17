@@ -3404,8 +3404,7 @@ checksum = "bf36173d4167ed999940f804952e6b08197cae5ad5d572eb4db150ce8ad5d58f"
 [[package]]
 name = "landlock"
 version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49fefd6652c57d68aaa32544a4c0e642929725bdc1fd929367cdeb673ab81088"
+source = "git+https://github.com/lexicone42/rust-landlock.git?branch=abi-v7-log#0061afa95bfbdcc6d0d62bd99a57d573c101c9e2"
 dependencies = [
  "enumflags2",
  "libc",

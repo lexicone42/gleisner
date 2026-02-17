@@ -7,11 +7,11 @@
 //!
 //! # ABI version
 //!
-//! We target [`ABI::V6`] (Linux 6.12+) which is the highest version
-//! supported by the `landlock` crate (0.4.x). The `BestEffort`
-//! compatibility level means this degrades gracefully on older kernels —
-//! flags unsupported by the running kernel are silently dropped rather
-//! than causing errors.
+//! We target [`ABI::V7`] (Linux 6.15+) using a fork of the `landlock`
+//! crate with V7 support (<https://github.com/lexicone42/rust-landlock>).
+//! The `BestEffort` compatibility level means this degrades gracefully on
+//! older kernels — flags unsupported by the running kernel are silently
+//! dropped rather than causing errors.
 //!
 //! ## Feature summary by ABI version
 //!
@@ -23,6 +23,7 @@
 //! | V4  | 6.7    | `AccessNet` — TCP bind/connect port filtering |
 //! | V5  | 6.10   | `IoctlDev` — device ioctl control |
 //! | V6  | 6.12   | `Scope` — IPC isolation (abstract UNIX sockets, signals) |
+//! | V7  | 6.15   | Audit logging flags on `restrict_self()` |
 
 use std::path::{Path, PathBuf};
 
@@ -36,8 +37,8 @@ use crate::bwrap::expand_tilde;
 use crate::error::SandboxError;
 use crate::profile::{FilesystemPolicy, NetworkPolicy, PolicyDefault};
 
-/// Target ABI version — V6 adds `Scope` IPC isolation (Linux 6.12+).
-const TARGET_ABI: ABI = ABI::V6;
+/// Target ABI version — V7 adds audit logging flags (Linux 6.15+).
+const TARGET_ABI: ABI = ABI::V7;
 
 /// How strictly Landlock was enforced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +65,8 @@ pub struct LandlockStatus {
     pub network_enforced: bool,
     /// Whether V6 IPC scope isolation was requested and applied.
     pub scope_enforced: bool,
+    /// Whether V7 audit logging flags were applied to `restrict_self()`.
+    pub audit_log_enabled: bool,
 }
 
 /// Serializable policy for the sandbox-init binary.
@@ -98,6 +101,8 @@ pub struct LandlockPolicy {
 ///    sandboxed process should never bind server sockets.
 /// 3. **IPC scope** (V6): unconditional isolation from abstract UNIX
 ///    sockets and signal delivery outside the sandbox.
+/// 4. **Audit logging** (V7): enables kernel audit log entries for
+///    Landlock denials on new executables and subdomains.
 ///
 /// # Arguments
 ///
@@ -176,18 +181,24 @@ pub fn apply_landlock(
         ruleset
     };
 
-    // --- Restrict this thread ---
+    // --- Phase 3: V7 audit logging + restrict this thread ---
+    // Enable audit logging for Landlock denials:
+    //   - log_new_exec_on: log denials for newly exec'd processes
+    //   - log_subdomains_off: don't log denials from nested Landlock domains
+    //     (reduces noise — only the outermost sandbox's denials are interesting)
     let status = ruleset
+        .set_log_new_exec_on(true)
+        .set_log_subdomains_off(true)
         .restrict_self()
         .map_err(|e| map_ruleset_error(&e, require))?;
 
     let enforcement = match status.ruleset {
         RulesetStatus::FullyEnforced => {
-            info!("landlock fully enforced (ABI V6: filesystem + network + scope)");
+            info!("landlock fully enforced (ABI V7: filesystem + network + scope + audit)");
             LandlockEnforcement::FullyEnforced
         }
         RulesetStatus::PartiallyEnforced => {
-            info!("landlock partially enforced (kernel supports subset of requested V6 flags)");
+            info!("landlock partially enforced (kernel supports subset of requested V7 flags)");
             LandlockEnforcement::PartiallyEnforced
         }
         RulesetStatus::NotEnforced => {
@@ -211,6 +222,7 @@ pub fn apply_landlock(
         skipped_paths,
         network_enforced: enforce_network && fully,
         scope_enforced: fully,
+        audit_log_enabled: fully,
     })
 }
 
@@ -511,6 +523,30 @@ mod tests {
         );
     }
 
+    /// V7: Verify TARGET_ABI is V7 and that V7 access sets are supersets of V6.
+    #[test]
+    fn v7_target_abi() {
+        assert_eq!(TARGET_ABI, ABI::V7, "TARGET_ABI should be V7");
+
+        // V7 doesn't add new access types — it adds audit logging flags.
+        // Verify that V7 access sets are identical to V6 (no regressions).
+        assert_eq!(
+            AccessFs::from_all(ABI::V7),
+            AccessFs::from_all(ABI::V6),
+            "V7 filesystem access should match V6"
+        );
+        assert_eq!(
+            AccessNet::from_all(ABI::V7),
+            AccessNet::from_all(ABI::V6),
+            "V7 network access should match V6"
+        );
+        assert_eq!(
+            Scope::from_all(ABI::V7),
+            Scope::from_all(ABI::V6),
+            "V7 scope should match V6"
+        );
+    }
+
     #[test]
     fn deny_conflict_detection() {
         // This test verifies the logic, not the warning output.
@@ -628,8 +664,11 @@ mod tests {
                     );
                 }
                 println!(
-                    "enforcement: {:?}, network: {}, scope: {}",
-                    status.enforcement, status.network_enforced, status.scope_enforced
+                    "enforcement: {:?}, network: {}, scope: {}, audit: {}",
+                    status.enforcement,
+                    status.network_enforced,
+                    status.scope_enforced,
+                    status.audit_log_enabled
                 );
             }
             Err(e) => {

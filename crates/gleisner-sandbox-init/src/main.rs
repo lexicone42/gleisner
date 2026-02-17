@@ -61,8 +61,11 @@ fn main() {
     ) {
         Ok(status) => {
             eprintln!(
-                "gleisner-sandbox-init: landlock {:?} (network={}, scope={})",
-                status.enforcement, status.network_enforced, status.scope_enforced
+                "gleisner-sandbox-init: landlock {:?} (network={}, scope={}, audit={})",
+                status.enforcement,
+                status.network_enforced,
+                status.scope_enforced,
+                status.audit_log_enabled
             );
             if !status.skipped_paths.is_empty() {
                 eprintln!(
