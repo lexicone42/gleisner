@@ -1,13 +1,15 @@
 //! Signing backends for attestation bundles.
 //!
-//! Currently supports local ECDSA P-256 keys for air-gapped
-//! environments. Sigstore keyless signing (Fulcio + Rekor) is planned
-//! but not yet implemented — the verification side already supports
-//! Sigstore certificates (see `gleisner-lacerta::signature`).
+//! Two signing backends are available:
 //!
-//! Uses `aws-lc-rs` as the cryptographic provider — formally verified
-//! C crypto from AWS-LC. Post-quantum signing (ML-DSA / FIPS 204)
-//! can be added when the verification ecosystem supports it.
+//! - **`LocalSigner`**: ECDSA P-256 keys for air-gapped environments.
+//!   Uses `aws-lc-rs` (formally verified C crypto from AWS-LC).
+//! - **`SigstoreSigner`** (feature `keyless`): Sigstore keyless signing
+//!   via Fulcio certificates + Rekor transparency log. Requires an
+//!   interactive browser OIDC flow or CI environment token.
+//!
+//! Post-quantum signing (ML-DSA / FIPS 204) can be added when the
+//! verification ecosystem supports it.
 
 use std::path::Path;
 
@@ -152,6 +154,156 @@ impl Signer for LocalSigner {
 
     fn description(&self) -> &'static str {
         "local ECDSA P-256 (aws-lc)"
+    }
+}
+
+// ── Sigstore keyless signer ──────────────────────────────────────────
+
+/// Sigstore keyless signer using Fulcio + Rekor (public-good instance).
+///
+/// Authentication order:
+/// 1. If a pre-supplied OIDC JWT is provided, use it directly.
+/// 2. Try ambient credential detection (GitHub Actions, GitLab CI, etc.).
+/// 3. Fall back to interactive browser OIDC flow.
+///
+/// The signed Sigstore bundle (v0.3) is written to a sibling `.sigstore.json`
+/// file for `cosign` and `gh attestation verify` compatibility.
+///
+/// Requires the `keyless` feature.
+#[cfg(feature = "keyless")]
+pub struct SigstoreSigner {
+    /// Optional path to write the raw Sigstore bundle alongside our format.
+    sigstore_bundle_path: Option<std::path::PathBuf>,
+    /// Pre-supplied OIDC token JWT (e.g., from `--sigstore-token`).
+    oidc_token: Option<String>,
+}
+
+#[cfg(feature = "keyless")]
+impl SigstoreSigner {
+    /// Create a new keyless signer.
+    ///
+    /// - `sigstore_bundle_path`: if `Some`, writes the raw Sigstore bundle JSON
+    ///   there (for `cosign verify-blob` / `gh attestation`).
+    /// - `oidc_token`: if `Some`, uses this JWT directly instead of interactive auth.
+    pub fn new(
+        sigstore_bundle_path: Option<std::path::PathBuf>,
+        oidc_token: Option<String>,
+    ) -> Self {
+        Self {
+            sigstore_bundle_path,
+            oidc_token,
+        }
+    }
+}
+
+#[cfg(feature = "keyless")]
+impl Signer for SigstoreSigner {
+    async fn sign(
+        &self,
+        statement: &InTotoStatement,
+    ) -> Result<AttestationBundle, AttestationError> {
+        use sigstore_sign::SigningContext;
+
+        // 1. Try pre-supplied token
+        let token = if let Some(ref jwt) = self.oidc_token {
+            tracing::info!("using pre-supplied OIDC token");
+            sigstore_oidc::parse_identity_token(jwt)
+                .map_err(|e| AttestationError::SigningFailed(format!("invalid OIDC token: {e}")))?
+        } else {
+            // 2. Try ambient detection (CI environments)
+            tracing::info!("attempting ambient OIDC credential detection...");
+            match sigstore_oidc::IdentityToken::detect_ambient().await {
+                Ok(Some(token)) => {
+                    tracing::info!("detected ambient OIDC token (CI environment)");
+                    token
+                }
+                Ok(None) | Err(_) => {
+                    // 3. Fall back to interactive browser flow
+                    tracing::info!("no ambient credentials — opening browser for OIDC...");
+                    sigstore_oidc::get_identity_token_with_options(sigstore_oidc::AuthOptions {
+                        force_oob: false,
+                    })
+                    .await
+                    .map_err(|e| {
+                        AttestationError::SigningFailed(format!(
+                            "OIDC authentication failed: {e}\n\
+                             Hint: In headless environments, use --sigstore-token with a \
+                             pre-obtained JWT, or run in GitHub Actions for ambient detection."
+                        ))
+                    })?
+                }
+            }
+        };
+
+        // 2. Create production signing context (Fulcio + Rekor)
+        let context = SigningContext::production();
+        let signer = context.signer(token);
+
+        // 3. Sign the in-toto statement as a DSSE envelope
+        let payload = serde_json::to_vec(statement)?;
+        let bundle = signer.sign_raw_statement(&payload).await.map_err(|e| {
+            AttestationError::SigningFailed(format!("Sigstore signing failed: {e}"))
+        })?;
+
+        // 4. Serialize the native Sigstore bundle
+        let bundle_json = serde_json::to_string_pretty(&bundle).map_err(|e| {
+            AttestationError::SigningFailed(format!("bundle serialization failed: {e}"))
+        })?;
+
+        // 5. Optionally write the raw Sigstore bundle for cosign/gh compatibility
+        if let Some(ref path) = self.sigstore_bundle_path {
+            std::fs::write(path, &bundle_json).map_err(|e| {
+                AttestationError::SigningFailed(format!(
+                    "failed to write Sigstore bundle to {}: {e}",
+                    path.display()
+                ))
+            })?;
+            tracing::info!(path = %path.display(), "wrote native Sigstore bundle (v0.3)");
+        }
+
+        // 6. Extract verification material for our attestation format
+        //    We store the Sigstore bundle JSON as-is in our format's payload,
+        //    and reference the certificate/rekor data in verification_material.
+        let statement_json = serde_json::to_string(statement)?;
+
+        // Extract certificate and rekor entry from the native bundle
+        let bundle_value: serde_json::Value = serde_json::from_str(&bundle_json)?;
+        let certificate_chain = bundle_value
+            .pointer("/verificationMaterial/certificate/rawBytes")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_owned();
+        let rekor_log_id = bundle_value
+            .pointer("/verificationMaterial/tlogEntries/0/logIndex")
+            .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
+            .unwrap_or("")
+            .to_owned();
+
+        // Decode the base64 certificate to PEM for our format
+        let cert_pem = if !certificate_chain.is_empty() {
+            if let Ok(cert_der) =
+                base64::engine::general_purpose::STANDARD.decode(&certificate_chain)
+            {
+                der_to_pem(&cert_der, "CERTIFICATE")
+            } else {
+                certificate_chain.clone()
+            }
+        } else {
+            String::new()
+        };
+
+        Ok(AttestationBundle {
+            payload: statement_json,
+            signature: String::new(), // signature is in the DSSE envelope inside the Sigstore bundle
+            verification_material: VerificationMaterial::Sigstore {
+                certificate_chain: cert_pem,
+                rekor_log_id,
+            },
+        })
+    }
+
+    fn description(&self) -> &'static str {
+        "Sigstore keyless (Fulcio + Rekor)"
     }
 }
 

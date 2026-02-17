@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+keyless = ["dep:sigstore-sign", "dep:sigstore-oidc"]
+
 [dependencies]
 chrono.workspace = true
 serde.workspace = true
@@ -22,6 +26,8 @@ nix.workspace = true
 gix.workspace = true
 directories.workspace = true
 sigstore.workspace = true
+sigstore-sign = { workspace = true, optional = true }
+sigstore-oidc = { workspace = true, optional = true }
 gleisner-scapes.workspace = true
 
 [dev-dependencies]

@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap slirp4netns nftables
+
+      - name: Build
+        run: cargo build --workspace
+
+      - name: Run tests
+        run: cargo test --workspace
+
+  sbom:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --bin gleisner
+
+      - name: Generate SBOM
+        run: cargo run --release --bin gleisner -- sbom --json > sbom.cdx.json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-cyclonedx
+          path: sbom.cdx.json
+
+  verify-attestations:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release --bin gleisner
+
+      - name: Verify attestation chain
+        run: |
+          LATEST=$(ls -t .gleisner/attestation-*.json 2>/dev/null | head -1)
+          if [ -n "$LATEST" ]; then
+            echo "Verifying: $LATEST"
+            cargo run --release --bin gleisner -- verify "$LATEST" --chain --json
+          else
+            echo "No attestation bundles found — skipping verification"
+          fi
+
+  # Sigstore keyless signing in CI (ambient OIDC from GitHub Actions)
+  # Uncomment when ready to enable in CI:
+  #
+  # attest:
+  #   runs-on: ubuntu-latest
+  #   needs: test
+  #   permissions:
+  #     id-token: write     # Required for OIDC token
+  #     contents: read
+  #     attestations: write  # Required to upload attestations
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: Install Rust toolchain
+  #       uses: dtolnay/rust-toolchain@stable
+  #     - uses: Swatinem/rust-cache@v2
+  #     - name: Install system dependencies
+  #       run: |
+  #         sudo apt-get update
+  #         sudo apt-get install -y bubblewrap slirp4netns nftables
+  #     - name: Build with Sigstore support
+  #       run: cargo build --release --bin gleisner --features keyless
+  #     - name: Record with Sigstore signing
+  #       run: |
+  #         cargo run --release --bin gleisner --features keyless -- \
+  #           record --sigstore --no-proc-monitor -- \
+  #           -p "CI attestation test"
+  #     - name: Upload attestation artifacts
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: attestation
+  #         path: |
+  #           .gleisner/attestation-*.json
+  #           .gleisner/attestation-*.sigstore.json
+  #           .gleisner/audit-*.jsonl
