@@ -263,3 +263,287 @@ pub fn build_claude_inner_command(
     cmd.extend(extra_args.iter().cloned());
     cmd
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::Profile;
+    use crate::profile::{
+        FilesystemPolicy, NetworkPolicy, PluginPolicy, PolicyDefault, ProcessPolicy, ResourceLimits,
+    };
+
+    use super::*;
+
+    fn test_profile(network_default: PolicyDefault) -> Profile {
+        Profile {
+            name: "test-session".to_owned(),
+            description: "test profile for session tests".to_owned(),
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![PathBuf::from("/usr"), PathBuf::from("/lib")],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![PathBuf::from("/tmp")],
+            },
+            network: NetworkPolicy {
+                default: network_default,
+                allow_domains: vec!["api.anthropic.com".to_owned()],
+                allow_ports: vec![443],
+                allow_dns: true,
+            },
+            process: ProcessPolicy {
+                pid_namespace: true,
+                no_new_privileges: true,
+                command_allowlist: vec![],
+                seccomp_profile: None,
+            },
+            resources: ResourceLimits {
+                max_memory_mb: 4096,
+                max_cpu_percent: 100,
+                max_pids: 256,
+                max_file_descriptors: 1024,
+                max_disk_write_mb: 10240,
+            },
+            plugins: PluginPolicy::default(),
+        }
+    }
+
+    /// Helper: collect command args as strings for assertions.
+    fn args_of(cmd: &std::process::Command) -> Vec<String> {
+        cmd.get_args()
+            .filter_map(|a| a.to_str())
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn prepare_sandbox_builds_valid_command() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+
+        let config = SandboxSessionConfig {
+            profile: test_profile(PolicyDefault::Allow),
+            project_dir: PathBuf::from("/tmp/test-project"),
+            extra_allow_network: vec![],
+            extra_allow_paths: vec![],
+            no_landlock: true,
+        };
+
+        let inner = vec!["/bin/echo".to_owned(), "hello".to_owned()];
+        let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
+
+        let args = args_of(&prepared.command);
+
+        // Should contain bwrap fundamentals
+        assert_eq!(
+            prepared.command.get_program().to_str().unwrap(),
+            "bwrap",
+            "program should be bwrap"
+        );
+        assert!(
+            args.iter().any(|a| a == "--die-with-parent"),
+            "should die with parent"
+        );
+
+        // Inner command should appear at the end
+        assert!(
+            args.iter().any(|a| a == "/bin/echo"),
+            "inner command should be present"
+        );
+        assert!(
+            args.iter().any(|a| a == "hello"),
+            "inner command args should be present"
+        );
+
+        // No network handles needed for Allow policy
+        assert!(prepared.ns.is_none(), "no namespace for allow policy");
+        assert!(prepared.slirp.is_none(), "no slirp for allow policy");
+    }
+
+    #[test]
+    fn prepare_sandbox_adds_home_readonly() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+
+        let config = SandboxSessionConfig {
+            profile: test_profile(PolicyDefault::Allow),
+            project_dir: PathBuf::from("/tmp/test-project"),
+            extra_allow_network: vec![],
+            extra_allow_paths: vec![],
+            no_landlock: true,
+        };
+
+        let inner = vec!["/bin/true".to_owned()];
+        let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
+
+        let args = args_of(&prepared.command);
+
+        // $HOME should appear as a readonly bind
+        if let Ok(home) = std::env::var("HOME") {
+            assert!(
+                args.iter().any(|a| a == &home),
+                "$HOME ({home}) should appear in bwrap args"
+            );
+        }
+    }
+
+    #[test]
+    fn prepare_sandbox_merges_extra_domains() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+
+        let config = SandboxSessionConfig {
+            profile: test_profile(PolicyDefault::Allow),
+            project_dir: PathBuf::from("/tmp/test-project"),
+            extra_allow_network: vec!["extra.example.com".to_owned()],
+            extra_allow_paths: vec![],
+            no_landlock: true,
+        };
+
+        let inner = vec!["/bin/true".to_owned()];
+        let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
+
+        // The profile is allow-all, so extra domains don't create filters,
+        // but verify the profile is accessible and has the right name
+        assert_eq!(prepared.profile().name, "test-session");
+    }
+
+    #[test]
+    fn prepare_sandbox_merges_extra_paths() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+
+        let config = SandboxSessionConfig {
+            profile: test_profile(PolicyDefault::Allow),
+            project_dir: PathBuf::from("/tmp/test-project"),
+            extra_allow_network: vec![],
+            extra_allow_paths: vec![PathBuf::from("/opt/extra")],
+            no_landlock: true,
+        };
+
+        let inner = vec!["/bin/true".to_owned()];
+        let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
+
+        let args = args_of(&prepared.command);
+
+        // Extra paths should appear as read-write binds
+        assert!(
+            args.iter().any(|a| a == "/opt/extra"),
+            "extra path should appear in bwrap args"
+        );
+    }
+
+    #[test]
+    fn prepare_sandbox_plugin_policy_adds_claude_dir() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+
+        let config = SandboxSessionConfig {
+            profile: test_profile(PolicyDefault::Allow),
+            project_dir: PathBuf::from("/tmp/test-project"),
+            extra_allow_network: vec![],
+            extra_allow_paths: vec![],
+            no_landlock: true,
+        };
+
+        let inner = vec!["/bin/true".to_owned()];
+        let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
+
+        let args = args_of(&prepared.command);
+
+        // ~/.claude should be added as read-write by apply_plugin_sandbox_policy
+        if let Ok(home) = std::env::var("HOME") {
+            let claude_dir = format!("{home}/.claude");
+            assert!(
+                args.iter().any(|a| a == &claude_dir),
+                "~/.claude ({claude_dir}) should be in bwrap args as rw bind"
+            );
+        }
+    }
+
+    #[test]
+    fn prepare_sandbox_deny_network_without_slirp_returns_error() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+        // This test verifies the error path when slirp4netns is needed
+        // but not available. We can only test this reliably if slirp is
+        // NOT installed — skip otherwise.
+        if crate::netfilter::slirp4netns_available() {
+            return;
+        }
+
+        let config = SandboxSessionConfig {
+            profile: test_profile(PolicyDefault::Deny),
+            project_dir: PathBuf::from("/tmp/test-project"),
+            extra_allow_network: vec![],
+            extra_allow_paths: vec![],
+            no_landlock: true,
+        };
+
+        let inner = vec!["/bin/true".to_owned()];
+        let result = prepare_sandbox(config, &inner);
+
+        let err = match result {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("should error when deny-network profile needs slirp4netns"),
+        };
+        assert!(
+            err.contains("slirp4netns"),
+            "error should mention slirp4netns: {err}"
+        );
+    }
+
+    #[test]
+    fn build_claude_inner_command_basic() {
+        let profile = test_profile(PolicyDefault::Allow);
+        let cmd = build_claude_inner_command("claude", &profile, &["--help".to_owned()]);
+
+        assert_eq!(cmd[0], "claude");
+        // Default PluginPolicy has skip_permissions = true
+        assert!(
+            cmd.iter().any(|a| a == "--dangerously-skip-permissions"),
+            "should include skip-permissions when profile enables it"
+        );
+        assert!(
+            cmd.iter().any(|a| a == "--help"),
+            "extra args should be appended"
+        );
+    }
+
+    #[test]
+    fn build_claude_inner_command_with_disallowed_tools() {
+        let mut profile = test_profile(PolicyDefault::Allow);
+        profile.plugins.disallowed_tools = vec!["Bash".to_owned(), "Write".to_owned()];
+
+        let cmd = build_claude_inner_command("/usr/bin/claude", &profile, &[]);
+
+        assert_eq!(cmd[0], "/usr/bin/claude");
+        assert!(
+            cmd.iter().any(|a| a == "--disallowedTools"),
+            "should include --disallowedTools flag"
+        );
+        assert!(
+            cmd.iter().any(|a| a == "Bash,Write"),
+            "should join disallowed tools with comma"
+        );
+    }
+
+    #[test]
+    fn detect_sandbox_init_returns_option() {
+        // Just verify it doesn't panic — result depends on whether
+        // gleisner-sandbox-init is built/installed
+        let _result = detect_sandbox_init();
+    }
+
+    #[test]
+    fn resolve_claude_bin_returns_string() {
+        let bin = resolve_claude_bin();
+        assert!(!bin.is_empty(), "should return non-empty string");
+    }
+}
