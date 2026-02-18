@@ -65,6 +65,13 @@ impl TuiHarness {
         let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gleisner-tui"));
         // Ensure the TUI gets a proper TERM variable
         cmd.env("TERM", "xterm-256color");
+        // Set cwd to workspace root so profile resolution finds `profiles/`
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        cmd.cwd(workspace_root);
 
         let child = pair
             .slave
@@ -205,6 +212,13 @@ impl TuiHarness {
         let mut cmd = CommandBuilder::new(env!("CARGO_BIN_EXE_gleisner-tui"));
         cmd.env("TERM", "xterm-256color");
         cmd.args(["--claude-bin", claude_bin]);
+        // Set cwd to workspace root so profile resolution finds `profiles/`
+        let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        cmd.cwd(workspace_root);
 
         let child = pair
             .slave
