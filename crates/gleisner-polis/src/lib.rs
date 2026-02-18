@@ -17,6 +17,7 @@ pub mod policy;
 pub mod procmon;
 pub mod profile;
 pub mod resource;
+pub mod session;
 
 pub use audit_log::{KernelAuditConfig, collect_and_publish_denials};
 pub use bwrap::{BwrapSandbox, expand_tilde};
@@ -29,3 +30,7 @@ pub use netfilter::{NamespaceHandle, NetworkFilter, SlirpHandle};
 pub use policy::FileAccessType;
 pub use profile::{Profile, resolve_profile};
 pub use resource::CgroupScope;
+pub use session::{
+    PreparedSandbox, SandboxSessionConfig, build_claude_inner_command, detect_sandbox_init,
+    prepare_sandbox, resolve_claude_bin,
+};

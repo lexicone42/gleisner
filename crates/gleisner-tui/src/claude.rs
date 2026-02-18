@@ -22,16 +22,13 @@
 //!                  ↑ filesystem/network/process isolation from profile
 //! ```
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-
-use gleisner_polis::netfilter;
-use gleisner_polis::profile::PolicyDefault;
 
 use crate::stream::{self, StreamEvent};
 
@@ -95,7 +92,7 @@ impl Default for QueryConfig {
             allowed_tools: vec![],
             resume_session: None,
             cwd: None,
-            claude_bin: resolve_claude_bin(),
+            claude_bin: gleisner_polis::resolve_claude_bin(),
             system_prompt: None,
             add_dirs: vec![exo_self_dir],
             // Default to skipping permissions — gleisner IS the sandbox.
@@ -123,7 +120,7 @@ impl QueryConfig {
         let add_dirs = plugins
             .add_dirs
             .iter()
-            .map(|p| expand_tilde(p).display().to_string())
+            .map(|p| gleisner_polis::expand_tilde(p).display().to_string())
             .collect();
 
         let disallowed_tools = plugins.disallowed_tools.clone();
@@ -133,7 +130,7 @@ impl QueryConfig {
             allowed_tools: vec![],
             resume_session: None,
             cwd: None,
-            claude_bin: resolve_claude_bin(),
+            claude_bin: gleisner_polis::resolve_claude_bin(),
             system_prompt: None,
             add_dirs,
             skip_permissions: plugins.skip_permissions,
@@ -141,59 +138,6 @@ impl QueryConfig {
             sandbox: None,
         }
     }
-}
-
-/// Resolve the `claude` binary path.
-///
-/// Checks common installation locations when `claude` isn't on PATH:
-/// 1. `~/.npm-global/bin/claude` (npm global with custom prefix)
-/// 2. `~/.local/bin/claude` (pipx, local installs)
-/// 3. `~/.claude/local/bin/claude` (Claude's own installer)
-///
-/// Falls back to `"claude"` (relies on PATH) if none found.
-fn resolve_claude_bin() -> String {
-    // Check common installation locations, most specific first.
-    // We check these before falling back to bare "claude" (which depends
-    // on the subprocess inheriting the right PATH).
-    if let Ok(home) = std::env::var("HOME") {
-        let candidates = [
-            format!("{home}/.npm-global/bin/claude"),
-            format!("{home}/.local/bin/claude"),
-            format!("{home}/.claude/local/bin/claude"),
-        ];
-        for candidate in &candidates {
-            if Path::new(candidate).is_file() {
-                return candidate.clone();
-            }
-        }
-    }
-
-    // Fallback — relies on PATH resolving "claude"
-    "claude".into()
-}
-
-/// Expand `~` to the user's home directory.
-fn expand_tilde(path: &Path) -> PathBuf {
-    let s = path.display().to_string();
-    if s.starts_with('~') {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(path.strip_prefix("~").unwrap_or(path));
-        }
-    }
-    path.to_path_buf()
-}
-
-/// Try to find the `gleisner-sandbox-init` binary.
-///
-/// Checks alongside the running binary first, then falls back to PATH.
-fn detect_sandbox_init() -> Option<PathBuf> {
-    if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe.with_file_name("gleisner-sandbox-init");
-        if sibling.is_file() {
-            return Some(sibling);
-        }
-    }
-    which::which("gleisner-sandbox-init").ok()
 }
 
 /// Messages sent from the Claude driver task to the TUI.
@@ -228,15 +172,11 @@ pub fn spawn_query(config: QueryConfig, buffer_size: usize) -> mpsc::Receiver<Dr
 
 /// Handles to sandbox infrastructure that must outlive the subprocess.
 ///
-/// When selective network filtering is active, these hold the
-/// `unshare` namespace holder and `slirp4netns` processes alive.
-/// When Landlock is enabled, `_policy_file` keeps the serialized
-/// policy JSON alive (bwrap bind-mounts the host tempfile).
-/// Dropped automatically when the query future completes.
+/// Holds the [`PreparedSandbox`](gleisner_polis::PreparedSandbox) which
+/// owns the namespace holder, slirp4netns process, and Landlock policy
+/// tempfile. Dropped automatically when the query future completes.
 struct SandboxHandles {
-    _ns: Option<gleisner_polis::NamespaceHandle>,
-    _slirp: Option<gleisner_polis::SlirpHandle>,
-    _policy_file: Option<tempfile::NamedTempFile>,
+    _prepared: Option<gleisner_polis::PreparedSandbox>,
 }
 
 /// Internal: run the claude subprocess and stream events.
@@ -290,7 +230,7 @@ async fn run_query(
     }
 
     // ── Build the actual command — optionally wrapped in bwrap ──
-    // _handles keeps NamespaceHandle + SlirpHandle alive until subprocess exits.
+    // _handles keeps PreparedSandbox alive until subprocess exits.
     let (mut cmd, _handles) = if let Some(ref sandbox_cfg) = config.sandbox {
         build_sandboxed_command(config, sandbox_cfg, inner_args)?
     } else {
@@ -301,14 +241,7 @@ async fn run_query(
             tokio_cmd.current_dir(cwd);
         }
 
-        (
-            tokio_cmd,
-            SandboxHandles {
-                _ns: None,
-                _slirp: None,
-                _policy_file: None,
-            },
-        )
+        (tokio_cmd, SandboxHandles { _prepared: None })
     };
 
     // Common settings for both sandboxed and unsandboxed
@@ -375,139 +308,41 @@ async fn run_query(
 
 /// Build a tokio Command that runs claude inside a bwrap sandbox.
 ///
-/// The sandbox inherits isolation rules from the profile and adds:
-/// - `$HOME` as readonly (claude needs `~/.claude/` for config)
-/// - `~/.claude` as read-write (session state, settings)
-/// - Plugin `add_dirs` as read-write (exo-self, etc.)
-/// - MCP network domains merged into the sandbox allowlist
-///
-/// When the profile declares `network.default = "deny"` with allowed
-/// domains, creates a network namespace + slirp4netns for selective
-/// filtering (same pipeline as `gleisner wrap`). The returned
-/// `SandboxHandles` must be kept alive until the subprocess exits.
+/// Uses the shared [`gleisner_polis::prepare_sandbox`] pipeline, then
+/// converts the resulting `std::process::Command` to a `tokio::process::Command`.
+/// The returned [`SandboxHandles`] must be kept alive until the subprocess exits.
 fn build_sandboxed_command(
     config: &QueryConfig,
     sandbox_cfg: &SandboxConfig,
     inner_args: Vec<String>,
 ) -> color_eyre::Result<(Command, SandboxHandles)> {
-    let mut profile = sandbox_cfg.profile.clone();
-
-    // Claude Code needs access to its config directory (~/.claude/).
-    // Add $HOME as readonly so claude can find its settings, MCP config,
-    // hooks, etc. The profile's deny paths (tmpfs overlays) will shadow
-    // sensitive directories like ~/.ssh, ~/.aws within this bind.
-    if let Ok(home) = std::env::var("HOME") {
-        let home_path = PathBuf::from(&home);
-        if !profile.filesystem.readonly_bind.contains(&home_path) {
-            profile.filesystem.readonly_bind.push(home_path);
-        }
-    }
-
-    let mut sandbox = gleisner_polis::BwrapSandbox::new(profile, sandbox_cfg.project_dir.clone())?;
-
-    // ~/.claude needs to be read-write for session state and settings
-    if let Ok(home) = std::env::var("HOME") {
-        sandbox.allow_paths(std::iter::once(PathBuf::from(format!("{home}/.claude"))));
-    }
-
-    // Make plugin add_dirs accessible inside the sandbox (e.g. exo-self)
-    sandbox.allow_paths(config.add_dirs.iter().map(PathBuf::from));
-
-    // Merge MCP network domains into sandbox allowlist
-    sandbox.allow_domains(
-        sandbox_cfg
-            .profile
-            .plugins
-            .mcp_network_domains
-            .iter()
-            .cloned(),
-    );
-
-    // Apply CLI overrides (--allow-network, --allow-path)
-    if !sandbox_cfg.extra_allow_network.is_empty() {
-        sandbox.allow_domains(sandbox_cfg.extra_allow_network.iter().cloned());
-    }
-    if !sandbox_cfg.extra_allow_paths.is_empty() {
-        sandbox.allow_paths(sandbox_cfg.extra_allow_paths.iter().cloned());
-    }
-
-    // Enable Landlock-inside-bwrap if the sandbox-init binary is available
-    if let Some(init_bin) = detect_sandbox_init() {
-        sandbox.enable_landlock(init_bin);
-    } else {
-        tracing::warn!("gleisner-sandbox-init not found — running without Landlock");
-    }
-
-    // ── Resolve selective network filter ────────────────────────
-    // When the profile denies network but has allowed domains, we need
-    // slirp4netns + nftables instead of blanket --unshare-net.
-    let profile_ref = sandbox.profile();
-    let needs_filter = matches!(profile_ref.network.default, PolicyDefault::Deny)
-        && (!profile_ref.network.allow_domains.is_empty()
-            || !sandbox.extra_allow_domains().is_empty());
-
-    let filter = if needs_filter {
-        if !netfilter::slirp4netns_available() {
-            return Err(color_eyre::eyre::eyre!(
-                "slirp4netns not found — install slirp4netns for selective network filtering\n\
-                 Hint: The profile '{}' uses allow_domains with network deny, \
-                 which requires slirp4netns. Install it (apt/dnf install slirp4netns) \
-                 or use --profile carter-zimmerman for full network access.",
-                profile_ref.name,
-            ));
-        }
-        let network_policy = &sandbox.profile().network;
-        let extra = sandbox.extra_allow_domains().to_vec();
-        Some(gleisner_polis::NetworkFilter::resolve(
-            network_policy,
-            &extra,
-        )?)
-    } else {
-        None
-    };
-
-    // Build inner command: [claude_bin, ...args]
+    // Build full inner command: [claude_bin, ...args]
     let mut full_inner: Vec<String> = vec![config.claude_bin.clone()];
     full_inner.extend(inner_args);
 
-    // Build bwrap command — pass bool indicating external netns.
-    // policy_file (if Landlock is enabled) must stay alive until child exits.
-    let has_filter = filter.is_some();
-    let (bwrap_cmd, policy_file) = sandbox.build_command(&full_inner, has_filter);
+    // Merge QueryConfig's add_dirs into extra paths so they're
+    // accessible inside the sandbox (e.g., exo-self directories).
+    let mut extra_paths: Vec<PathBuf> = config.add_dirs.iter().map(PathBuf::from).collect();
+    extra_paths.extend(sandbox_cfg.extra_allow_paths.iter().cloned());
 
-    // ── Set up namespace + slirp4netns when filtering ───────────
-    // These handles must stay alive for the subprocess duration.
-    let (ns_handle, slirp_handle, tokio_cmd) = if let Some(ref f) = filter {
-        let ns = gleisner_polis::NamespaceHandle::create()?;
-        let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
-
-        // Apply firewall rules before starting bwrap — bwrap's --unshare-user
-        // creates a nested namespace that loses CAP_NET_ADMIN
-        f.apply_firewall_via_nsenter(&ns)?;
-
-        // Wrap bwrap in nsenter to enter the pre-created namespace
-        let mut nsenter = netfilter::nsenter_command(&ns);
-        nsenter.arg(bwrap_cmd.get_program());
-        nsenter.args(bwrap_cmd.get_args());
-
-        // Convert std::process::Command → tokio::process::Command
-        let mut tcmd = Command::new(nsenter.get_program());
-        tcmd.args(nsenter.get_args());
-
-        info!("sandbox networking: slirp4netns + nftables filtering active");
-        (Some(ns), Some(slirp), tcmd)
-    } else {
-        // No filtering — convert bwrap directly
-        let mut tcmd = Command::new(bwrap_cmd.get_program());
-        tcmd.args(bwrap_cmd.get_args());
-        (None, None, tcmd)
+    let session_config = gleisner_polis::SandboxSessionConfig {
+        profile: sandbox_cfg.profile.clone(),
+        project_dir: sandbox_cfg.project_dir.clone(),
+        extra_allow_network: sandbox_cfg.extra_allow_network.clone(),
+        extra_allow_paths: extra_paths,
+        no_landlock: false, // TUI always enables Landlock when available
     };
 
-    let handles = SandboxHandles {
-        _ns: ns_handle,
-        _slirp: slirp_handle,
-        _policy_file: policy_file,
-    };
+    let prepared = gleisner_polis::prepare_sandbox(session_config, &full_inner)?;
 
-    Ok((tokio_cmd, handles))
+    // Convert std::process::Command → tokio::process::Command
+    let mut tcmd = Command::new(prepared.command.get_program());
+    tcmd.args(prepared.command.get_args());
+
+    Ok((
+        tcmd,
+        SandboxHandles {
+            _prepared: Some(prepared),
+        },
+    ))
 }

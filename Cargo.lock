@@ -2462,7 +2462,6 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-subscriber",
- "which 7.0.3",
 ]
 
 [[package]]
@@ -2581,7 +2580,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "vt100",
- "which 7.0.3",
 ]
 
 [[package]]

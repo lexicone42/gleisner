@@ -180,23 +180,42 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
 
     // ── 5. Spawn sandbox child (don't await exit yet) ────────────────
     let session_start = Utc::now();
-    let profile_for_sandbox = profile.clone();
-    let sandbox_child = spawn_sandbox_child(
-        profile_for_sandbox,
-        project_dir.clone(),
-        args.wrap.allow_network,
-        args.wrap.allow_path,
-        args.wrap.claude_bin,
-        args.wrap.claude_args,
-        args.wrap.no_landlock,
-    )?;
 
-    let SandboxChild {
-        mut child,
-        slirp,                          // kept alive until session ends
-        ns,                             // kept alive until session ends
-        _policy_file: _landlock_policy, // kept alive until session ends
-    } = sandbox_child;
+    let inner_command = gleisner_polis::build_claude_inner_command(
+        &args.wrap.claude_bin,
+        &profile,
+        &args.wrap.claude_args,
+    );
+
+    let sandbox_config = gleisner_polis::SandboxSessionConfig {
+        profile: profile.clone(),
+        project_dir: project_dir.clone(),
+        extra_allow_network: args.wrap.allow_network,
+        extra_allow_paths: args.wrap.allow_path,
+        no_landlock: args.wrap.no_landlock,
+    };
+
+    let prepared = gleisner_polis::prepare_sandbox(sandbox_config, &inner_command)?;
+
+    // Convert std::process::Command → tokio::process::Command for async await.
+    // Recreate from program + args (build_command only sets args, no env vars).
+    let mut cmd = tokio::process::Command::new(prepared.command.get_program());
+    cmd.args(prepared.command.get_args());
+    cmd.stdin(std::process::Stdio::inherit());
+    cmd.stdout(std::process::Stdio::inherit());
+    cmd.stderr(std::process::Stdio::inherit());
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
+
+    // Apply rlimits (NOFILE, AS, NPROC) — fallback for cgroup limits and defense-in-depth.
+    if let Some(pid) = child.id() {
+        #[expect(clippy::cast_possible_wrap, reason = "PID fits in i32")]
+        if let Err(e) = prepared.apply_rlimits(nix::unistd::Pid::from_raw(pid as i32)) {
+            tracing::warn!(error = %e, "failed to apply rlimits — continuing without resource limits");
+        }
+    }
 
     let child_pid = child.id().unwrap_or(0);
 
@@ -420,161 +439,12 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     )
     .await?;
 
-    // Drop network handles before exit() — exit() skips destructors,
+    // Drop handles before exit() — exit() skips destructors,
     // which would leak slirp4netns and namespace holder processes.
-    drop(slirp);
-    drop(ns);
+    drop(prepared);
     drop(cgroup_scope);
 
     std::process::exit(exit_code);
-}
-
-/// Result of spawning a sandboxed child process, including optional
-/// handles that must be kept alive for the session duration.
-struct SandboxChild {
-    child: tokio::process::Child,
-    /// Keeps slirp4netns alive — dropped when the session ends.
-    slirp: Option<gleisner_polis::SlirpHandle>,
-    /// Keeps the user+net namespace alive — dropped when the session ends.
-    ns: Option<gleisner_polis::NamespaceHandle>,
-    /// Keeps the Landlock policy JSON alive — bwrap bind-mounts this host file.
-    _policy_file: Option<tempfile::NamedTempFile>,
-}
-
-/// Spawn the sandboxed Claude Code process. Returns the child handle
-/// without waiting for exit, so monitors can start while it runs.
-///
-/// When the profile uses selective network filtering, creates a
-/// user+net namespace pair, starts slirp4netns, and runs bwrap inside
-/// the namespace via nsenter.
-fn spawn_sandbox_child(
-    mut profile: gleisner_polis::Profile,
-    project_dir: PathBuf,
-    allow_network: Vec<String>,
-    allow_path: Vec<PathBuf>,
-    claude_bin: String,
-    claude_args: Vec<String>,
-    no_landlock: bool,
-) -> Result<SandboxChild> {
-    // Claude Code needs access to its config directory (~/.claude/).
-    if let Ok(home) = std::env::var("HOME") {
-        let home_path = PathBuf::from(&home);
-        if !profile.filesystem.readonly_bind.contains(&home_path) {
-            profile.filesystem.readonly_bind.push(home_path);
-        }
-    }
-
-    let mut sandbox = gleisner_polis::BwrapSandbox::new(profile, project_dir)?;
-
-    if !allow_network.is_empty() {
-        sandbox.allow_domains(allow_network);
-    }
-    if !allow_path.is_empty() {
-        sandbox.allow_paths(allow_path);
-    }
-
-    // Merge plugin policy into sandbox (MCP network domains + add_dirs)
-    apply_plugin_sandbox_policy(&mut sandbox);
-
-    // Enable Landlock-inside-bwrap if the sandbox-init binary is available
-    if !no_landlock {
-        if let Some(init_bin) = detect_sandbox_init() {
-            sandbox.enable_landlock(init_bin);
-        } else {
-            tracing::warn!("gleisner-sandbox-init not found — running without Landlock");
-        }
-    }
-
-    // Resolve selective network filter if applicable
-    let profile = sandbox.profile();
-    let needs_filter = matches!(
-        profile.network.default,
-        gleisner_polis::profile::PolicyDefault::Deny
-    ) && (!profile.network.allow_domains.is_empty()
-        || !sandbox.extra_allow_domains().is_empty());
-
-    let filter = if needs_filter {
-        if !gleisner_polis::netfilter::slirp4netns_available() {
-            return Err(eyre!(
-                "slirp4netns not found — install slirp4netns for selective network filtering\n\
-                 Hint: The profile '{}' declares allow_domains with network deny, \
-                 which requires slirp4netns to create a filtered network namespace.",
-                profile.name,
-            ));
-        }
-        let network_policy = &sandbox.profile().network;
-        let extra = sandbox.extra_allow_domains().to_vec();
-        Some(gleisner_polis::NetworkFilter::resolve(
-            network_policy,
-            &extra,
-        )?)
-    } else {
-        None
-    };
-
-    // Build command: claude [plugin policy args...] [user args...]
-    let mut inner_command = vec![claude_bin];
-
-    // Inject plugin policy flags from the profile's [plugins] section
-    let plugins = &sandbox.profile().plugins;
-    if plugins.skip_permissions {
-        inner_command.push("--dangerously-skip-permissions".into());
-    }
-    if !plugins.disallowed_tools.is_empty() {
-        inner_command.push("--disallowedTools".into());
-        inner_command.push(plugins.disallowed_tools.join(","));
-    }
-
-    inner_command.extend(claude_args);
-
-    let has_filter = filter.is_some();
-    let (bwrap_cmd, policy_file) = sandbox.build_command(&inner_command, has_filter);
-
-    // When filtering is active, create namespace + slirp, apply firewall
-    // rules via nsenter, and wrap bwrap in nsenter.
-    // policy_file must stay alive until the child exits (bwrap bind-mounts it).
-    let (ns, slirp, std_cmd) = if let Some(ref f) = filter {
-        let ns = gleisner_polis::NamespaceHandle::create()?;
-        let slirp = gleisner_polis::SlirpHandle::start(ns.pid())?;
-
-        // Apply firewall rules before starting bwrap — bwrap's --unshare-user
-        // creates a nested namespace that loses CAP_NET_ADMIN
-        f.apply_firewall_via_nsenter(&ns)?;
-
-        let mut nsenter = gleisner_polis::netfilter::nsenter_command(&ns);
-        nsenter.arg(bwrap_cmd.get_program());
-        nsenter.args(bwrap_cmd.get_args());
-
-        (Some(ns), Some(slirp), nsenter)
-    } else {
-        (None, None, bwrap_cmd)
-    };
-
-    let mut cmd = tokio::process::Command::from(std_cmd);
-    cmd.stdin(std::process::Stdio::inherit());
-    cmd.stdout(std::process::Stdio::inherit());
-    cmd.stderr(std::process::Stdio::inherit());
-
-    let child = cmd
-        .spawn()
-        .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
-
-    // Apply rlimits (NOFILE, AS, NPROC) to the child process.
-    // These serve as fallback when cgroup limits can't be applied
-    // (e.g., without CAP_SYS_ADMIN) and as defense-in-depth otherwise.
-    if let Some(pid) = child.id() {
-        #[expect(clippy::cast_possible_wrap, reason = "PID fits in i32")]
-        if let Err(e) = sandbox.apply_rlimits(nix::unistd::Pid::from_raw(pid as i32)) {
-            tracing::warn!(error = %e, "failed to apply rlimits — continuing without resource limits");
-        }
-    }
-
-    Ok(SandboxChild {
-        child,
-        slirp,
-        ns,
-        _policy_file: policy_file,
-    })
 }
 
 /// Assemble the in-toto attestation statement from recorder output.
@@ -642,7 +512,6 @@ fn assemble_statement(
     }
 }
 /// Sign and write the attestation to disk.
-#[expect(clippy::fn_params_excessive_bools, reason = "CLI passthrough")]
 async fn write_attestation(
     statement: &InTotoStatement,
     output_path: &std::path::Path,
@@ -750,35 +619,4 @@ fn hash_file(path: &std::path::Path) -> Option<String> {
     let content = std::fs::read(path).ok()?;
     let hash = Sha256::digest(&content);
     Some(hex::encode(hash))
-}
-
-/// Try to find the `gleisner-sandbox-init` binary.
-///
-/// Checks alongside the running `gleisner` binary first, then `PATH`.
-fn detect_sandbox_init() -> Option<PathBuf> {
-    if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe.with_file_name("gleisner-sandbox-init");
-        if sibling.is_file() {
-            return Some(sibling);
-        }
-    }
-    which::which("gleisner-sandbox-init").ok()
-}
-
-/// Merge the profile's `[plugins]` policy into the sandbox configuration.
-fn apply_plugin_sandbox_policy(sandbox: &mut gleisner_polis::BwrapSandbox) {
-    // ~/.claude needs to be writable for session state and settings
-    if let Ok(home) = std::env::var("HOME") {
-        sandbox.allow_paths(std::iter::once(PathBuf::from(format!("{home}/.claude"))));
-    }
-
-    let plugins = &sandbox.profile().plugins;
-    let mcp_domains: Vec<String> = plugins.mcp_network_domains.clone();
-    let add_dirs: Vec<PathBuf> = plugins
-        .add_dirs
-        .iter()
-        .map(|p| gleisner_polis::expand_tilde(p))
-        .collect();
-    sandbox.allow_domains(mcp_domains);
-    sandbox.allow_paths(add_dirs);
 }

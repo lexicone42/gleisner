@@ -28,9 +28,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 color-eyre.workspace = true
 directories.workspace = true
-which.workspace = true
 tokio-util.workspace = true
-tempfile.workspace = true
 nix.workspace = true
 
 # Internal crates
@@ -45,6 +43,7 @@ assert_cmd.workspace = true
 predicates.workspace = true
 aws-lc-rs.workspace = true
 base64.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true
