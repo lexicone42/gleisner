@@ -77,6 +77,6 @@ async fn main() -> Result<()> {
         Commands::Verify(args) => commands::verify::execute(args),
         Commands::Inspect(args) => commands::inspect::execute(&args),
         Commands::Sbom(args) => commands::sbom::execute(&args),
-        Commands::Learn(args) => commands::learn::execute(args),
+        Commands::Learn(args) => commands::learn::execute(args).await,
     }
 }

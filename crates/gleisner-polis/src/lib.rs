@@ -19,7 +19,10 @@ pub mod profile;
 pub mod resource;
 pub mod session;
 
-pub use audit_log::{KernelAuditConfig, collect_and_publish_denials, parse_kernel_denials};
+pub use audit_log::{
+    KernelAuditConfig, collect_and_publish_denials, denial_to_events, parse_audit_line,
+    parse_kernel_denials,
+};
 pub use bwrap::{BwrapSandbox, expand_tilde};
 pub use landlock::{LandlockEnforcement, LandlockPolicy, LandlockStatus, apply_landlock};
 pub use learner::{

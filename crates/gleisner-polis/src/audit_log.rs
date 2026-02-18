@@ -38,17 +38,17 @@ pub struct KernelAuditConfig {
 
 /// A parsed Landlock denial from the kernel audit log.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LandlockDenial {
+pub struct LandlockDenial {
     /// When the denial occurred (from `msg=audit(secs.msecs:serial)`).
-    timestamp: DateTime<Utc>,
+    pub timestamp: DateTime<Utc>,
     /// The Landlock access flags that were denied (e.g. `fs.make_reg`, `net.connect_tcp`).
-    blockers: Vec<String>,
+    pub blockers: Vec<String>,
     /// Filesystem path (if present).
-    path: Option<String>,
+    pub path: Option<String>,
     /// Network destination address (if present).
-    daddr: Option<String>,
+    pub daddr: Option<String>,
     /// Network destination port (if present).
-    dest: Option<u16>,
+    pub dest: Option<u16>,
 }
 
 /// The audit type identifiers for Landlock access denial records.
@@ -98,7 +98,7 @@ pub fn collect_and_publish_denials(
 }
 
 /// Parse a single kernel audit line into a `LandlockDenial`, if it matches.
-fn parse_audit_line(line: &str) -> Option<LandlockDenial> {
+pub fn parse_audit_line(line: &str) -> Option<LandlockDenial> {
     // Must be a Landlock access denial record.
     if !is_landlock_record(line) {
         return None;
@@ -204,7 +204,7 @@ fn find_field_start(line: &str, needle: &str) -> Option<usize> {
 ///
 /// Each blocker becomes a separate event so the learner can classify
 /// them independently.
-fn denial_to_events(denial: &LandlockDenial) -> Vec<AuditEvent> {
+pub fn denial_to_events(denial: &LandlockDenial) -> Vec<AuditEvent> {
     denial
         .blockers
         .iter()

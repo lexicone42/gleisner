@@ -7,10 +7,7 @@
 # The log path should match what you pass to:
 #   gleisner record --kernel-audit-log <path>
 
-LOG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/gleisner"
-LOG_FILE="$LOG_DIR/landlock-audit.log"
-
-mkdir -p "$LOG_DIR"
+LOG_FILE="/var/log/gleisner/landlock-audit.log"
 
 while IFS= read -r line; do
     case "$line" in

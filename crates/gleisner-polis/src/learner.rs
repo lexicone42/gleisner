@@ -9,7 +9,7 @@
 //! - **Merge** (`base_profile: Some`) — extend an existing profile with
 //!   newly observed paths/domains
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -59,6 +59,8 @@ pub struct LearningSummary {
     pub denial_count: usize,
     /// Classified path groups.
     pub path_groups: PathGroups,
+    /// Mapping from each learned path to the raw paths that contributed to it.
+    pub detail_groups: BTreeMap<PathBuf, Vec<PathBuf>>,
 }
 
 /// Paths classified into profile sections.
@@ -99,6 +101,12 @@ const CREDENTIAL_DIRS: &[&str] = &[
     ".kube",
     ".docker",
 ];
+
+/// XDG umbrella directories that should extract two components instead of one.
+///
+/// Without this, `~/.config/nvim/init.lua` would become `~/.config` (too broad).
+/// With umbrella detection: `~/.config/nvim` (just what was needed).
+const UMBRELLA_DIRS: &[&str] = &[".config", ".local", ".cache"];
 
 /// System prefixes — always available via base `readonly_bind`, skip in learning.
 const SYSTEM_PREFIXES: &[&str] = &["/usr", "/lib", "/lib64", "/etc", "/bin", "/sbin", "/opt"];
@@ -165,7 +173,7 @@ impl ProfileLearner {
 
     /// Generate a profile and summary from accumulated observations.
     pub fn generate_profile(&self) -> (Profile, LearningSummary) {
-        let path_groups = self.classify_paths();
+        let (path_groups, detail_groups) = self.classify_paths();
 
         let all_paths: BTreeSet<&PathBuf> = self
             .paths_read
@@ -181,6 +189,7 @@ impl ProfileLearner {
             unique_commands: self.commands_executed.len(),
             denial_count: self.denials.len(),
             path_groups,
+            detail_groups,
         };
 
         let profile = if let Some(base) = &self.config.base_profile {
@@ -192,13 +201,14 @@ impl ProfileLearner {
         (profile, summary)
     }
 
-    fn classify_paths(&self) -> PathGroups {
+    fn classify_paths(&self) -> (PathGroups, BTreeMap<PathBuf, Vec<PathBuf>>) {
         let mut home_readonly = BTreeSet::new();
         let mut home_readwrite = BTreeSet::new();
         let mut other_readonly = BTreeSet::new();
         let mut other_readwrite = BTreeSet::new();
         let mut claude_dirs = BTreeSet::new();
         let mut skipped_count: usize = 0;
+        let mut detail_groups: BTreeMap<PathBuf, Vec<PathBuf>> = BTreeMap::new();
 
         // Collect all unique paths
         let all_paths: BTreeSet<&PathBuf> = self
@@ -221,15 +231,23 @@ impl ProfileLearner {
                     skipped_count += 1;
                 }
                 PathClass::ClaudeDir(rel) => {
+                    detail_groups
+                        .entry(rel.clone())
+                        .or_default()
+                        .push((*path).clone());
                     claude_dirs.insert(rel);
                 }
                 PathClass::HomeRelative(rel) => {
                     // Check against credential deny list
-                    let first_component = rel.to_string_lossy();
-                    if is_credential_path(&first_component) {
+                    let component_str = rel.to_string_lossy();
+                    if is_credential_path(&component_str) {
                         skipped_count += 1;
                         continue;
                     }
+                    detail_groups
+                        .entry(rel.clone())
+                        .or_default()
+                        .push((*path).clone());
                     if is_write {
                         home_readwrite.insert(rel);
                     } else {
@@ -250,14 +268,17 @@ impl ProfileLearner {
         home_readonly.retain(|p| !home_readwrite.contains(p));
         other_readonly.retain(|p| !other_readwrite.contains(p));
 
-        PathGroups {
-            home_readonly,
-            home_readwrite,
-            other_readonly,
-            other_readwrite,
-            claude_dirs,
-            skipped_count,
-        }
+        (
+            PathGroups {
+                home_readonly,
+                home_readwrite,
+                other_readonly,
+                other_readwrite,
+                claude_dirs,
+                skipped_count,
+            },
+            detail_groups,
+        )
     }
 
     fn build_fresh_profile(&self, groups: &PathGroups) -> Profile {
@@ -483,6 +504,20 @@ fn classify_single_path(path: &Path, home_dir: &Path, project_dir: &Path) -> Pat
                 return PathClass::Skip;
             }
 
+            // XDG umbrella dirs (.config, .local, .cache) → extract two components
+            if UMBRELLA_DIRS.iter().any(|u| *u == &*first_str) {
+                if let Some(second) = components.next() {
+                    let sub = PathBuf::from(format!(
+                        "{}/{}",
+                        first_str,
+                        second.as_os_str().to_string_lossy()
+                    ));
+                    return PathClass::HomeRelative(sub);
+                }
+                // Bare ~/.config etc. — not a useful bind target
+                return PathClass::Skip;
+            }
+
             return PathClass::HomeRelative(PathBuf::from(first.as_os_str()));
         }
         // Path is exactly $HOME — skip
@@ -561,6 +596,29 @@ pub fn format_summary(summary: &LearningSummary) -> String {
         "  Skipped:            {}",
         summary.path_groups.skipped_count
     );
+
+    // Path details: show which raw paths contributed to each learned path
+    if !summary.detail_groups.is_empty() {
+        let _ = writeln!(out);
+        let _ = writeln!(out, "Path Details:");
+        for (learned, raw_paths) in &summary.detail_groups {
+            let mode = if summary.path_groups.home_readwrite.contains(learned) {
+                "readwrite"
+            } else if summary.path_groups.claude_dirs.contains(learned) {
+                "claude-dir"
+            } else {
+                "readonly"
+            };
+            let _ = writeln!(
+                out,
+                "  ~/{}: {} file(s) ({})",
+                learned.display(),
+                raw_paths.len(),
+                mode
+            );
+        }
+    }
+
     out
 }
 
@@ -1207,12 +1265,12 @@ mod tests {
         ));
         let (profile, summary) = learner.generate_profile();
         assert_eq!(summary.denial_count, 2);
-        // Denied path should appear in readonly_bind
+        // Denied path should appear in readonly_bind (two-component for umbrella dirs)
         assert!(
             summary
                 .path_groups
                 .home_readonly
-                .contains(&PathBuf::from(".config"))
+                .contains(&PathBuf::from(".config/something"))
         );
         // Denied network target should appear in mcp_network_domains
         assert!(
@@ -1267,5 +1325,190 @@ mod tests {
         assert_eq!(summary.unique_network_targets, 0);
         assert_eq!(summary.unique_commands, 0);
         assert!(profile.process.command_allowlist.is_empty());
+    }
+
+    #[test]
+    fn umbrella_dir_extracts_two_components() {
+        let mut learner = ProfileLearner::new(default_config());
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.config/nvim/init.lua"),
+                sha256: "abc".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        learner.observe(&make_event(
+            1,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.local/share/nvim/shada"),
+                sha256: "def".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        learner.observe(&make_event(
+            2,
+            EventKind::FileWrite {
+                path: PathBuf::from("/home/user/.cache/pip/wheels/abc.whl"),
+                sha256_before: None,
+                sha256_after: "ghi".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        let (profile, summary) = learner.generate_profile();
+        // Two-component extraction for umbrella dirs
+        assert!(
+            summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".config/nvim"))
+        );
+        assert!(
+            summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".local/share"))
+        );
+        assert!(
+            summary
+                .path_groups
+                .home_readwrite
+                .contains(&PathBuf::from(".cache/pip"))
+        );
+        // Should NOT contain single-component versions
+        assert!(
+            !summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".config"))
+        );
+        assert!(
+            !summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".local"))
+        );
+        assert!(
+            !summary
+                .path_groups
+                .home_readwrite
+                .contains(&PathBuf::from(".cache"))
+        );
+        // Profile paths should have tilde prefix
+        assert!(
+            profile
+                .filesystem
+                .readonly_bind
+                .contains(&PathBuf::from("~/.config/nvim"))
+        );
+        assert!(
+            profile
+                .filesystem
+                .readonly_bind
+                .contains(&PathBuf::from("~/.local/share"))
+        );
+        assert!(
+            profile
+                .filesystem
+                .readwrite_bind
+                .contains(&PathBuf::from("~/.cache/pip"))
+        );
+    }
+
+    #[test]
+    fn bare_umbrella_dir_skipped() {
+        let mut learner = ProfileLearner::new(default_config());
+        // Access to exactly ~/.config (no subdir) should be skipped
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.config"),
+                sha256: "abc".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        let (_, summary) = learner.generate_profile();
+        assert!(summary.path_groups.home_readonly.is_empty());
+        assert_eq!(summary.path_groups.skipped_count, 1);
+    }
+
+    #[test]
+    fn credential_under_umbrella_dir_excluded() {
+        let mut learner = ProfileLearner::new(default_config());
+        // .config/gcloud is in CREDENTIAL_DIRS
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.config/gcloud/credentials.json"),
+                sha256: "secret".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        let (_, summary) = learner.generate_profile();
+        assert!(summary.path_groups.home_readonly.is_empty());
+        assert_eq!(summary.path_groups.skipped_count, 1);
+    }
+
+    #[test]
+    fn detail_groups_populated() {
+        let mut learner = ProfileLearner::new(default_config());
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.config/nvim/init.lua"),
+                sha256: "a".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        learner.observe(&make_event(
+            1,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.config/nvim/colors/foo.vim"),
+                sha256: "b".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        learner.observe(&make_event(
+            2,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.cargo/registry/foo"),
+                sha256: "c".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        let (_, summary) = learner.generate_profile();
+        // .config/nvim should have 2 raw paths
+        let nvim_detail = summary
+            .detail_groups
+            .get(&PathBuf::from(".config/nvim"))
+            .expect("should have .config/nvim detail");
+        assert_eq!(nvim_detail.len(), 2);
+        // .cargo should have 1 raw path (non-umbrella, single component)
+        let cargo_detail = summary
+            .detail_groups
+            .get(&PathBuf::from(".cargo"))
+            .expect("should have .cargo detail");
+        assert_eq!(cargo_detail.len(), 1);
+    }
+
+    #[test]
+    fn non_umbrella_home_dirs_still_single_component() {
+        let mut learner = ProfileLearner::new(default_config());
+        // .rustup is NOT an umbrella dir — should stay single component
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.rustup/toolchains/stable/lib/libstd.so"),
+                sha256: "abc".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        let (_, summary) = learner.generate_profile();
+        assert!(
+            summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".rustup"))
+        );
     }
 }
