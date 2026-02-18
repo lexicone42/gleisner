@@ -187,15 +187,17 @@ impl BwrapSandbox {
     }
 
     /// Apply process isolation: PID namespace and privilege escalation prevention.
+    ///
+    /// Note: `no_new_privileges` is enforced by Landlock's `prctl(PR_SET_NO_NEW_PRIVS)`
+    /// inside sandbox-init, NOT by bwrap's `--new-session`. Using `--new-session` would
+    /// call `setsid()`, disconnecting from the controlling terminal and breaking
+    /// interactive use (no Ctrl+C, no stdin). The `--unshare-user` flag already
+    /// prevents setuid privilege escalation.
     fn apply_process_policy(&self, cmd: &mut Command) {
         let proc_policy = &self.profile.process;
 
         if proc_policy.pid_namespace {
             cmd.arg("--unshare-pid");
-        }
-
-        if proc_policy.no_new_privileges {
-            cmd.arg("--new-session");
         }
 
         // Explicitly create a user namespace and map to the real UID/GID
