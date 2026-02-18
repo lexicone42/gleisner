@@ -27,6 +27,8 @@ pub struct PolicyInput {
     pub has_parent_attestation: bool,
     /// Number of links in the attestation chain (if verified).
     pub chain_length: Option<u64>,
+    /// Number of Landlock denial events observed during the session.
+    pub denial_count: Option<u64>,
 }
 
 /// Result of a single policy rule evaluation.
@@ -66,6 +68,8 @@ pub struct BuiltinPolicy {
     pub require_materials: Option<bool>,
     /// Require that the attestation has a parent (is part of a chain).
     pub require_parent_attestation: Option<bool>,
+    /// Maximum number of Landlock denial events allowed.
+    pub max_denial_count: Option<u64>,
 }
 
 impl BuiltinPolicy {
@@ -180,6 +184,21 @@ impl PolicyEngine for BuiltinPolicy {
             });
         }
 
+        if let Some(max_denials) = self.max_denial_count {
+            if let Some(count) = input.denial_count {
+                let passed = count <= max_denials;
+                results.push(PolicyResult {
+                    rule: "max_denial_count".to_owned(),
+                    passed,
+                    message: if passed {
+                        format!("{count} denial(s) within limit of {max_denials}")
+                    } else {
+                        format!("{count} denial(s) exceeds limit of {max_denials}")
+                    },
+                });
+            }
+        }
+
         Ok(results)
     }
 }
@@ -246,6 +265,10 @@ pub fn extract_policy_input(payload: &serde_json::Value) -> PolicyInput {
         .and_then(|d| d.as_str())
         .is_some_and(|s| !s.is_empty());
 
+    let denial_count = predicate
+        .and_then(|p| p.get("gleisner:denialCount"))
+        .and_then(serde_json::Value::as_u64);
+
     PolicyInput {
         sandboxed,
         sandbox_profile,
@@ -255,6 +278,7 @@ pub fn extract_policy_input(payload: &serde_json::Value) -> PolicyInput {
         has_materials,
         has_parent_attestation,
         chain_length: None, // only set during chain verification
+        denial_count,
     }
 }
 
@@ -272,6 +296,7 @@ mod tests {
             has_materials: true,
             has_parent_attestation: false,
             chain_length: None,
+            denial_count: None,
         }
     }
 
@@ -489,6 +514,69 @@ mod tests {
         assert!(results[0].message.contains("must be positive"));
     }
 
+    #[test]
+    fn max_denial_count_passes_within_limit() {
+        let policy = BuiltinPolicy {
+            max_denial_count: Some(5),
+            ..Default::default()
+        };
+        let mut input = make_input(true, "default", true);
+        input.denial_count = Some(3);
+        let results = policy.evaluate(&input).expect("evaluate");
+        assert_eq!(results.len(), 1);
+        assert!(results[0].passed);
+        assert!(results[0].message.contains("3 denial(s) within limit of 5"));
+    }
+
+    #[test]
+    fn max_denial_count_fails_over_limit() {
+        let policy = BuiltinPolicy {
+            max_denial_count: Some(2),
+            ..Default::default()
+        };
+        let mut input = make_input(true, "default", true);
+        input.denial_count = Some(10);
+        let results = policy.evaluate(&input).expect("evaluate");
+        assert_eq!(results.len(), 1);
+        assert!(!results[0].passed);
+        assert!(
+            results[0]
+                .message
+                .contains("10 denial(s) exceeds limit of 2")
+        );
+    }
+
+    #[test]
+    fn max_denial_count_skipped_when_absent() {
+        let policy = BuiltinPolicy {
+            max_denial_count: Some(0),
+            ..Default::default()
+        };
+        let input = make_input(true, "default", true);
+        // denial_count is None — rule should be skipped
+        let results = policy.evaluate(&input).expect("evaluate");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn extract_denial_count_from_payload() {
+        let payload = serde_json::json!({
+            "predicate": {
+                "gleisner:denialCount": 7,
+                "invocation": {
+                    "environment": { "sandboxed": true }
+                },
+                "gleisner:auditLogDigest": "abc",
+                "builder": { "id": "test" },
+                "materials": [],
+                "metadata": {},
+                "gleisner:sandboxProfile": { "name": "test" }
+            }
+        });
+        let input = extract_policy_input(&payload);
+        assert_eq!(input.denial_count, Some(7));
+    }
+
     mod proptests {
         use super::*;
         use proptest::prelude::*;
@@ -511,6 +599,7 @@ mod tests {
                         has_materials: true,
                         has_parent_attestation: parent,
                         chain_length: None,
+                        denial_count: None,
                     }
                 })
         }
@@ -535,6 +624,7 @@ mod tests {
                     has_materials: true,
                     has_parent_attestation: false,
                     chain_length: None,
+                    denial_count: None,
                 };
                 let results = policy.evaluate(&input).unwrap();
                 prop_assert!(!results.is_empty());
@@ -558,6 +648,7 @@ mod tests {
                     has_materials: true,
                     has_parent_attestation: false,
                     chain_length: None,
+                    denial_count: None,
                 };
                 let results = policy.evaluate(&input).unwrap();
                 let dur_result = results.iter().find(|r| r.rule == "max_session_duration_secs").unwrap();

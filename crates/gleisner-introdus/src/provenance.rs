@@ -30,6 +30,10 @@ pub struct GleisnerProvenance {
     #[serde(rename = "gleisner:sandboxProfile")]
     pub sandbox_profile: SandboxProfileSummary,
 
+    /// Number of Landlock denial events observed during the session.
+    #[serde(rename = "gleisner:denialCount")]
+    pub denial_count: u64,
+
     /// Digest of the parent attestation's payload, linking sessions into a chain.
     #[serde(rename = "gleisner:chain", skip_serializing_if = "Option::is_none")]
     pub chain: Option<ChainMetadata>,

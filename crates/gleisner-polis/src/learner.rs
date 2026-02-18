@@ -127,6 +127,11 @@ impl ProfileLearner {
     }
 
     /// Ingest a single audit event into the learner's observation set.
+    ///
+    /// Both allowed and denied events are processed — denied events widen
+    /// the profile to include what the session *needed* but was blocked from
+    /// accessing. Sentinel values (`<unknown>`, `<denied>`) from the kernel
+    /// audit parser are filtered out.
     pub fn observe(&mut self, event: &AuditEvent) {
         self.event_count += 1;
 
@@ -136,25 +141,25 @@ impl ProfileLearner {
         }
 
         match &event.event {
-            EventKind::FileRead { path, .. } => {
+            EventKind::FileRead { path, .. } if !is_sentinel_path(path) => {
                 self.paths_read.insert(path.clone());
             }
-            EventKind::FileWrite { path, .. } => {
+            EventKind::FileWrite { path, .. } if !is_sentinel_path(path) => {
                 self.paths_written.insert(path.clone());
             }
-            EventKind::FileDelete { path, .. } => {
+            EventKind::FileDelete { path, .. } if !is_sentinel_path(path) => {
                 self.paths_deleted.insert(path.clone());
             }
-            EventKind::ProcessExec { command, .. } => {
+            EventKind::ProcessExec { command, .. } if !is_sentinel(command) => {
                 self.commands_executed.insert(command.clone());
             }
-            EventKind::NetworkConnect { target, port } => {
+            EventKind::NetworkConnect { target, port } if !is_sentinel(target) => {
                 self.network_targets.insert((target.clone(), *port));
             }
             EventKind::NetworkDns { query, .. } => {
                 self.dns_queries.insert(query.clone());
             }
-            EventKind::ProcessExit { .. } | EventKind::EnvRead { .. } => {}
+            _ => {}
         }
     }
 
@@ -485,6 +490,20 @@ fn classify_single_path(path: &Path, home_dir: &Path, project_dir: &Path) -> Pat
     }
 
     PathClass::Other(path.to_path_buf())
+}
+
+/// Check if a path is a sentinel value from the kernel audit parser.
+///
+/// Sentinels like `<unknown>` and `<denied>` are emitted when the audit
+/// record lacks concrete path information. These should not appear in
+/// generated profiles.
+fn is_sentinel_path(path: &Path) -> bool {
+    path.to_string_lossy().starts_with('<')
+}
+
+/// Check if a string value is a sentinel from the kernel audit parser.
+fn is_sentinel(value: &str) -> bool {
+    value.starts_with('<')
 }
 
 /// Check if a path component matches a credential directory.
@@ -1159,5 +1178,94 @@ mod tests {
             profile.plugins.disallowed_tools,
             vec!["mcp__dangerous_tool".to_owned()]
         );
+    }
+
+    #[test]
+    fn denied_events_widen_profile() {
+        let mut learner = ProfileLearner::new(default_config());
+        // A denied file read — learner should include this path
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.config/something/data"),
+                sha256: "<denied>".to_owned(),
+            },
+            EventResult::Denied {
+                reason: "landlock: fs.read_file".to_owned(),
+            },
+        ));
+        // A denied network connect — learner should include this target
+        learner.observe(&make_event(
+            1,
+            EventKind::NetworkConnect {
+                target: "example.com".to_owned(),
+                port: 443,
+            },
+            EventResult::Denied {
+                reason: "landlock: net.connect_tcp".to_owned(),
+            },
+        ));
+        let (profile, summary) = learner.generate_profile();
+        assert_eq!(summary.denial_count, 2);
+        // Denied path should appear in readonly_bind
+        assert!(
+            summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".config"))
+        );
+        // Denied network target should appear in mcp_network_domains
+        assert!(
+            profile
+                .plugins
+                .mcp_network_domains
+                .contains(&"example.com".to_owned())
+        );
+    }
+
+    #[test]
+    fn sentinel_values_filtered_from_profile() {
+        let mut learner = ProfileLearner::new(default_config());
+        // Sentinel path from kernel audit parser — should be skipped
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("<unknown>"),
+                sha256: "<denied>".to_owned(),
+            },
+            EventResult::Denied {
+                reason: "landlock: fs.read_file".to_owned(),
+            },
+        ));
+        // Sentinel network target — should be skipped
+        learner.observe(&make_event(
+            1,
+            EventKind::NetworkConnect {
+                target: "<unknown>".to_owned(),
+                port: 0,
+            },
+            EventResult::Denied {
+                reason: "landlock: net.connect_tcp".to_owned(),
+            },
+        ));
+        // Sentinel command — should be skipped
+        learner.observe(&make_event(
+            2,
+            EventKind::ProcessExec {
+                command: "<unknown>".to_owned(),
+                args: vec![],
+                cwd: PathBuf::from("<denied>"),
+            },
+            EventResult::Denied {
+                reason: "landlock: fs.execute".to_owned(),
+            },
+        ));
+        let (profile, summary) = learner.generate_profile();
+        assert_eq!(summary.denial_count, 3);
+        // No sentinel paths should appear in the profile
+        assert_eq!(summary.unique_paths, 0);
+        assert_eq!(summary.unique_network_targets, 0);
+        assert_eq!(summary.unique_commands, 0);
+        assert!(profile.process.command_allowlist.is_empty());
     }
 }

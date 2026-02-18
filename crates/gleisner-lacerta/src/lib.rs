@@ -8,6 +8,7 @@
 //! 2. **Digests** — SHA-256 of subjects and audit logs
 //! 3. **Policy** — configurable rules (built-in JSON or WASM/OPA stub)
 
+pub mod diff;
 pub mod digest;
 pub mod error;
 pub mod inspect;

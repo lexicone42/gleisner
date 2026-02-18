@@ -37,6 +37,8 @@ enum Commands {
     Record(commands::record::RecordArgs),
     /// Verify an attestation bundle's signatures, digests, and policies.
     Verify(commands::verify::VerifyArgs),
+    /// Compare two attestation bundles and show what changed.
+    Diff(commands::diff::DiffArgs),
     /// Display an attestation bundle in human-readable format.
     Inspect(commands::inspect::InspectArgs),
     /// Generate a Software Bill of Materials (`CycloneDX` 1.5).
@@ -71,6 +73,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Wrap(args) => commands::wrap::execute(args).await,
         Commands::Record(args) => commands::record::execute(args).await,
+        Commands::Diff(args) => commands::diff::execute(&args),
         Commands::Verify(args) => commands::verify::execute(args),
         Commands::Inspect(args) => commands::inspect::execute(&args),
         Commands::Sbom(args) => commands::sbom::execute(&args),

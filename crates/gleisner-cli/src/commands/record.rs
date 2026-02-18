@@ -636,6 +636,7 @@ fn assemble_statement(
             materials,
             audit_log_digest,
             sandbox_profile: sandbox_summary,
+            denial_count: recorder_output.denial_count,
             chain,
         },
     }

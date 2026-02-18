@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 use tracing::{debug, warn};
 
-use gleisner_scapes::audit::{AuditEvent, EventKind};
+use gleisner_scapes::audit::{AuditEvent, EventKind, EventResult};
 
 use crate::provenance::Material;
 use crate::statement::{DigestSet, Subject};
@@ -27,6 +27,8 @@ pub struct RecorderOutput {
     pub subjects: Vec<Subject>,
     /// Total number of events processed.
     pub event_count: u64,
+    /// Number of events that were denied by sandbox policy.
+    pub denial_count: u64,
     /// When the recording started.
     pub start_time: DateTime<Utc>,
     /// When the recording finished.
@@ -46,11 +48,15 @@ pub async fn run(mut rx: broadcast::Receiver<AuditEvent>) -> RecorderOutput {
     // Subjects: keyed by path, last digest wins (final state of outputs)
     let mut subjects_map: HashMap<PathBuf, String> = HashMap::new();
     let mut event_count: u64 = 0;
+    let mut denial_count: u64 = 0;
 
     loop {
         match rx.recv().await {
             Ok(event) => {
                 event_count += 1;
+                if matches!(event.result, EventResult::Denied { .. }) {
+                    denial_count += 1;
+                }
                 classify_event(&event.event, &mut materials_map, &mut subjects_map);
             }
             Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -129,6 +135,7 @@ pub async fn run(mut rx: broadcast::Receiver<AuditEvent>) -> RecorderOutput {
         materials,
         subjects,
         event_count,
+        denial_count,
         start_time,
         finish_time,
     }
