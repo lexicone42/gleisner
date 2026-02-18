@@ -39,12 +39,24 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .split(frame.area());
 
     // Left side: conversation + input + status
+    // Input height grows with text wrapping: 2 (borders) + number of wrapped lines.
+    let input_inner_width = outer[0].width.saturating_sub(2) as usize; // minus left+right borders
+    let input_lines = if input_inner_width == 0 {
+        1
+    } else {
+        // Each line of input text wraps at the inner width.
+        let len = app.input.len().max(1);
+        ((len - 1) / input_inner_width + 1).min(6) // cap at 6 lines to avoid eating the conversation
+    };
+    #[allow(clippy::cast_possible_truncation)]
+    let input_height = input_lines as u16 + 2; // +2 for top+bottom borders
+
     let left = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(4),    // messages
-            Constraint::Length(3), // input (single line + borders)
-            Constraint::Length(1), // status bar
+            Constraint::Min(4),               // messages
+            Constraint::Length(input_height), // input (grows with wrapping)
+            Constraint::Length(1),            // status bar
         ])
         .split(outer[0]);
 
@@ -393,11 +405,17 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false });
     frame.render_widget(input, area);
 
-    // Show cursor in insert mode.
+    // Show cursor in insert mode, accounting for line wrapping.
     if app.input_mode == InputMode::Insert {
+        let inner_width = area.width.saturating_sub(2) as usize; // minus left+right borders
         #[allow(clippy::cast_possible_truncation)]
-        let cursor_x = area.x + app.input.len() as u16 + 1;
-        let cursor_y = area.y + 1;
+        let (cursor_x, cursor_y) = if inner_width == 0 {
+            (area.x + 1, area.y + 1)
+        } else {
+            let col = app.input.len() % inner_width;
+            let row = app.input.len() / inner_width;
+            (area.x + col as u16 + 1, area.y + row as u16 + 1)
+        };
         frame.set_cursor_position((cursor_x, cursor_y));
     }
 }
