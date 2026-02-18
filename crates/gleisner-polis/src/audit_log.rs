@@ -20,7 +20,7 @@
 //! Fields: `domain` (hex), `blockers` (comma-separated access flags),
 //! `path` (filesystem), `dev`/`ino` (filesystem), `daddr`/`dest` (network).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, TimeZone, Utc};
 use gleisner_scapes::audit::{AuditEvent, EventKind, EventResult};
@@ -298,6 +298,33 @@ fn blocker_to_event_kind(
     }
 }
 
+/// Parse all Landlock denial events from a kernel audit log file.
+///
+/// Reads the entire file, parses Landlock V7 records (type 1423), and
+/// returns them as [`AuditEvent`]s with [`EventResult::Denied`]. Unlike
+/// [`collect_and_publish_denials`], this function does no time-window
+/// filtering — all valid records in the file are returned.
+///
+/// Used by `gleisner learn --kernel-audit-log` to learn from Landlock
+/// denials without needing a full `gleisner record` session.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read.
+pub fn parse_kernel_denials(path: &Path) -> Result<Vec<AuditEvent>, std::io::Error> {
+    let contents = std::fs::read_to_string(path)?;
+    let mut events = Vec::new();
+
+    for line in contents.lines() {
+        let Some(denial) = parse_audit_line(line) else {
+            continue;
+        };
+        events.extend(denial_to_events(&denial));
+    }
+
+    Ok(events)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,5 +534,60 @@ mod tests {
             extract_field(line, "addr").is_none()
                 || extract_field(line, "addr") == Some("10.0.0.1")
         );
+    }
+
+    #[test]
+    fn parse_kernel_denials_reads_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("audit.log");
+
+        let content = [
+            FS_DENIAL,
+            NET_DENIAL,
+            "type=SYSCALL msg=audit(2000.000:1): arch=c000003e", // non-Landlock, skipped
+            NAMED_TYPE,
+        ]
+        .join("\n");
+        std::fs::write(&log_path, content).unwrap();
+
+        let events = parse_kernel_denials(&log_path).expect("should parse");
+        // 3 Landlock records, each with 1 blocker = 3 events
+        assert_eq!(events.len(), 3);
+
+        // All should be Denied
+        for event in &events {
+            assert!(matches!(event.result, EventResult::Denied { .. }));
+        }
+    }
+
+    #[test]
+    fn parse_kernel_denials_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("empty.log");
+        std::fs::write(&log_path, "").unwrap();
+
+        let events = parse_kernel_denials(&log_path).expect("should parse");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parse_kernel_denials_missing_file() {
+        let result = parse_kernel_denials(Path::new("/nonexistent/audit.log"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_kernel_denials_multiple_blockers() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("multi.log");
+
+        let line = r#"type=UNKNOWN[1423] msg=audit(2000.000:1): domain=a blockers=fs.read_file,fs.execute path="/bin/sh""#;
+        std::fs::write(&log_path, line).unwrap();
+
+        let events = parse_kernel_denials(&log_path).expect("should parse");
+        // 1 record with 2 blockers = 2 events
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0].event, EventKind::FileRead { .. }));
+        assert!(matches!(events[1].event, EventKind::ProcessExec { .. }));
     }
 }

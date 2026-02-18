@@ -474,7 +474,7 @@ mod tests {
         // This test verifies the error path when slirp4netns is needed
         // but not available. We can only test this reliably if slirp is
         // NOT installed — skip otherwise.
-        if crate::netfilter::slirp4netns_available() {
+        if netfilter::slirp4netns_available() {
             return;
         }
 
