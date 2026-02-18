@@ -118,7 +118,10 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
         .wrap
         .project_dir
         .clone()
-        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine cwd"));
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| {
+            eyre!("--project-dir not specified and current directory is inaccessible")
+        })?;
 
     // ── 1. Resolve output paths ──────────────────────────────────────
     let gleisner_dir = project_dir.join(".gleisner");

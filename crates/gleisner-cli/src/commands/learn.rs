@@ -89,9 +89,12 @@ pub async fn execute(args: LearnArgs) -> Result<()> {
         ));
     }
 
-    let project_dir = args
-        .project_dir
-        .unwrap_or_else(|| std::env::current_dir().expect("current dir"));
+    let project_dir = match args.project_dir {
+        Some(d) => d,
+        None => std::env::current_dir().map_err(|e| {
+            eyre!("--project-dir not specified and current directory is inaccessible: {e}")
+        })?,
+    };
 
     let home_dir = directories::BaseDirs::new()
         .ok_or_else(|| eyre!("could not determine home directory"))?
@@ -194,9 +197,12 @@ async fn watch_loop(args: LearnArgs) -> Result<()> {
         .as_ref()
         .ok_or_else(|| eyre!("--watch requires --kernel-audit-log"))?;
 
-    let project_dir = args
-        .project_dir
-        .unwrap_or_else(|| std::env::current_dir().expect("current dir"));
+    let project_dir = match args.project_dir {
+        Some(d) => d,
+        None => std::env::current_dir().map_err(|e| {
+            eyre!("--project-dir not specified and current directory is inaccessible: {e}")
+        })?,
+    };
 
     let home_dir = directories::BaseDirs::new()
         .ok_or_else(|| eyre!("could not determine home directory"))?
@@ -294,11 +300,10 @@ async fn watch_loop(args: LearnArgs) -> Result<()> {
             () = tokio::time::sleep(timeout) => {
                 // Debounce timer fired — write intermediate profile
                 if let Some(ref out_path) = output {
-                    if matches!(emit_profile(&learner, &output, true, 0), Ok(())) {
-                        if !quiet {
+                    if matches!(emit_profile(&learner, &output, true, 0), Ok(()))
+                        && !quiet {
                             eprintln!("  [updated] {}", out_path.display());
                         }
-                    }
                 }
                 last_write = None;
                 new_entries = 0;

@@ -77,21 +77,33 @@ pub fn collect_and_publish_denials(
     };
 
     let mut count = 0;
+    let mut skipped_landlock = 0;
     for line in contents.lines() {
-        let Some(denial) = parse_audit_line(line) else {
-            continue;
-        };
+        // Track lines that look like Landlock records but fail to parse
+        if is_landlock_record(line) {
+            if let Some(denial) = parse_audit_line(line) {
+                // Filter to session time window.
+                if denial.timestamp < config.session_start || denial.timestamp > config.session_end
+                {
+                    continue;
+                }
 
-        // Filter to session time window.
-        if denial.timestamp < config.session_start || denial.timestamp > config.session_end {
-            continue;
+                let events = denial_to_events(&denial);
+                for event in events {
+                    publisher.publish(event);
+                    count += 1;
+                }
+            } else {
+                skipped_landlock += 1;
+            }
         }
+    }
 
-        let events = denial_to_events(&denial);
-        for event in events {
-            publisher.publish(event);
-            count += 1;
-        }
+    if skipped_landlock > 0 {
+        tracing::warn!(
+            skipped = skipped_landlock,
+            "kernel audit log contained unparseable Landlock records"
+        );
     }
 
     count
@@ -136,7 +148,7 @@ fn is_landlock_record(line: &str) -> bool {
 
 /// Parse the audit timestamp from `msg=audit(secs.msecs:serial)`.
 ///
-/// Returns `None` if the format doesn't match.
+/// Returns `None` if the format doesn't match or the timestamp is invalid.
 fn parse_audit_timestamp(line: &str) -> Option<DateTime<Utc>> {
     // Find "audit(" and extract until the closing ")".
     let start = line.find("audit(")? + "audit(".len();
@@ -149,6 +161,11 @@ fn parse_audit_timestamp(line: &str) -> Option<DateTime<Utc>> {
     let (secs_str, msecs_str) = time_part.split_once('.')?;
     let secs: i64 = secs_str.parse().ok()?;
     let msecs: u32 = msecs_str.parse().ok()?;
+
+    // Validate milliseconds range (0-999)
+    if msecs >= 1000 {
+        return None;
+    }
 
     // msecs field is actually milliseconds
     let nanos = msecs * 1_000_000;
@@ -589,5 +606,103 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert!(matches!(events[0].event, EventKind::FileRead { .. }));
         assert!(matches!(events[1].event, EventKind::ProcessExec { .. }));
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// parse_audit_line never panics on arbitrary strings.
+            #[test]
+            fn parse_never_panics(line in ".*") {
+                let _ = parse_audit_line(&line);
+            }
+
+            /// Non-Landlock lines always return None.
+            #[test]
+            fn non_landlock_lines_return_none(
+                prefix in "[a-zA-Z]{3,10}",
+                body in "[a-zA-Z0-9 =.,/:_-]{0,200}",
+            ) {
+                // Generate lines that look audit-ish but aren't Landlock records
+                let line = format!("type={prefix} msg=audit(1700000000.000:1): {body}");
+                let result = parse_audit_line(&line);
+                // Could be None (non-landlock type) or Some if prefix happens to be
+                // UNKNOWN[1423] or LANDLOCK_ACCESS — both are fine
+                if !line.contains("UNKNOWN[1423]") && !line.contains("LANDLOCK_ACCESS") {
+                    prop_assert!(result.is_none(), "non-landlock line parsed as denial: {line}");
+                }
+            }
+
+            /// Valid Landlock records with arbitrary paths always produce events.
+            #[test]
+            fn valid_records_produce_events(
+                ts_secs in 1_000_000_000u64..2_000_000_000u64,
+                serial in 1u32..999999u32,
+                path in "/[a-zA-Z0-9/_.-]{1,100}",
+                blocker in prop::sample::select(vec![
+                    "fs.read_file", "fs.write_file", "fs.make_reg",
+                    "fs.remove_file", "fs.execute",
+                ]),
+            ) {
+                let line = format!(
+                    "type=UNKNOWN[1423] msg=audit({ts_secs}.000:{serial}): domain=test blockers={blocker} path=\"{path}\""
+                );
+                let denial = parse_audit_line(&line);
+                prop_assert!(denial.is_some(), "valid line should parse: {line}");
+                let d = denial.unwrap();
+                prop_assert_eq!(d.blockers.len(), 1);
+                prop_assert_eq!(&d.blockers[0], blocker);
+                prop_assert_eq!(d.path.as_deref(), Some(path.as_str()));
+            }
+
+            /// denial_to_events produces one event per blocker.
+            #[test]
+            fn event_count_matches_blocker_count(
+                blocker_count in 1usize..=5,
+            ) {
+                let blockers: Vec<String> = (0..blocker_count)
+                    .map(|_| "fs.read_file".to_owned())
+                    .collect();
+                let denial = LandlockDenial {
+                    timestamp: Utc::now(),
+                    blockers,
+                    path: Some("/test/path".to_owned()),
+                    daddr: None,
+                    dest: None,
+                };
+                let events = denial_to_events(&denial);
+                prop_assert_eq!(events.len(), blocker_count);
+                for event in &events {
+                    assert!(matches!(event.result, EventResult::Denied { .. }));
+                }
+            }
+
+            /// parse_kernel_denials roundtrips: if we write valid lines to a file
+            /// and parse them, we get the expected number of events.
+            #[test]
+            fn file_parse_roundtrips(
+                line_count in 0usize..=10,
+                ts_base in 1_700_000_000u64..1_700_001_000u64,
+            ) {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("test.log");
+
+                let mut content = String::new();
+                for i in 0..line_count {
+                    content.push_str(&format!(
+                        "type=UNKNOWN[1423] msg=audit({}.000:{}): domain=test blockers=fs.read_file path=\"/test/{}\"\n",
+                        ts_base + i as u64,
+                        i + 1,
+                        i
+                    ));
+                }
+                std::fs::write(&path, &content).unwrap();
+
+                let events = parse_kernel_denials(&path).expect("should parse");
+                prop_assert_eq!(events.len(), line_count);
+            }
+        }
     }
 }

@@ -80,6 +80,7 @@ pub struct PathGroups {
 }
 
 /// Classification of a single path.
+#[derive(Debug)]
 enum PathClass {
     /// Path should be skipped (project dir, system prefix, virtual FS).
     Skip,
@@ -1510,5 +1511,182 @@ mod tests {
                 .home_readonly
                 .contains(&PathBuf::from(".rustup"))
         );
+    }
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Generate an arbitrary absolute path under /home/user.
+        fn arb_home_path() -> impl Strategy<Value = PathBuf> {
+            // Pick 1-4 path components, each 1-20 alphanumeric chars with optional dot prefix
+            prop::collection::vec(
+                prop::bool::ANY.prop_flat_map(|dot| {
+                    "[a-z][a-z0-9_-]{0,15}".prop_map(move |s| if dot { format!(".{s}") } else { s })
+                }),
+                1..=4,
+            )
+            .prop_map(|parts| {
+                let mut p = PathBuf::from("/home/user");
+                for part in parts {
+                    p.push(part);
+                }
+                p
+            })
+        }
+
+        /// Generate an arbitrary absolute path (could be anywhere in the filesystem).
+        fn arb_absolute_path() -> impl Strategy<Value = PathBuf> {
+            prop::collection::vec("[a-zA-Z0-9._-]{1,20}", 1..=5).prop_map(|parts| {
+                let mut p = PathBuf::from("/");
+                for part in parts {
+                    p.push(part);
+                }
+                p
+            })
+        }
+
+        proptest! {
+            /// classify_single_path never panics on arbitrary paths.
+            #[test]
+            fn classify_never_panics(path in arb_absolute_path()) {
+                let home = PathBuf::from("/home/user");
+                let project = PathBuf::from("/home/user/myproject");
+                let _ = classify_single_path(&path, &home, &project);
+            }
+
+            /// Umbrella dirs always extract exactly two components.
+            #[test]
+            fn umbrella_dir_always_two_components(
+                umbrella in prop::sample::select(vec![".config", ".local", ".cache"]),
+                subdir in "[a-z][a-z0-9_-]{0,15}",
+                file in "[a-z][a-z0-9._-]{0,15}",
+            ) {
+                let path = PathBuf::from(format!("/home/user/{umbrella}/{subdir}/{file}"));
+                let home = PathBuf::from("/home/user");
+                let project = PathBuf::from("/home/user/myproject");
+                let class = classify_single_path(&path, &home, &project);
+                match class {
+                    PathClass::HomeRelative(rel) => {
+                        let components: Vec<_> = rel.components().collect();
+                        prop_assert_eq!(
+                            components.len(),
+                            2,
+                            "umbrella path {:?} should have 2 components, got {:?}",
+                            path,
+                            rel
+                        );
+                    }
+                    other => prop_assert!(false, "expected HomeRelative, got {:?}", other),
+                }
+            }
+
+            /// No credential path ever leaks into a generated profile.
+            #[test]
+            fn credential_paths_never_in_profile(
+                cred in prop::sample::select(vec![
+                    ".ssh", ".aws", ".gnupg", ".config/gcloud", ".azure", ".kube", ".docker"
+                ]),
+                file in "[a-z][a-z0-9._-]{0,15}",
+            ) {
+                let mut learner = ProfileLearner::new(default_config());
+                let path = PathBuf::from(format!("/home/user/{cred}/{file}"));
+                learner.observe(&make_event(
+                    0,
+                    EventKind::FileRead {
+                        path: path.clone(),
+                        sha256: "test".to_owned(),
+                    },
+                    EventResult::Allowed,
+                ));
+                let (profile, _) = learner.generate_profile();
+                // No credential path should appear in readonly_bind
+                for bind in &profile.filesystem.readonly_bind {
+                    let bind_str = bind.to_string_lossy();
+                    prop_assert!(
+                        !bind_str.contains(&cred.replace('.', "")),
+                        "credential path {} leaked into profile bind: {}",
+                        cred,
+                        bind_str
+                    );
+                }
+                // Also not in readwrite_bind
+                for bind in &profile.filesystem.readwrite_bind {
+                    let bind_str = bind.to_string_lossy();
+                    prop_assert!(
+                        !bind_str.contains(&cred.replace('.', "")),
+                        "credential path {} leaked into profile readwrite: {}",
+                        cred,
+                        bind_str
+                    );
+                }
+            }
+
+            /// Generated profiles always survive TOML roundtrip.
+            #[test]
+            fn profile_roundtrips_through_toml(
+                paths in prop::collection::vec(arb_home_path(), 0..10),
+            ) {
+                let mut learner = ProfileLearner::new(default_config());
+                for (i, path) in paths.iter().enumerate() {
+                    learner.observe(&make_event(
+                        i as u64,
+                        EventKind::FileRead {
+                            path: path.clone(),
+                            sha256: format!("hash{i}"),
+                        },
+                        EventResult::Allowed,
+                    ));
+                }
+                let (profile, _) = learner.generate_profile();
+                let toml_str = format_profile_toml(&profile).expect("serialization");
+                // Extract just the TOML part (skip comment header)
+                let toml_body: String = toml_str
+                    .lines()
+                    .filter(|l| !l.starts_with('#'))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let parsed: Profile = toml::from_str(&toml_body).expect("deserialization");
+                prop_assert_eq!(parsed.name, profile.name);
+                prop_assert_eq!(
+                    parsed.filesystem.readonly_bind.len(),
+                    profile.filesystem.readonly_bind.len()
+                );
+                prop_assert_eq!(
+                    parsed.filesystem.readwrite_bind.len(),
+                    profile.filesystem.readwrite_bind.len()
+                );
+            }
+
+            /// classify_single_path is deterministic — same input always same output.
+            #[test]
+            fn classify_is_deterministic(path in arb_home_path()) {
+                let home = PathBuf::from("/home/user");
+                let project = PathBuf::from("/home/user/myproject");
+                let class1 = classify_single_path(&path, &home, &project);
+                let class2 = classify_single_path(&path, &home, &project);
+                let repr1 = format!("{class1:?}");
+                let repr2 = format!("{class2:?}");
+                prop_assert_eq!(repr1, repr2);
+            }
+
+            /// Home-relative paths never reference system prefixes.
+            #[test]
+            fn home_relative_never_system_prefix(path in arb_home_path()) {
+                let home = PathBuf::from("/home/user");
+                let project = PathBuf::from("/home/user/myproject");
+                if let PathClass::HomeRelative(rel) = classify_single_path(&path, &home, &project) {
+                    let rel_str = rel.to_string_lossy();
+                    for prefix in SYSTEM_PREFIXES {
+                        prop_assert!(
+                            !rel_str.starts_with(prefix),
+                            "home-relative path {:?} starts with system prefix {}",
+                            rel,
+                            prefix
+                        );
+                    }
+                }
+            }
+        }
     }
 }

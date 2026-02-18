@@ -104,7 +104,10 @@ impl NetworkFilter {
         }
 
         if allowed_endpoints.is_empty() && !all_domains.is_empty() {
-            warn!("no domains could be resolved to IPv4 — all outbound traffic will be blocked");
+            return Err(SandboxError::NetworkSetupFailed(format!(
+                "no domains could be resolved to IPv4 (attempted: {}) — DNS may be unavailable or domain names are invalid",
+                all_domains.join(", ")
+            )));
         }
 
         info!(
@@ -363,7 +366,13 @@ impl NamespaceHandle {
 impl Drop for NamespaceHandle {
     fn drop(&mut self) {
         debug!(holder_pid = self.holder_pid, "destroying network namespace");
-        let _ = self.holder.kill();
+        if let Err(e) = self.holder.kill() {
+            warn!(
+                holder_pid = self.holder_pid,
+                error = %e,
+                "failed to kill namespace holder — namespace may leak"
+            );
+        }
         let _ = self.holder.wait();
     }
 }
@@ -447,7 +456,13 @@ impl Drop for SlirpHandle {
 
         // Brief wait then force kill
         if !matches!(self.child.try_wait(), Ok(Some(_))) {
-            let _ = self.child.kill();
+            if let Err(e) = self.child.kill() {
+                warn!(
+                    slirp_pid = pid,
+                    error = %e,
+                    "failed to kill slirp4netns — process may leak"
+                );
+            }
             let _ = self.child.wait();
         }
     }

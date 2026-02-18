@@ -60,9 +60,12 @@ pub struct WrapArgs {
 /// the inner process fails.
 #[allow(clippy::unused_async)] // async for consistency with other command handlers
 pub async fn execute(args: WrapArgs) -> Result<()> {
-    let project_dir = args
-        .project_dir
-        .unwrap_or_else(|| std::env::current_dir().expect("cannot determine cwd"));
+    let project_dir = match args.project_dir {
+        Some(d) => d,
+        None => std::env::current_dir().map_err(|e| {
+            eyre!("--project-dir not specified and current directory is inaccessible: {e}")
+        })?,
+    };
 
     let profile = gleisner_polis::resolve_profile(&args.profile)?;
 

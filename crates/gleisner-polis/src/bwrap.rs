@@ -359,11 +359,15 @@ impl BwrapSandbox {
 /// Expand `~` to the user's home directory.
 ///
 /// Only expands a leading `~` — embedded tildes are left alone.
-/// Returns the path unchanged if `$HOME` is not set.
+/// Logs a warning and returns the path unchanged if `$HOME` is not set.
 pub fn expand_tilde(path: &Path) -> PathBuf {
     let path_str = path.display().to_string();
     if path_str.starts_with('~') {
         let Some(home) = std::env::var_os("HOME") else {
+            tracing::warn!(
+                path = %path_str,
+                "$HOME is not set — tilde path will not be expanded, sandbox bind may fail"
+            );
             return path.to_path_buf();
         };
         PathBuf::from(home).join(path.strip_prefix("~").unwrap_or(path))
