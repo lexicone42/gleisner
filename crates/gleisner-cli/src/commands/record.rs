@@ -81,6 +81,12 @@ pub struct RecordArgs {
     #[arg(long)]
     pub no_chain: bool,
 
+    /// Path to a user-readable kernel audit log for Landlock V7 denial
+    /// collection. Set up audisp to write `LANDLOCK_ACCESS` records here.
+    /// Omit to skip denial collection.
+    #[arg(long)]
+    pub kernel_audit_log: Option<PathBuf>,
+
     /// Use Sigstore keyless signing (Fulcio + Rekor) instead of a local key.
     ///
     /// Authentication order: (1) --sigstore-token if provided,
@@ -173,6 +179,7 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
     let recorder_handle = tokio::spawn(recorder::run(rx_recorder));
 
     // ── 5. Spawn sandbox child (don't await exit yet) ────────────────
+    let session_start = Utc::now();
     let profile_for_sandbox = profile.clone();
     let sandbox_child = spawn_sandbox_child(
         profile_for_sandbox,
@@ -311,6 +318,22 @@ pub async fn execute(args: RecordArgs) -> Result<()> {
                 missed_creates = stats.missed_creates,
                 missed_deletes = stats.missed_deletes,
                 "reconciliation captured events missed by real-time monitor"
+            );
+        }
+    }
+
+    // ── 9c. Collect Landlock V7 audit denials ─────────────────────────
+    if let Some(ref audit_path) = args.kernel_audit_log {
+        let config = gleisner_polis::KernelAuditConfig {
+            session_start,
+            session_end: Utc::now(),
+            audit_log_path: audit_path.clone(),
+        };
+        let n = gleisner_polis::collect_and_publish_denials(&config, &publisher);
+        if n > 0 {
+            tracing::info!(
+                denials = n,
+                "published Landlock denial events from kernel audit log"
             );
         }
     }

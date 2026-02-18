@@ -4,6 +4,7 @@
 //! and the bubblewrap/Landlock backend that creates isolated execution
 //! environments for Claude Code sessions.
 
+pub mod audit_log;
 mod bwrap;
 pub mod error;
 pub mod inotify_mon;
@@ -17,6 +18,7 @@ pub mod procmon;
 pub mod profile;
 pub mod resource;
 
+pub use audit_log::{KernelAuditConfig, collect_and_publish_denials};
 pub use bwrap::{BwrapSandbox, expand_tilde};
 pub use landlock::{LandlockEnforcement, LandlockPolicy, LandlockStatus, apply_landlock};
 pub use learner::{
