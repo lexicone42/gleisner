@@ -1594,7 +1594,7 @@ mod tests {
                 learner.observe(&make_event(
                     0,
                     EventKind::FileRead {
-                        path: path,
+                        path,
                         sha256: "test".to_owned(),
                     },
                     EventResult::Allowed,

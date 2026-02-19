@@ -98,6 +98,9 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
 
     let mut prepared = gleisner_polis::prepare_sandbox(config, &inner_command)?;
 
+    // Prevent Claude Code from detecting a nested session — gleisner IS the
+    // outer orchestrator, not another Claude Code instance.
+    prepared.command.env_remove("CLAUDECODE");
     // Inherit stdin/stdout/stderr so Claude Code's interactive UI works
     prepared.command.stdin(std::process::Stdio::inherit());
     prepared.command.stdout(std::process::Stdio::inherit());

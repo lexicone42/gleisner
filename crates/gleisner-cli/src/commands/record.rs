@@ -224,6 +224,9 @@ mod linux_impl {
         // Recreate from program + args (build_command only sets args, no env vars).
         let mut cmd = tokio::process::Command::new(prepared.command.get_program());
         cmd.args(prepared.command.get_args());
+        // Prevent Claude Code from detecting a nested session — gleisner IS the
+        // outer orchestrator, not another Claude Code instance.
+        cmd.env_remove("CLAUDECODE");
         cmd.stdin(std::process::Stdio::inherit());
         cmd.stdout(std::process::Stdio::inherit());
         cmd.stderr(std::process::Stdio::inherit());
