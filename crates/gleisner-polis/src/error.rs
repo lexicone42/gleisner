@@ -45,9 +45,14 @@ pub enum SandboxError {
     #[error("monitor error: {0}")]
     MonitorError(String),
 
-    /// slirp4netns binary not found on PATH.
-    #[error("slirp4netns not found — install slirp4netns for selective network filtering")]
-    SlirpNotFound,
+    /// Neither pasta nor slirp4netns found on PATH.
+    #[error("{provider} not found — {install_hint}")]
+    TapProviderNotFound {
+        /// Which provider(s) were looked for.
+        provider: &'static str,
+        /// How to install a suitable provider.
+        install_hint: &'static str,
+    },
 
     /// Network setup (slirp4netns, iptables, or child PID detection) failed.
     #[error("network setup failed: {0}")]

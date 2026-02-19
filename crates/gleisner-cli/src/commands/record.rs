@@ -469,7 +469,7 @@ mod linux_impl {
         .await?;
 
         // Drop handles before exit() — exit() skips destructors,
-        // which would leak slirp4netns and namespace holder processes.
+        // which would leak the TAP provider and namespace holder processes.
         drop(prepared);
         drop(cgroup_scope);
 

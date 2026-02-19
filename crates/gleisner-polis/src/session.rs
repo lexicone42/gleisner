@@ -40,8 +40,8 @@ pub struct PreparedSandbox {
     pub command: std::process::Command,
     /// Network namespace handle — must stay alive while the child runs.
     pub ns: Option<crate::NamespaceHandle>,
-    /// slirp4netns process — must stay alive while the child runs.
-    pub slirp: Option<crate::SlirpHandle>,
+    /// TAP provider process (pasta or slirp4netns) — must stay alive while the child runs.
+    pub tap: Option<crate::TapHandle>,
     /// Landlock policy JSON tempfile — bwrap bind-mounts this.
     pub policy_file: Option<tempfile::NamedTempFile>,
     /// The sandbox instance, kept for `apply_rlimits`.
@@ -74,9 +74,9 @@ impl PreparedSandbox {
 /// 3. Apply CLI overrides (extra domains, paths)
 /// 4. Merge plugin policy (`~/.claude` rw, MCP domains, `add_dirs`)
 /// 5. Detect and enable `gleisner-sandbox-init` for Landlock-inside-bwrap
-/// 6. Resolve selective network filter (slirp4netns check)
+/// 6. Resolve selective network filter (TAP provider check)
 /// 7. Build bwrap command with the inner command
-/// 8. Set up namespace + slirp4netns + nftables when filtering is needed
+/// 8. Set up namespace + TAP provider (pasta/slirp4netns) + nftables when filtering is needed
 ///
 /// # Returns
 ///
@@ -127,37 +127,45 @@ pub fn prepare_sandbox(
         && (!profile_ref.network.allow_domains.is_empty()
             || !sandbox.extra_allow_domains().is_empty());
 
-    let filter = if needs_filter {
-        if !netfilter::slirp4netns_available() {
+    let (filter, tap_provider) = if needs_filter {
+        // Verify a TAP provider is available before resolving the filter.
+        let provider = netfilter::preferred_tap_provider().map_err(|_| {
             let profile_name = sandbox.profile().name.clone();
-            return Err(SandboxError::NetworkSetupFailed(format!(
-                "slirp4netns not found — install slirp4netns for selective network filtering\n\
+            SandboxError::NetworkSetupFailed(format!(
+                "no TAP provider found — install pasta (preferred) or slirp4netns for selective network filtering\n\
                  Hint: The profile '{profile_name}' declares allow_domains with network deny, \
-                 which requires slirp4netns to create a filtered network namespace.\n\
+                 which requires a TAP provider to create a filtered network namespace.\n\
                  Without it, use --profile carter-zimmerman for full network access, \
-                 or install slirp4netns (apt install slirp4netns / dnf install slirp4netns).",
-            )));
-        }
+                 or install passt (emerge net-misc/passt) or slirp4netns.",
+            ))
+        })?;
         let network_policy = &sandbox.profile().network;
         let extra = sandbox.extra_allow_domains().to_vec();
-        Some(crate::NetworkFilter::resolve(network_policy, &extra)?)
+        (
+            Some(crate::NetworkFilter::resolve(network_policy, &extra)?),
+            Some(provider),
+        )
     } else {
-        None
+        (None, None)
     };
 
     // ── 7. Build bwrap command ────────────────────────────────────
     let has_filter = filter.is_some();
     let (bwrap_cmd, policy_file) = sandbox.build_command(inner_command, has_filter);
 
-    // ── 8. Set up namespace + slirp + firewall ────────────────────
+    // ── 8. Set up namespace + TAP provider + firewall ──────────────
     // When filtering is active, we:
     // 1. Create a user+net namespace pair (NamespaceHandle)
-    // 2. Start slirp4netns targeting that namespace
+    // 2. Start TAP provider (pasta or slirp4netns) targeting that namespace
     // 3. Apply firewall rules via nsenter (before bwrap starts)
     // 4. Wrap bwrap in nsenter to enter the pre-created namespace
-    let (ns, slirp, cmd) = if let Some(ref f) = filter {
+    let (ns, tap, cmd) = if let Some(ref f) = filter {
         let ns = crate::NamespaceHandle::create()?;
-        let slirp = crate::SlirpHandle::start(ns.pid())?;
+        // SAFETY: tap_provider is always Some when filter is Some (set together above)
+        let tap = crate::TapHandle::start(
+            ns.pid(),
+            tap_provider.expect("tap_provider set with filter"),
+        )?;
 
         // Apply firewall rules before starting bwrap — bwrap's --unshare-user
         // creates a nested namespace that loses CAP_NET_ADMIN
@@ -167,7 +175,7 @@ pub fn prepare_sandbox(
         nsenter.arg(bwrap_cmd.get_program());
         nsenter.args(bwrap_cmd.get_args());
 
-        (Some(ns), Some(slirp), nsenter)
+        (Some(ns), Some(tap), nsenter)
     } else {
         (None, None, bwrap_cmd)
     };
@@ -175,7 +183,7 @@ pub fn prepare_sandbox(
     Ok(PreparedSandbox {
         command: cmd,
         ns,
-        slirp,
+        tap,
         policy_file,
         sandbox,
     })
@@ -310,7 +318,7 @@ mod tests {
 
         // No network handles needed for Allow policy
         assert!(prepared.ns.is_none(), "no namespace for allow policy");
-        assert!(prepared.slirp.is_none(), "no slirp for allow policy");
+        assert!(prepared.tap.is_none(), "no TAP provider for allow policy");
     }
 
     #[test]
@@ -419,14 +427,14 @@ mod tests {
     }
 
     #[test]
-    fn prepare_sandbox_deny_network_without_slirp_returns_error() {
+    fn prepare_sandbox_deny_network_without_tap_provider_returns_error() {
         if which::which("bwrap").is_err() {
             return;
         }
-        // This test verifies the error path when slirp4netns is needed
-        // but not available. We can only test this reliably if slirp is
-        // NOT installed — skip otherwise.
-        if netfilter::slirp4netns_available() {
+        // This test verifies the error path when a TAP provider is needed
+        // but not available. We can only test this reliably if neither pasta
+        // nor slirp4netns is installed — skip otherwise.
+        if netfilter::pasta_available() || netfilter::slirp4netns_available() {
             return;
         }
 
@@ -443,11 +451,11 @@ mod tests {
 
         let err = match result {
             Err(e) => e.to_string(),
-            Ok(_) => panic!("should error when deny-network profile needs slirp4netns"),
+            Ok(_) => panic!("should error when deny-network profile needs TAP provider"),
         };
         assert!(
-            err.contains("slirp4netns"),
-            "error should mention slirp4netns: {err}"
+            err.contains("TAP provider") || err.contains("pasta") || err.contains("slirp4netns"),
+            "error should mention TAP provider: {err}"
         );
     }
 

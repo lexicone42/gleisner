@@ -377,30 +377,106 @@ impl Drop for NamespaceHandle {
     }
 }
 
-/// Handle for a running slirp4netns process.
+/// Which TAP provider to use for userspace networking.
+///
+/// `Pasta` uses L4 socket mapping via `splice()` — faster for few connections.
+/// `Slirp4netns` implements a full userspace TCP/IP stack — wider compatibility.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TapProvider {
+    /// passt/pasta — L4 socket mapping via `splice()`.
+    Pasta,
+    /// slirp4netns — full userspace TCP/IP stack.
+    Slirp4netns,
+}
+
+/// Handle for a running TAP provider process (pasta or slirp4netns).
 ///
 /// Owns the child process and kills it on drop to ensure cleanup.
 /// Keep this alive for the duration of the sandboxed session.
 #[derive(Debug)]
-pub struct SlirpHandle {
+pub struct TapHandle {
     child: Child,
+    provider: TapProvider,
 }
 
-impl SlirpHandle {
-    /// Start slirp4netns for the given namespace holder PID.
+impl TapHandle {
+    /// Start the given TAP provider for the given namespace holder PID.
     ///
     /// The process will create a `tap0` device inside the network
-    /// namespace with the default slirp4netns addressing:
-    /// - Guest IP: 10.0.2.100/24
+    /// namespace with the default addressing:
+    /// - Guest IP: 10.0.2.100/24 (slirp4netns) or auto-assigned (pasta)
     /// - Gateway:  10.0.2.2
     /// - DNS:      10.0.2.3
     ///
     /// # Errors
     ///
-    /// Returns `SlirpNotFound` if the binary isn't installed, or
-    /// `NetworkSetupFailed` if spawn fails or slirp4netns exits immediately.
-    pub fn start(ns_holder_pid: u32) -> Result<Self, SandboxError> {
-        which::which("slirp4netns").map_err(|_| SandboxError::SlirpNotFound)?;
+    /// Returns `TapProviderNotFound` if the binary isn't installed, or
+    /// `NetworkSetupFailed` if spawn fails or the process exits immediately.
+    pub fn start(ns_holder_pid: u32, provider: TapProvider) -> Result<Self, SandboxError> {
+        match provider {
+            TapProvider::Pasta => Self::start_pasta(ns_holder_pid),
+            TapProvider::Slirp4netns => Self::start_slirp4netns(ns_holder_pid),
+        }
+    }
+
+    fn start_pasta(ns_holder_pid: u32) -> Result<Self, SandboxError> {
+        which::which("pasta").map_err(|_| SandboxError::TapProviderNotFound {
+            provider: "pasta",
+            install_hint: "emerge net-misc/passt",
+        })?;
+
+        info!(pid = ns_holder_pid, "starting pasta");
+
+        let mut child = Command::new("pasta")
+            .args([
+                "--config-net",
+                "--ns-ifname",
+                "tap0",
+                "--no-map-gw",
+                "--tcp-ports",
+                "none",
+                "--udp-ports",
+                "none",
+                "--no-netns-quit",
+                &ns_holder_pid.to_string(),
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| SandboxError::NetworkSetupFailed(format!("pasta spawn: {e}")))?;
+
+        let tap_pid = child.id();
+        debug!(tap_pid, "pasta started");
+
+        // Give pasta a moment to attach, then check it hasn't crashed
+        std::thread::sleep(Duration::from_millis(500));
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stderr_output = String::new();
+                if let Some(mut stderr) = child.stderr {
+                    use std::io::Read;
+                    let _ = stderr.read_to_string(&mut stderr_output);
+                }
+                return Err(SandboxError::NetworkSetupFailed(format!(
+                    "pasta exited immediately with {status}: {stderr_output}"
+                )));
+            }
+            Ok(None) => debug!(tap_pid, "pasta running"),
+            Err(e) => warn!(error = %e, "could not check pasta status"),
+        }
+
+        Ok(Self {
+            child,
+            provider: TapProvider::Pasta,
+        })
+    }
+
+    fn start_slirp4netns(ns_holder_pid: u32) -> Result<Self, SandboxError> {
+        which::which("slirp4netns").map_err(|_| SandboxError::TapProviderNotFound {
+            provider: "slirp4netns",
+            install_hint: "install slirp4netns (apt install slirp4netns / dnf install slirp4netns)",
+        })?;
 
         info!(pid = ns_holder_pid, "starting slirp4netns");
 
@@ -417,14 +493,13 @@ impl SlirpHandle {
             .spawn()
             .map_err(|e| SandboxError::NetworkSetupFailed(format!("slirp4netns spawn: {e}")))?;
 
-        let slirp_pid = child.id();
-        debug!(slirp_pid, "slirp4netns started");
+        let tap_pid = child.id();
+        debug!(tap_pid, "slirp4netns started");
 
         // Give slirp4netns a moment to attach, then check it hasn't crashed
         std::thread::sleep(Duration::from_millis(500));
         match child.try_wait() {
             Ok(Some(status)) => {
-                // slirp4netns exited immediately — read stderr for reason
                 let mut stderr_output = String::new();
                 if let Some(mut stderr) = child.stderr {
                     use std::io::Read;
@@ -434,33 +509,40 @@ impl SlirpHandle {
                     "slirp4netns exited immediately with {status}: {stderr_output}"
                 )));
             }
-            Ok(None) => debug!(slirp_pid, "slirp4netns running"),
+            Ok(None) => debug!(tap_pid, "slirp4netns running"),
             Err(e) => warn!(error = %e, "could not check slirp4netns status"),
         }
 
-        Ok(Self { child })
+        Ok(Self {
+            child,
+            provider: TapProvider::Slirp4netns,
+        })
     }
 }
 
-impl Drop for SlirpHandle {
+impl Drop for TapHandle {
     fn drop(&mut self) {
         let pid = self.child.id();
-        debug!(slirp_pid = pid, "stopping slirp4netns");
+        let name = match self.provider {
+            TapProvider::Pasta => "pasta",
+            TapProvider::Slirp4netns => "slirp4netns",
+        };
+        debug!(tap_pid = pid, provider = name, "stopping TAP provider");
 
         // Try graceful SIGTERM first, then SIGKILL
         #[allow(clippy::cast_possible_wrap)]
         let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
         if let Err(e) = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM) {
-            warn!(error = %e, "failed to send SIGTERM to slirp4netns");
+            warn!(error = %e, "failed to send SIGTERM to {name}");
         }
 
         // Brief wait then force kill
         if !matches!(self.child.try_wait(), Ok(Some(_))) {
             if let Err(e) = self.child.kill() {
                 warn!(
-                    slirp_pid = pid,
+                    tap_pid = pid,
                     error = %e,
-                    "failed to kill slirp4netns — process may leak"
+                    "failed to kill {name} — process may leak"
                 );
             }
             let _ = self.child.wait();
@@ -557,6 +639,30 @@ pub fn wait_for_child_pid(parent_pid: u32, timeout: Duration) -> Result<u32, San
 #[must_use]
 pub fn slirp4netns_available() -> bool {
     which::which("slirp4netns").is_ok()
+}
+
+/// Check whether pasta (passt) is installed on the system.
+#[must_use]
+pub fn pasta_available() -> bool {
+    which::which("pasta").is_ok()
+}
+
+/// Returns the preferred TAP provider: pasta if available, else slirp4netns.
+///
+/// # Errors
+///
+/// Returns `TapProviderNotFound` if neither provider is installed.
+pub fn preferred_tap_provider() -> Result<TapProvider, SandboxError> {
+    if pasta_available() {
+        Ok(TapProvider::Pasta)
+    } else if slirp4netns_available() {
+        Ok(TapProvider::Slirp4netns)
+    } else {
+        Err(SandboxError::TapProviderNotFound {
+            provider: "pasta or slirp4netns",
+            install_hint: "emerge net-misc/passt (preferred) or install slirp4netns",
+        })
+    }
 }
 
 #[cfg(test)]
@@ -741,6 +847,29 @@ mod tests {
     fn slirp_check_does_not_panic() {
         // Just verify it doesn't panic — result depends on system
         let _ = slirp4netns_available();
+    }
+
+    #[test]
+    fn pasta_check_does_not_panic() {
+        // Just verify it doesn't panic — result depends on system
+        let _ = pasta_available();
+    }
+
+    #[test]
+    fn preferred_tap_provider_returns_ok_if_any_available() {
+        // On CI or dev machines, at least one provider should be installed.
+        // If neither is installed, this test just verifies we get the right error.
+        match preferred_tap_provider() {
+            Ok(TapProvider::Pasta) => assert!(pasta_available()),
+            Ok(TapProvider::Slirp4netns) => {
+                assert!(!pasta_available());
+                assert!(slirp4netns_available());
+            }
+            Err(_) => {
+                assert!(!pasta_available());
+                assert!(!slirp4netns_available());
+            }
+        }
     }
 
     #[test]

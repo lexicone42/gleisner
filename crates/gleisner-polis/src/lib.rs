@@ -57,7 +57,7 @@ pub use bwrap::BwrapSandbox;
 #[cfg(target_os = "linux")]
 pub use landlock::{LandlockEnforcement, LandlockStatus, apply_landlock};
 #[cfg(target_os = "linux")]
-pub use netfilter::{NamespaceHandle, NetworkFilter, SlirpHandle};
+pub use netfilter::{NamespaceHandle, NetworkFilter, TapHandle, TapProvider};
 #[cfg(target_os = "linux")]
 pub use resource::CgroupScope;
 #[cfg(target_os = "linux")]

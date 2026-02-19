@@ -130,7 +130,7 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     }
 
     // Drop prepared before exit() — exit() skips destructors,
-    // which would leak slirp4netns and namespace holder processes.
+    // which would leak the TAP provider and namespace holder processes.
     drop(prepared);
 
     std::process::exit(status.code().unwrap_or(1));

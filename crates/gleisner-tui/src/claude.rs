@@ -173,7 +173,7 @@ pub fn spawn_query(config: QueryConfig, buffer_size: usize) -> mpsc::Receiver<Dr
 /// Handles to sandbox infrastructure that must outlive the subprocess.
 ///
 /// Holds the [`PreparedSandbox`](gleisner_polis::PreparedSandbox) which
-/// owns the namespace holder, slirp4netns process, and Landlock policy
+/// owns the namespace holder, TAP provider process, and Landlock policy
 /// tempfile. Dropped automatically when the query future completes.
 #[cfg(target_os = "linux")]
 struct SandboxHandles {
@@ -188,7 +188,7 @@ struct SandboxHandles;
 /// When `config.sandbox` is set, wraps the claude invocation in a
 /// bubblewrap sandbox with filesystem/network/process isolation.
 /// If the profile declares `network.default = "deny"` with allowed
-/// domains, sets up slirp4netns + nftables for selective filtering
+/// domains, sets up TAP networking (pasta/slirp4netns) + nftables for selective filtering
 /// (matching the behavior of `gleisner wrap`).
 async fn run_query(
     config: &QueryConfig,
@@ -310,7 +310,7 @@ async fn run_query(
     info!(?status, lines = line_count, "subprocess finished");
     let _ = tx.send(DriverMessage::Exited(status.code())).await;
 
-    // _handles dropped here — kills slirp4netns and namespace holder
+    // _handles dropped here — kills TAP provider and namespace holder
 
     Ok(())
 }
