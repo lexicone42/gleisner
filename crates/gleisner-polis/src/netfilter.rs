@@ -391,11 +391,14 @@ pub enum TapProvider {
 
 /// Handle for a running TAP provider process (pasta or slirp4netns).
 ///
-/// Owns the child process and kills it on drop to ensure cleanup.
+/// For slirp4netns, this owns the child process and kills it on drop.
+/// For pasta, the process exits after configuring the namespace (no
+/// long-running child), so this is a no-op sentinel.
+///
 /// Keep this alive for the duration of the sandboxed session.
 #[derive(Debug)]
 pub struct TapHandle {
-    child: Child,
+    child: Option<Child>,
     provider: TapProvider,
 }
 
@@ -427,7 +430,9 @@ impl TapHandle {
 
         info!(pid = ns_holder_pid, "starting pasta");
 
-        let mut child = Command::new("pasta")
+        // pasta configures the namespace and exits — it does NOT stay running
+        // like slirp4netns. The kernel handles socket mapping via splice().
+        let output = Command::new("pasta")
             .args([
                 "--config-net",
                 "--ns-ifname",
@@ -437,37 +442,30 @@ impl TapHandle {
                 "none",
                 "--udp-ports",
                 "none",
-                "--no-netns-quit",
                 &ns_holder_pid.to_string(),
             ])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped())
-            .spawn()
+            .output()
             .map_err(|e| SandboxError::NetworkSetupFailed(format!("pasta spawn: {e}")))?;
 
-        let tap_pid = child.id();
-        debug!(tap_pid, "pasta started");
+        if !output.status.success() {
+            let stderr_output = String::from_utf8_lossy(&output.stderr);
+            return Err(SandboxError::NetworkSetupFailed(format!(
+                "pasta failed with {}: {stderr_output}",
+                output.status
+            )));
+        }
 
-        // Give pasta a moment to attach, then check it hasn't crashed
-        std::thread::sleep(Duration::from_millis(500));
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut stderr_output = String::new();
-                if let Some(mut stderr) = child.stderr {
-                    use std::io::Read;
-                    let _ = stderr.read_to_string(&mut stderr_output);
-                }
-                return Err(SandboxError::NetworkSetupFailed(format!(
-                    "pasta exited immediately with {status}: {stderr_output}"
-                )));
-            }
-            Ok(None) => debug!(tap_pid, "pasta running"),
-            Err(e) => warn!(error = %e, "could not check pasta status"),
+        let stderr_output = String::from_utf8_lossy(&output.stderr);
+        debug!(status = %output.status, "pasta configured namespace");
+        if !stderr_output.is_empty() {
+            debug!(stderr = %stderr_output, "pasta output");
         }
 
         Ok(Self {
-            child,
+            child: None,
             provider: TapProvider::Pasta,
         })
     }
@@ -514,7 +512,7 @@ impl TapHandle {
         }
 
         Ok(Self {
-            child,
+            child: Some(child),
             provider: TapProvider::Slirp4netns,
         })
     }
@@ -522,7 +520,12 @@ impl TapHandle {
 
 impl Drop for TapHandle {
     fn drop(&mut self) {
-        let pid = self.child.id();
+        // pasta exits after configuring — nothing to kill
+        let Some(ref mut child) = self.child else {
+            return;
+        };
+
+        let pid = child.id();
         let name = match self.provider {
             TapProvider::Pasta => "pasta",
             TapProvider::Slirp4netns => "slirp4netns",
@@ -537,15 +540,15 @@ impl Drop for TapHandle {
         }
 
         // Brief wait then force kill
-        if !matches!(self.child.try_wait(), Ok(Some(_))) {
-            if let Err(e) = self.child.kill() {
+        if !matches!(child.try_wait(), Ok(Some(_))) {
+            if let Err(e) = child.kill() {
                 warn!(
                     tap_pid = pid,
                     error = %e,
                     "failed to kill {name} — process may leak"
                 );
             }
-            let _ = self.child.wait();
+            let _ = child.wait();
         }
     }
 }
