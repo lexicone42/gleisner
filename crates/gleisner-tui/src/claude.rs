@@ -175,9 +175,13 @@ pub fn spawn_query(config: QueryConfig, buffer_size: usize) -> mpsc::Receiver<Dr
 /// Holds the [`PreparedSandbox`](gleisner_polis::PreparedSandbox) which
 /// owns the namespace holder, slirp4netns process, and Landlock policy
 /// tempfile. Dropped automatically when the query future completes.
+#[cfg(target_os = "linux")]
 struct SandboxHandles {
     _prepared: Option<gleisner_polis::PreparedSandbox>,
 }
+
+#[cfg(not(target_os = "linux"))]
+struct SandboxHandles;
 
 /// Internal: run the claude subprocess and stream events.
 ///
@@ -241,7 +245,12 @@ async fn run_query(
             tokio_cmd.current_dir(cwd);
         }
 
-        (tokio_cmd, SandboxHandles { _prepared: None })
+        #[cfg(target_os = "linux")]
+        let handles = SandboxHandles { _prepared: None };
+        #[cfg(not(target_os = "linux"))]
+        let handles = SandboxHandles;
+
+        (tokio_cmd, handles)
     };
 
     // Common settings for both sandboxed and unsandboxed
@@ -311,6 +320,7 @@ async fn run_query(
 /// Uses the shared [`gleisner_polis::prepare_sandbox`] pipeline, then
 /// converts the resulting `std::process::Command` to a `tokio::process::Command`.
 /// The returned [`SandboxHandles`] must be kept alive until the subprocess exits.
+#[cfg(target_os = "linux")]
 fn build_sandboxed_command(
     config: &QueryConfig,
     sandbox_cfg: &SandboxConfig,
@@ -345,4 +355,14 @@ fn build_sandboxed_command(
             _prepared: Some(prepared),
         },
     ))
+}
+
+/// Stub for non-Linux platforms — sandbox mode is not available.
+#[cfg(not(target_os = "linux"))]
+fn build_sandboxed_command(
+    _config: &QueryConfig,
+    _sandbox_cfg: &SandboxConfig,
+    _inner_args: Vec<String>,
+) -> color_eyre::Result<(Command, SandboxHandles)> {
+    Err(color_eyre::eyre::eyre!("sandbox mode requires Linux"))
 }

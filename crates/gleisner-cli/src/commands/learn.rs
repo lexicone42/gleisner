@@ -17,8 +17,11 @@
 //! **Watch mode** (`--watch`) tails the kernel audit log in real-time,
 //! showing denials as they happen and emitting an updated profile on exit.
 
-use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::PathBuf;
+
+#[cfg(target_os = "linux")]
+use std::io::{BufRead, BufReader, Seek, SeekFrom};
+#[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
 
 use clap::Args;
@@ -80,7 +83,10 @@ pub struct LearnArgs {
 /// Execute the learn command.
 pub async fn execute(args: LearnArgs) -> Result<()> {
     if args.watch {
+        #[cfg(target_os = "linux")]
         return watch_loop(args).await;
+        #[cfg(not(target_os = "linux"))]
+        return Err(eyre!("--watch requires Linux (Landlock V7 audit records)"));
     }
 
     if args.audit_log.is_none() && args.kernel_audit_log.is_none() {
@@ -135,6 +141,7 @@ pub async fn execute(args: LearnArgs) -> Result<()> {
     }
 
     // ── Ingest kernel audit log denials (if provided) ───────────────
+    #[cfg(target_os = "linux")]
     if let Some(ref kernel_log_path) = args.kernel_audit_log {
         let denial_events = gleisner_polis::parse_kernel_denials(kernel_log_path)
             .map_err(|e| eyre!("failed to read kernel audit log: {e}"))?;
@@ -147,6 +154,13 @@ pub async fn execute(args: LearnArgs) -> Result<()> {
         if !args.quiet {
             eprintln!("Ingested {denial_count} denial event(s) from kernel audit log");
         }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    if args.kernel_audit_log.is_some() {
+        return Err(eyre!(
+            "--kernel-audit-log requires Linux (Landlock V7 audit records)"
+        ));
     }
 
     emit_profile(&learner, &args.output, args.quiet, malformed_count)
@@ -186,6 +200,7 @@ fn emit_profile(
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 /// Watch mode: tail the kernel audit log in real-time.
 ///
 /// Opens the kernel audit log, seeks to end, and polls for new lines.
@@ -328,6 +343,7 @@ async fn watch_loop(args: LearnArgs) -> Result<()> {
     emit_profile(&learner, &output, quiet, 0)
 }
 
+#[cfg(target_os = "linux")]
 /// Events from the file-tailing thread.
 enum TailEvent {
     /// A raw line read from the file.
@@ -336,6 +352,7 @@ enum TailEvent {
     Error(String),
 }
 
+#[cfg(target_os = "linux")]
 /// Count total learned paths for change detection.
 fn count_learned_paths(learner: &ProfileLearner) -> usize {
     let (_, summary) = learner.generate_profile();
@@ -346,6 +363,7 @@ fn count_learned_paths(learner: &ProfileLearner) -> usize {
         + summary.path_groups.claude_dirs.len()
 }
 
+#[cfg(target_os = "linux")]
 /// Format a denial event for stderr output.
 fn format_denial_event(event: &gleisner_scapes::audit::AuditEvent) -> String {
     use gleisner_scapes::audit::EventKind;
@@ -372,6 +390,7 @@ fn format_denial_event(event: &gleisner_scapes::audit::AuditEvent) -> String {
     }
 }
 
+#[cfg(target_os = "linux")]
 /// Tail a file (`tail -f` style), sending lines through the channel.
 ///
 /// Opens the file, seeks to end, and polls for new lines every 500ms.

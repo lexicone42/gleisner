@@ -33,9 +33,9 @@ use landlock::{
 };
 use tracing::{debug, info, warn};
 
-use crate::bwrap::expand_tilde;
 use crate::error::SandboxError;
 use crate::profile::{FilesystemPolicy, NetworkPolicy, PolicyDefault};
+use crate::util::expand_tilde;
 
 /// Target ABI version — V7 adds audit logging flags (Linux 6.15+).
 const TARGET_ABI: ABI = ABI::V7;
@@ -67,23 +67,6 @@ pub struct LandlockStatus {
     pub scope_enforced: bool,
     /// Whether V7 audit logging flags were applied to `restrict_self()`.
     pub audit_log_enabled: bool,
-}
-
-/// Serializable policy for the sandbox-init binary.
-///
-/// The parent orchestrator writes this to a tempfile as JSON, bind-mounts
-/// it into the bwrap sandbox, and the `gleisner-sandbox-init` binary reads
-/// it to apply Landlock restrictions before exec-ing the inner command.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct LandlockPolicy {
-    /// Filesystem access rules (readonly binds, readwrite binds, deny paths, tmpfs).
-    pub filesystem: FilesystemPolicy,
-    /// Network access rules (default deny/allow, allowed domains/ports).
-    pub network: NetworkPolicy,
-    /// Project directory — always gets read-write access.
-    pub project_dir: PathBuf,
-    /// Additional paths from `--allow-path` CLI flags.
-    pub extra_rw_paths: Vec<PathBuf>,
 }
 
 /// Apply Landlock restrictions based on the sandbox profile.
@@ -523,7 +506,7 @@ mod tests {
         );
     }
 
-    /// V7: Verify TARGET_ABI is V7 and that V7 access sets are supersets of V6.
+    /// V7: Verify `TARGET_ABI` is V7 and that V7 access sets are supersets of V6.
     #[test]
     fn v7_target_abi() {
         assert_eq!(TARGET_ABI, ABI::V7, "TARGET_ABI should be V7");

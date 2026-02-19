@@ -3,37 +3,62 @@
 //! `gleisner-polis` provides sandbox profile definitions, profile resolution,
 //! and the bubblewrap/Landlock backend that creates isolated execution
 //! environments for Claude Code sessions.
+//!
+//! # Platform support
+//!
+//! The sandbox backend (bwrap, Landlock, namespaces, nftables, cgroups) is
+//! Linux-only. Profile resolution, the learner, filesystem monitoring, and
+//! portable utilities compile on all platforms.
 
-pub mod audit_log;
-mod bwrap;
+// ── Portable (always compiled) ──────────────────────────────────────
 pub mod error;
-pub mod inotify_mon;
-mod landlock;
+pub mod fs_monitor;
 pub mod learner;
 pub mod monitor;
-mod namespace;
-pub mod netfilter;
 pub mod policy;
-pub mod procmon;
 pub mod profile;
+mod util;
+
+// ── Linux-only ──────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+pub mod audit_log;
+#[cfg(target_os = "linux")]
+mod bwrap;
+#[cfg(target_os = "linux")]
+mod landlock;
+#[cfg(target_os = "linux")]
+mod namespace;
+#[cfg(target_os = "linux")]
+pub mod netfilter;
+#[cfg(target_os = "linux")]
+pub mod procmon;
+#[cfg(target_os = "linux")]
 pub mod resource;
+#[cfg(target_os = "linux")]
 pub mod session;
 
-pub use audit_log::{
-    KernelAuditConfig, collect_and_publish_denials, denial_to_events, parse_audit_line,
-    parse_kernel_denials,
-};
-pub use bwrap::{BwrapSandbox, expand_tilde};
-pub use landlock::{LandlockEnforcement, LandlockPolicy, LandlockStatus, apply_landlock};
+// ── Portable re-exports ─────────────────────────────────────────────
 pub use learner::{
     LearnerConfig, LearningSummary, ProfileLearner, format_profile_toml, format_summary,
 };
 pub use monitor::{FsMonitorConfig, ProcMonitorConfig};
-pub use netfilter::{NamespaceHandle, NetworkFilter, SlirpHandle};
-pub use policy::FileAccessType;
+pub use policy::{FileAccessType, LandlockPolicy};
 pub use profile::{Profile, resolve_profile};
-pub use resource::CgroupScope;
-pub use session::{
-    PreparedSandbox, SandboxSessionConfig, build_claude_inner_command, detect_sandbox_init,
-    prepare_sandbox, resolve_claude_bin,
+pub use util::{build_claude_inner_command, expand_tilde, resolve_claude_bin};
+
+// ── Linux-only re-exports ───────────────────────────────────────────
+#[cfg(target_os = "linux")]
+pub use audit_log::{
+    KernelAuditConfig, collect_and_publish_denials, denial_to_events, parse_audit_line,
+    parse_kernel_denials,
 };
+#[cfg(target_os = "linux")]
+pub use bwrap::BwrapSandbox;
+#[cfg(target_os = "linux")]
+pub use landlock::{LandlockEnforcement, LandlockStatus, apply_landlock};
+#[cfg(target_os = "linux")]
+pub use netfilter::{NamespaceHandle, NetworkFilter, SlirpHandle};
+#[cfg(target_os = "linux")]
+pub use resource::CgroupScope;
+#[cfg(target_os = "linux")]
+pub use session::{PreparedSandbox, SandboxSessionConfig, detect_sandbox_init, prepare_sandbox};

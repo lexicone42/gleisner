@@ -515,7 +515,7 @@ if !args.no_fs_monitor {
     let fs_cancel = cancel.clone();
     let handle = tokio::spawn(async move {
         if let Err(e) =
-            gleisner_polis::inotify_mon::run_fs_monitor(fs_config, fs_publisher, fs_cancel).await
+            gleisner_polis::fs_monitor::run_fs_monitor(fs_config, fs_publisher, fs_cancel).await
         {
             tracing::warn!(error = %e, "filesystem monitor failed");
         }

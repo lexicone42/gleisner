@@ -29,7 +29,6 @@ tracing-subscriber.workspace = true
 color-eyre.workspace = true
 directories.workspace = true
 tokio-util.workspace = true
-nix.workspace = true
 
 # Internal crates
 gleisner-polis.workspace = true
@@ -37,6 +36,10 @@ gleisner-introdus.workspace = true
 gleisner-bridger.workspace = true
 gleisner-scapes.workspace = true
 gleisner-lacerta.workspace = true
+
+# Linux-only
+[target.'cfg(target_os = "linux")'.dependencies]
+nix.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true

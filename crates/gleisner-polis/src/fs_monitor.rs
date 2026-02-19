@@ -411,7 +411,7 @@ mod tests {
         let mut before = HashMap::new();
         before.insert(path.clone(), "aaa".to_owned());
         let mut after = HashMap::new();
-        after.insert(path.clone(), "bbb".to_owned());
+        after.insert(path, "bbb".to_owned());
 
         let seen = std::collections::HashSet::new();
         let stats = reconcile_snapshots(&before, &after, &seen, &publisher);

@@ -6,7 +6,7 @@
 //! differently, but the sandbox setup (profile adjustment, bwrap, Landlock,
 //! network filtering) is identical.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::BwrapSandbox;
 use crate::error::SandboxError;
@@ -197,7 +197,7 @@ fn apply_plugin_sandbox_policy(sandbox: &mut BwrapSandbox) {
     let add_dirs: Vec<PathBuf> = plugins
         .add_dirs
         .iter()
-        .map(|p| crate::expand_tilde(p))
+        .map(|p| crate::util::expand_tilde(p))
         .collect();
     sandbox.allow_domains(mcp_domains);
     sandbox.allow_paths(add_dirs);
@@ -214,54 +214,6 @@ pub fn detect_sandbox_init() -> Option<PathBuf> {
         }
     }
     which::which("gleisner-sandbox-init").ok()
-}
-
-/// Resolve the `claude` binary path.
-///
-/// Checks common installation locations when `claude` isn't on PATH:
-/// 1. `~/.npm-global/bin/claude` (npm global with custom prefix)
-/// 2. `~/.local/bin/claude` (pipx, local installs)
-/// 3. `~/.claude/local/bin/claude` (Claude's own installer)
-///
-/// Falls back to `"claude"` (relies on PATH) if none found.
-pub fn resolve_claude_bin() -> String {
-    if let Ok(home) = std::env::var("HOME") {
-        let candidates = [
-            format!("{home}/.npm-global/bin/claude"),
-            format!("{home}/.local/bin/claude"),
-            format!("{home}/.claude/local/bin/claude"),
-        ];
-        for candidate in &candidates {
-            if Path::new(candidate).is_file() {
-                return candidate.clone();
-            }
-        }
-    }
-    "claude".into()
-}
-
-/// Build the standard Claude CLI inner command.
-///
-/// Constructs `[claude_bin, --dangerously-skip-permissions (if enabled),
-/// --disallowedTools (if any), ...extra_args]` — the common pattern
-/// used by `wrap` and `record`.
-pub fn build_claude_inner_command(
-    claude_bin: &str,
-    profile: &crate::Profile,
-    extra_args: &[String],
-) -> Vec<String> {
-    let mut cmd = vec![claude_bin.to_owned()];
-
-    if profile.plugins.skip_permissions {
-        cmd.push("--dangerously-skip-permissions".into());
-    }
-    if !profile.plugins.disallowed_tools.is_empty() {
-        cmd.push("--disallowedTools".into());
-        cmd.push(profile.plugins.disallowed_tools.join(","));
-    }
-
-    cmd.extend(extra_args.iter().cloned());
-    cmd
 }
 
 #[cfg(test)]
@@ -500,50 +452,9 @@ mod tests {
     }
 
     #[test]
-    fn build_claude_inner_command_basic() {
-        let profile = test_profile(PolicyDefault::Allow);
-        let cmd = build_claude_inner_command("claude", &profile, &["--help".to_owned()]);
-
-        assert_eq!(cmd[0], "claude");
-        // Default PluginPolicy has skip_permissions = true
-        assert!(
-            cmd.iter().any(|a| a == "--dangerously-skip-permissions"),
-            "should include skip-permissions when profile enables it"
-        );
-        assert!(
-            cmd.iter().any(|a| a == "--help"),
-            "extra args should be appended"
-        );
-    }
-
-    #[test]
-    fn build_claude_inner_command_with_disallowed_tools() {
-        let mut profile = test_profile(PolicyDefault::Allow);
-        profile.plugins.disallowed_tools = vec!["Bash".to_owned(), "Write".to_owned()];
-
-        let cmd = build_claude_inner_command("/usr/bin/claude", &profile, &[]);
-
-        assert_eq!(cmd[0], "/usr/bin/claude");
-        assert!(
-            cmd.iter().any(|a| a == "--disallowedTools"),
-            "should include --disallowedTools flag"
-        );
-        assert!(
-            cmd.iter().any(|a| a == "Bash,Write"),
-            "should join disallowed tools with comma"
-        );
-    }
-
-    #[test]
     fn detect_sandbox_init_returns_option() {
         // Just verify it doesn't panic — result depends on whether
         // gleisner-sandbox-init is built/installed
         let _result = detect_sandbox_init();
-    }
-
-    #[test]
-    fn resolve_claude_bin_returns_string() {
-        let bin = resolve_claude_bin();
-        assert!(!bin.is_empty(), "should return non-empty string");
     }
 }

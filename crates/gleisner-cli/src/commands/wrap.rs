@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use clap::Args;
-use color_eyre::eyre::{Result, eyre};
+use color_eyre::eyre::Result;
 
 /// Run Claude Code inside a Gleisner sandbox (isolation only, no attestation).
 #[derive(Args)]
@@ -58,8 +58,11 @@ pub struct WrapArgs {
 ///
 /// Returns an error if profile resolution, sandbox creation, or
 /// the inner process fails.
+#[cfg(target_os = "linux")]
 #[allow(clippy::unused_async)] // async for consistency with other command handlers
 pub async fn execute(args: WrapArgs) -> Result<()> {
+    use color_eyre::eyre::eyre;
+
     let project_dir = match args.project_dir {
         Some(d) => d,
         None => std::env::current_dir().map_err(|e| {
@@ -130,7 +133,15 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
     std::process::exit(status.code().unwrap_or(1));
 }
 
+/// Stub for non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+#[allow(clippy::unused_async)]
+pub async fn execute(_args: WrapArgs) -> Result<()> {
+    color_eyre::eyre::bail!("gleisner wrap requires Linux (bubblewrap sandbox)")
+}
+
 /// Detect Claude Code version by running `claude --version`.
+#[cfg(target_os = "linux")]
 fn detect_claude_code_version(bin: &str) -> Option<String> {
     std::process::Command::new(bin)
         .arg("--version")

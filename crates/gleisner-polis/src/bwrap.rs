@@ -14,6 +14,7 @@ use tracing::{debug, info};
 
 use crate::error::SandboxError;
 use crate::profile::{PolicyDefault, Profile};
+use crate::util::expand_tilde;
 
 /// Constructs and executes a bubblewrap sandbox from a [`Profile`].
 ///
@@ -235,7 +236,7 @@ impl BwrapSandbox {
     fn apply_landlock_policy(&self, cmd: &mut Command) -> Option<tempfile::NamedTempFile> {
         let init_bin = self.landlock_init_bin.as_ref()?;
 
-        let policy = crate::landlock::LandlockPolicy {
+        let policy = crate::policy::LandlockPolicy {
             filesystem: self.profile.filesystem.clone(),
             network: self.profile.network.clone(),
             project_dir: self.project_dir.clone(),
@@ -358,31 +359,6 @@ impl BwrapSandbox {
     }
 }
 
-/// Expand `~` to the user's home directory.
-///
-/// Only expands a leading `~` — embedded tildes are left alone.
-/// Tries `$HOME` first, falls back to system passwd lookup via
-/// `directories::BaseDirs`. Logs a warning and returns the path
-/// unchanged only if both methods fail.
-pub fn expand_tilde(path: &Path) -> PathBuf {
-    let path_str = path.display().to_string();
-    if path_str.starts_with('~') {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()));
-        let Some(home) = home else {
-            tracing::warn!(
-                path = %path_str,
-                "$HOME is not set and passwd lookup failed — tilde path will not be expanded"
-            );
-            return path.to_path_buf();
-        };
-        home.join(path.strip_prefix("~").unwrap_or(path))
-    } else {
-        path.to_path_buf()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,26 +397,6 @@ mod tests {
             },
             plugins: PluginPolicy::default(),
         }
-    }
-
-    #[test]
-    fn expand_tilde_substitutes_home() {
-        // This test depends on $HOME being set, which is typical
-        if std::env::var_os("HOME").is_some() {
-            let expanded = expand_tilde(Path::new("~/.ssh"));
-            assert!(!expanded.starts_with("~"), "tilde should be expanded");
-            assert!(
-                expanded.ends_with(".ssh"),
-                "path suffix should be preserved"
-            );
-        }
-    }
-
-    #[test]
-    fn expand_tilde_leaves_absolute_paths_alone() {
-        let path = Path::new("/usr/bin");
-        let expanded = expand_tilde(path);
-        assert_eq!(expanded, PathBuf::from("/usr/bin"));
     }
 
     #[test]
@@ -600,7 +556,7 @@ mod tests {
 
     #[test]
     fn landlock_policy_json_roundtrips() {
-        use crate::landlock::LandlockPolicy;
+        use crate::policy::LandlockPolicy;
         use crate::profile::{FilesystemPolicy, NetworkPolicy};
 
         let policy = LandlockPolicy {

@@ -10,15 +10,15 @@
 //! ```
 //!
 //! The binary is a trampoline: it exists solely to apply Landlock
-//! restrictions, then replaces itself via `CommandExt::exec()`.
+//! restrictions, then replaces itself via `CommandExt` process replacement.
 
-use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
-use std::process::Command;
-
-use gleisner_polis::LandlockPolicy;
-
+#[cfg(target_os = "linux")]
 fn main() {
+    use std::os::unix::process::CommandExt as _;
+    use std::process::Command;
+
+    use gleisner_polis::LandlockPolicy;
+
     let args: Vec<String> = std::env::args().collect();
 
     // Parse: <policy.json> -- <command> [args...]
@@ -80,23 +80,27 @@ fn main() {
     }
 
     // Replace this process with the inner command.
-    // exec() replaces the current process image — if it returns, it failed.
+    // CommandExt::exec() replaces the current process image — if it returns, it failed.
     let program = &inner_args[0];
-    let mut cmd = Command::new(program);
-    cmd.args(&inner_args[1..]);
-    let err = cmd.exec();
+    let err = Command::new(program).args(&inner_args[1..]).exec();
     eprintln!("gleisner-sandbox-init: failed to run {program}: {err}");
     std::process::exit(127);
 }
 
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("gleisner-sandbox-init is only supported on Linux");
+    std::process::exit(1);
+}
+
 /// Parse argv into `(policy_path, inner_command_args)`.
-fn parse_args(args: &[String]) -> Result<(PathBuf, Vec<String>), String> {
+fn parse_args(args: &[String]) -> Result<(std::path::PathBuf, Vec<String>), String> {
     // args[0] is the binary name
     if args.len() < 2 {
         return Err("missing policy path".to_owned());
     }
 
-    let policy_path = PathBuf::from(&args[1]);
+    let policy_path = std::path::PathBuf::from(&args[1]);
 
     // Find "--" separator
     let separator_pos = args[2..]
@@ -127,7 +131,7 @@ mod tests {
             "hello".to_owned(),
         ];
         let (policy, inner) = parse_args(&args).unwrap();
-        assert_eq!(policy, PathBuf::from("/tmp/policy.json"));
+        assert_eq!(policy, std::path::PathBuf::from("/tmp/policy.json"));
         assert_eq!(inner, vec!["echo", "hello"]);
     }
 
@@ -159,14 +163,18 @@ mod tests {
 
     #[test]
     fn policy_json_roundtrip() {
+        use gleisner_polis::LandlockPolicy;
         use gleisner_polis::profile::{FilesystemPolicy, NetworkPolicy, PolicyDefault};
 
         let policy = LandlockPolicy {
             filesystem: FilesystemPolicy {
-                readonly_bind: vec![PathBuf::from("/usr"), PathBuf::from("/lib")],
+                readonly_bind: vec![
+                    std::path::PathBuf::from("/usr"),
+                    std::path::PathBuf::from("/lib"),
+                ],
                 readwrite_bind: vec![],
                 deny: vec![],
-                tmpfs: vec![PathBuf::from("/tmp")],
+                tmpfs: vec![std::path::PathBuf::from("/tmp")],
             },
             network: NetworkPolicy {
                 default: PolicyDefault::Deny,
@@ -174,8 +182,8 @@ mod tests {
                 allow_ports: vec![443],
                 allow_dns: true,
             },
-            project_dir: PathBuf::from("/home/user/project"),
-            extra_rw_paths: vec![PathBuf::from("/home/user/.cargo")],
+            project_dir: std::path::PathBuf::from("/home/user/project"),
+            extra_rw_paths: vec![std::path::PathBuf::from("/home/user/.cargo")],
         };
 
         let json = serde_json::to_string(&policy).unwrap();

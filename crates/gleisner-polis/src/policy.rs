@@ -9,7 +9,29 @@ use std::path::Path;
 
 use gleisner_scapes::audit::EventResult;
 
-use crate::profile::{PolicyDefault, Profile};
+use crate::profile::{FilesystemPolicy, NetworkPolicy, PolicyDefault, Profile};
+
+/// Serializable policy for the sandbox-init binary.
+///
+/// The parent orchestrator writes this to a tempfile as JSON, bind-mounts
+/// it into the bwrap sandbox, and the `gleisner-sandbox-init` binary reads
+/// it to apply Landlock restrictions before exec-ing the inner command.
+///
+/// This struct lives in `policy.rs` (not `landlock.rs`) because it contains
+/// only serde-serializable data with no `landlock` crate dependencies,
+/// and must be importable on all platforms (including non-Linux where the
+/// `landlock` module is cfg-gated out).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct LandlockPolicy {
+    /// Filesystem access rules (readonly binds, readwrite binds, deny paths, tmpfs).
+    pub filesystem: FilesystemPolicy,
+    /// Network access rules (default deny/allow, allowed domains/ports).
+    pub network: NetworkPolicy,
+    /// Project directory — always gets read-write access.
+    pub project_dir: std::path::PathBuf,
+    /// Additional paths from `--allow-path` CLI flags.
+    pub extra_rw_paths: Vec<std::path::PathBuf>,
+}
 
 /// The type of file access being evaluated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
