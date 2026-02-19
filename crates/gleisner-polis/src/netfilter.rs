@@ -130,7 +130,7 @@ impl NetworkFilter {
     /// distros with `ip_tables`.
     ///
     /// The script:
-    /// 1. Verifies `tap0` device exists (created by slirp4netns before bwrap)
+    /// 1. Verifies `tap0` device exists (created by TAP provider before bwrap)
     /// 2. Sets default output policy to DROP (blocks both IPv4 and IPv6 with nft)
     /// 3. Allows loopback and optionally DNS
     /// 4. Allows each resolved IP+port combination
@@ -139,9 +139,9 @@ impl NetworkFilter {
     pub fn firewall_setup_script(&self) -> String {
         let mut script = String::from(
             r#"set -e
-# Verify tap0 exists (should already be created by slirp4netns)
+# Verify tap0 exists (should already be created by TAP provider)
 if ! ip link show tap0 >/dev/null 2>&1; then
-  echo "gleisner: tap0 not found — slirp4netns may have failed" >&2
+  echo "gleisner: tap0 not found — TAP provider may have failed" >&2
   exit 1
 fi
 
