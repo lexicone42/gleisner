@@ -25,6 +25,7 @@ readonly_bind = [
 readwrite_bind = [
     "~/.cargo",
     "~/.rustup",
+    "~/.cache",
 ]
 deny = [
     "~/.ssh",

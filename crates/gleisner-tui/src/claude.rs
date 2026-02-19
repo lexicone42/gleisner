@@ -276,6 +276,11 @@ async fn run_query(
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
+                // sandbox-init status messages are informational — log only
+                if line.starts_with("gleisner-sandbox-init:") {
+                    debug!(line = %line, "sandbox-init status (suppressed from UI)");
+                    continue;
+                }
                 if stderr_tx.send(DriverMessage::Stderr(line)).await.is_err() {
                     break;
                 }
