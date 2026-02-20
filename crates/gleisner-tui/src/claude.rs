@@ -86,6 +86,13 @@ pub struct QueryConfig {
     /// Optional sandbox configuration. When set, the claude command
     /// is wrapped in a bubblewrap sandbox.
     pub sandbox: Option<SandboxConfig>,
+    /// Use Sigstore keyless signing for attestation bundles.
+    /// Requires the `keyless` feature on gleisner-introdus.
+    pub use_sigstore: bool,
+    /// Pre-supplied OIDC token for headless Sigstore signing.
+    /// If None with `use_sigstore`, falls back to ambient CI detection
+    /// then interactive browser flow.
+    pub sigstore_token: Option<String>,
 }
 
 impl Default for QueryConfig {
@@ -113,6 +120,8 @@ impl Default for QueryConfig {
                 "mcp__plugin_serena_serena__create_text_file".into(),
             ],
             sandbox: None,
+            use_sigstore: false,
+            sigstore_token: None,
         }
     }
 }
@@ -144,6 +153,8 @@ impl QueryConfig {
             skip_permissions: plugins.skip_permissions,
             disallowed_tools,
             sandbox: None,
+            use_sigstore: false,
+            sigstore_token: None,
         }
     }
 }
@@ -275,7 +286,12 @@ async fn run_query(
     // ── Set up attestation pipeline (sandboxed sessions only) ───
     #[cfg(target_os = "linux")]
     let mut attest_state = if let Some(ref sandbox_cfg) = config.sandbox {
-        match setup_attestation(&sandbox_cfg.project_dir, &sandbox_cfg.profile) {
+        match setup_attestation(
+            &sandbox_cfg.project_dir,
+            &sandbox_cfg.profile,
+            config.use_sigstore,
+            config.sigstore_token.clone(),
+        ) {
             Ok(state) => Some(state),
             Err(e) => {
                 warn!(error = %e, "attestation setup failed — session will run without recording");
@@ -482,6 +498,12 @@ struct AttestationState {
     network_policy: String,
     /// Number of denied filesystem paths in the profile.
     filesystem_deny_count: usize,
+    /// Use Sigstore keyless signing instead of local ECDSA.
+    use_sigstore: bool,
+    /// Pre-supplied OIDC token for headless Sigstore signing.
+    /// Only read when the `keyless` feature is enabled.
+    #[cfg_attr(not(feature = "keyless"), expect(dead_code))]
+    sigstore_token: Option<String>,
 }
 
 /// Result of a successful attestation finalization.
@@ -500,6 +522,8 @@ struct AttestationResult {
 fn setup_attestation(
     project_dir: &std::path::Path,
     profile: &gleisner_polis::profile::Profile,
+    use_sigstore: bool,
+    sigstore_token: Option<String>,
 ) -> color_eyre::Result<AttestationState> {
     use chrono::Utc;
     use color_eyre::eyre::eyre;
@@ -574,6 +598,8 @@ fn setup_attestation(
         profile_digest,
         network_policy: format!("{:?}", profile.network.default).to_lowercase(),
         filesystem_deny_count: profile.filesystem.deny.len(),
+        use_sigstore,
+        sigstore_token,
     })
 }
 
@@ -775,16 +801,36 @@ async fn finalize_attestation(
     };
 
     // ── 6. Sign and write ───────────────────────────────────────
-    let key_path = default_key_path();
-    let signer =
-        LocalSigner::load_or_generate(&key_path).map_err(|e| eyre!("signing key error: {e}"))?;
-
-    info!(signer = %signer.description(), "signing attestation");
-
-    let bundle = signer
-        .sign(&statement)
-        .await
-        .map_err(|e| eyre!("signing failed: {e}"))?;
+    let bundle = if state.use_sigstore {
+        #[cfg(feature = "keyless")]
+        {
+            let sigstore_bundle_path = state.output_path.with_extension("sigstore.json");
+            let signer = gleisner_introdus::signer::SigstoreSigner::new(
+                Some(sigstore_bundle_path),
+                state.sigstore_token.clone(),
+            );
+            info!(signer = %Signer::description(&signer), "signing attestation (keyless)");
+            signer
+                .sign(&statement)
+                .await
+                .map_err(|e| eyre!("Sigstore signing failed: {e}"))?
+        }
+        #[cfg(not(feature = "keyless"))]
+        {
+            return Err(eyre!(
+                "--sigstore requires building with `--features keyless`"
+            ));
+        }
+    } else {
+        let key_path = default_key_path();
+        let signer = LocalSigner::load_or_generate(&key_path)
+            .map_err(|e| eyre!("signing key error: {e}"))?;
+        info!(signer = %signer.description(), "signing attestation (local key)");
+        signer
+            .sign(&statement)
+            .await
+            .map_err(|e| eyre!("signing failed: {e}"))?
+    };
 
     let json = serde_json::to_string_pretty(&bundle)?;
     std::fs::write(&state.output_path, &json)?;
@@ -792,7 +838,7 @@ async fn finalize_attestation(
     info!(
         path = %state.output_path.display(),
         audit_log = %state.audit_log_path.display(),
-        key = %key_path.display(),
+        sigstore = state.use_sigstore,
         "attestation bundle written"
     );
 

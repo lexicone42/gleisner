@@ -73,6 +73,16 @@ async fn main() -> color_eyre::Result<()> {
         .filter_map(|(i, _)| args.get(i + 1).map(PathBuf::from))
         .collect();
 
+    // Parse --sigstore flag — use Sigstore keyless signing for attestations
+    let use_sigstore = args.iter().any(|a| a == "--sigstore");
+
+    // Parse --sigstore-token argument — pre-supplied OIDC JWT for headless signing
+    let sigstore_token = args
+        .iter()
+        .position(|a| a == "--sigstore-token")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
     // Load the gleisner security profile
     let profile = gleisner_polis::profile::resolve_profile(&profile_name)?;
 
@@ -98,6 +108,8 @@ async fn main() -> color_eyre::Result<()> {
         claude_bin.as_deref(),
         debug_mode,
         &project_dir,
+        use_sigstore,
+        sigstore_token.as_deref(),
     );
     ratatui::restore();
 
@@ -112,14 +124,17 @@ fn run(
     claude_bin: Option<&str>,
     debug_mode: bool,
     project_dir: &std::path::Path,
+    use_sigstore: bool,
+    sigstore_token: Option<&str>,
 ) -> color_eyre::Result<()> {
     let mut app = App::new(&profile.name);
 
     let sandbox_indicator = if sandbox.is_some() { " [embodied]" } else { "" };
+    let sigstore_indicator = if use_sigstore { " [sigstore]" } else { "" };
     app.push_message(
         Role::System,
         format!(
-            "\u{27E8}gleisner\u{27E9} suit active — polis: {}{sandbox_indicator}",
+            "\u{27E8}gleisner\u{27E9} suit active — polis: {}{sandbox_indicator}{sigstore_indicator}",
             profile.name,
         ),
     );
@@ -155,6 +170,8 @@ fn run(
                                 config.prompt = prompt;
                                 config.resume_session.clone_from(&app.session_id);
                                 config.sandbox = sandbox.cloned();
+                                config.use_sigstore = use_sigstore;
+                                config.sigstore_token = sigstore_token.map(String::from);
                                 if let Some(bin) = claude_bin {
                                     bin.clone_into(&mut config.claude_bin);
                                 }

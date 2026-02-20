@@ -49,6 +49,11 @@ allow_domains = [
     "index.crates.io",
     "github.com",
     "objects.githubusercontent.com",
+    # Sigstore keyless signing (Fulcio + Rekor)
+    "fulcio.sigstore.dev",
+    "rekor.sigstore.dev",
+    "oauth2.sigstore.dev",
+    "tuf-repo-cdn.sigstore.dev",
 ]
 allow_ports = [443, 80]
 allow_dns = true

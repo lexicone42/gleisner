@@ -7,6 +7,10 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+default = []
+keyless = ["gleisner-introdus/keyless"]
+
 [dependencies]
 # TUI
 ratatui.workspace = true
