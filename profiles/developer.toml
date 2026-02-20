@@ -21,6 +21,7 @@ readonly_bind = [
     "/sbin",
     "/opt",
     "~/.config/gh",
+    "~/.claude/bin",
 ]
 readwrite_bind = [
     "~/.cargo",

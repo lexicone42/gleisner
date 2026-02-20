@@ -146,10 +146,46 @@ impl BwrapSandbox {
         cmd.args(["--dev", "/dev"]);
 
         // Read-only bind mounts (system paths like /usr, /lib, /etc)
+        //
+        // For user-managed directories under $HOME that contain symlinks
+        // (e.g. ~/.claude/bin/), we bind each entry individually instead
+        // of the whole directory. Symlinks are resolved to their targets
+        // so the actual binaries appear inside the sandbox. We can't bind
+        // the directory first and then override entries because --ro-bind
+        // makes it read-only, preventing bwrap from creating mount points.
+        let home_dir = std::env::var("HOME").ok().map(PathBuf::from);
         for path in &fs.readonly_bind {
             let expanded = expand_tilde(path);
-            let p = expanded.display().to_string();
-            cmd.args(["--ro-bind", &p, &p]);
+            let is_user_dir = home_dir
+                .as_ref()
+                .is_some_and(|home| expanded.starts_with(home));
+            let has_symlinks = is_user_dir
+                && expanded.is_dir()
+                && std::fs::read_dir(&expanded)
+                    .map(|e| e.flatten().any(|e| e.path().is_symlink()))
+                    .unwrap_or(false);
+
+            if has_symlinks {
+                // Bind each entry individually, resolving symlinks
+                if let Ok(entries) = std::fs::read_dir(&expanded) {
+                    for entry in entries.flatten() {
+                        let entry_path = entry.path();
+                        let resolved = std::fs::canonicalize(&entry_path)
+                            .unwrap_or_else(|_| entry_path.clone());
+                        if resolved.exists() {
+                            let src = resolved.display().to_string();
+                            let dst = entry_path.display().to_string();
+                            cmd.args(["--ro-bind", &src, &dst]);
+                            if resolved != entry_path {
+                                debug!(src = %src, dst = %dst, "binding resolved symlink");
+                            }
+                        }
+                    }
+                }
+            } else {
+                let p = expanded.display().to_string();
+                cmd.args(["--ro-bind", &p, &p]);
+            }
         }
 
         // Read-write bind mounts from profile (expand ~ to $HOME)

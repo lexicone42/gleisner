@@ -296,8 +296,11 @@ async fn run_query(
         match setup_attestation(
             &sandbox_cfg.project_dir,
             &sandbox_cfg.profile,
-            config.use_sigstore,
-            config.sigstore_token.clone(),
+            // Always use local ECDSA for automatic attestation.
+            // Sigstore keyless signing is interactive (OIDC browser flow)
+            // and only works via the explicit /cosign TUI command.
+            false,
+            None,
         ) {
             Ok(state) => Some(state),
             Err(e) => {
