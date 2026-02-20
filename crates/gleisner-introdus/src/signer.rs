@@ -223,10 +223,10 @@ impl SigstoreSigner {
                     token
                 }
                 Ok(None) | Err(_) => {
-                    // 3. Fall back to interactive browser flow
-                    tracing::info!("no ambient credentials — opening browser for OIDC...");
+                    // 3. Fall back to interactive OOB flow (prints URL for manual copy)
+                    tracing::info!("no ambient credentials — starting OOB OIDC flow...");
                     sigstore_oidc::get_identity_token_with_options(sigstore_oidc::AuthOptions {
-                        force_oob: false,
+                        force_oob: true,
                     })
                     .await
                     .map_err(|e| {

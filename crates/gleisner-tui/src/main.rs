@@ -273,6 +273,12 @@ async fn run(
             }
         }
 
+        // Redraw immediately if we drained any events, so the UI
+        // doesn't wait for the next poll timeout to show new content.
+        if query.is_some() {
+            terminal.draw(|frame| ui::draw(frame, &app))?;
+        }
+
         // Clean up the handle if the session is done
         if app.session_state == SessionState::Idle && query.is_some() {
             if let Some(ref mut handle) = query {
@@ -367,7 +373,9 @@ Available commands:
   /sbom              Generate SBOM for current project
   /verify <path>     Verify an attestation bundle
   /inspect <path>    Inspect an attestation bundle
-  /cosign [path]     Cosign attestation with Sigstore (keyless)
+  /cosign            Cosign attestation with Sigstore (interactive OOB)
+  /cosign <token>    Cosign with a pre-obtained OIDC JWT (eyJ...)
+  /cosign <path>     Cosign a specific bundle file
   /help              Show this help message";
             app.push_message(Role::System, help);
         }
@@ -387,9 +395,16 @@ async fn handle_cosign(
 ) -> color_eyre::Result<()> {
     info!(path = ?path_arg, "running /cosign command");
 
+    // Detect if the argument is a JWT token (for headless cosigning).
+    // JWT tokens start with "eyJ" (base64 of '{"'). Otherwise treat as bundle path.
+    let (bundle_path_arg, oidc_token) = match path_arg {
+        Some(arg) if arg.starts_with("eyJ") => (None, Some(arg.to_owned())),
+        other => (other, None),
+    };
+
     // Find the bundle to cosign
     let gleisner_dir = project_dir.join(".gleisner");
-    let bundle_path = if let Some(p) = path_arg {
+    let bundle_path = if let Some(p) = bundle_path_arg {
         PathBuf::from(p)
     } else {
         match gleisner_introdus::chain::find_latest_attestation(&gleisner_dir) {
@@ -429,31 +444,35 @@ async fn handle_cosign(
     {
         use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
 
+        let has_token = oidc_token.is_some();
+        let mode_label = if has_token {
+            "token"
+        } else {
+            "interactive OOB"
+        };
         app.push_message(
             Role::System,
-            format!(
-                "Cosigning: {} (suspending TUI for auth...)",
-                bundle_path.display()
-            ),
+            format!("Cosigning: {} (mode: {mode_label})", bundle_path.display()),
         );
         terminal.draw(|frame| ui::draw(frame, app))?;
 
-        // Suspend TUI for interactive OIDC auth flow
+        // Suspend TUI for OIDC auth flow (interactive OOB prints URL + waits for code)
         crossterm::terminal::disable_raw_mode()?;
         crossterm::execute!(std::io::stdout(), LeaveAlternateScreen)?;
 
         println!("\n--- Sigstore keyless signing ---");
         println!("Bundle: {}", bundle_path.display());
+        if !has_token {
+            println!("A URL will be printed below. Open it in a browser on any device,");
+            println!("authenticate, then paste the authorization code here.");
+        }
         println!();
 
         // Sigstore bundle goes alongside the attestation
         let sigstore_path = bundle_path.with_extension("sigstore.json");
 
-        // Create signer with no token — let sigstore-sign handle interactive OIDC
-        let signer = gleisner_introdus::signer::SigstoreSigner::new(
-            Some(sigstore_path.clone()),
-            None, // fresh interactive auth
-        );
+        let signer =
+            gleisner_introdus::signer::SigstoreSigner::new(Some(sigstore_path.clone()), oidc_token);
 
         // Sign the existing payload directly (no need to deserialize InTotoStatement)
         let result = signer.sign_payload(&bundle.payload).await;
@@ -502,7 +521,7 @@ async fn handle_cosign(
 
     #[cfg(not(feature = "keyless"))]
     {
-        let _ = (&bundle_path, &bundle, &terminal);
+        let _ = (&bundle_path, &bundle, &terminal, &oidc_token);
         app.push_message(
             Role::System,
             "[error] Sigstore keyless not available. Rebuild with: cargo build --features keyless",

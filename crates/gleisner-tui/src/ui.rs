@@ -18,6 +18,7 @@ use ratatui::widgets::{
     Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
     ScrollbarState, Wrap,
 };
+use unicode_width::UnicodeWidthChar;
 
 // ─── Palette ────────────────────────────────────────────────────
 // Inspired by magitek armor plating — brushed steel frame, green conduit glow.
@@ -45,23 +46,19 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let outer = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Min(40),        // conversation area (takes remaining)
-            Constraint::Length(30),      // security dashboard (fixed width)
+            Constraint::Min(40),    // conversation area (takes remaining)
+            Constraint::Length(30), // security dashboard (fixed width)
         ])
         .split(frame.area());
 
     // Left side: conversation + input + status
     // Input height grows with text wrapping: 2 (borders) + number of wrapped lines.
-    // +2 accounts for the "❯ " prompt prefix.
+    // Uses display-width-based line splitting (same algorithm as draw_input)
+    // so the reserved height always matches the rendered content.
     let input_inner_width = outer[0].width.saturating_sub(2) as usize; // minus left+right borders
-    let input_lines = if input_inner_width == 0 {
-        1
-    } else {
-        let char_count = (app.input.chars().count() + 2).max(1); // +2 for prompt glyph
-        ((char_count - 1) / input_inner_width + 1).min(6) // cap at 6 lines
-    };
+    let input_visual_lines = visual_line_count_for_input(&app.input, input_inner_width);
     #[allow(clippy::cast_possible_truncation)]
-    let input_height = input_lines as u16 + 2; // +2 for top+bottom borders
+    let input_height = (input_visual_lines.min(6)) as u16 + 2; // cap at 6 lines + borders
 
     let left = Layout::default()
         .direction(Direction::Vertical)
@@ -431,12 +428,57 @@ fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+// ─── Display-width helpers ──────────────────────────────────────
+
+/// Compute the display width of a string (Unicode-aware).
+fn display_width(s: &str) -> usize {
+    s.chars()
+        .map(|c| UnicodeWidthChar::width(c).unwrap_or(0))
+        .sum()
+}
+
+/// Split a string into visual lines by character display width.
+///
+/// Unlike Ratatui's `Wrap`, this breaks at exact column boundaries
+/// (no word-level heuristics), so cursor math can use the same split points.
+fn split_by_display_width(text: &str, max_width: usize) -> Vec<String> {
+    if max_width == 0 {
+        return vec![text.to_owned()];
+    }
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    let mut current_width = 0;
+
+    for ch in text.chars() {
+        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if current_width + ch_width > max_width && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current_width = 0;
+        }
+        current.push(ch);
+        current_width += ch_width;
+    }
+    // Always push the last segment (even if empty — shows the prompt on an empty input)
+    lines.push(current);
+    lines
+}
+
+/// Count how many visual lines the input text occupies (for layout height calculation).
+fn visual_line_count_for_input(input: &str, inner_width: usize) -> usize {
+    let display = format!("\u{276F} {input}"); // ❯ + space + text
+    split_by_display_width(&display, inner_width).len()
+}
+
 // ─── Input field ────────────────────────────────────────────────
 
 /// Render the input field with a REPL-style prompt.
 ///
 /// In insert mode the border lights up and a `❯` prompt appears.
 /// Enter submits, Esc returns to normal mode.
+///
+/// Uses character-level wrapping (not word-level) so the cursor position
+/// is always correct. Ratatui's `Paragraph::wrap()` breaks at word boundaries
+/// which makes cursor positioning unpredictable; manual splitting avoids that.
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
     let is_insert = app.input_mode == InputMode::Insert;
 
@@ -452,40 +494,59 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
         .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
 
-    // Build the input line with a prompt glyph.
     let prompt_style = if is_insert {
         Style::default().fg(CONDUIT).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(STEEL_DIM)
     };
-    let prompt = Span::styled("\u{276F} ", prompt_style); // ❯
     let text_style = if is_insert {
         Style::default().fg(Color::White)
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let content = Span::styled(app.input.clone(), text_style);
-    let input_line = Line::from(vec![prompt, content]);
 
-    let input = Paragraph::new(input_line)
-        .block(block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(input, area);
+    // Build the full display string: prompt + input text.
+    // Then split into visual lines by character display width.
+    let inner_width = area.width.saturating_sub(2) as usize; // minus left+right borders
+    let prompt_str = "\u{276F} "; // ❯ + space
+    let display = format!("{prompt_str}{}", app.input);
 
-    // Show cursor in insert mode, accounting for line wrapping.
-    // Offset by 2 for the "❯ " prompt prefix.
+    let visual_lines = split_by_display_width(&display, inner_width);
+
+    // Render each visual line with appropriate styling.
+    // The prompt characters get prompt_style, the rest gets text_style.
+    let prompt_display_width = display_width(prompt_str);
+    let lines: Vec<Line> = visual_lines
+        .iter()
+        .enumerate()
+        .map(|(row, text)| {
+            if row == 0 && text.len() >= prompt_str.len() {
+                // First line: split into prompt + content spans
+                Line::from(vec![
+                    Span::styled(prompt_str.to_owned(), prompt_style),
+                    Span::styled(text[prompt_str.len()..].to_owned(), text_style),
+                ])
+            } else {
+                Line::from(Span::styled(text.clone(), text_style))
+            }
+        })
+        .collect();
+
+    // No Wrap — we already split into visual lines, so rendering matches cursor math.
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, area);
+
+    // Cursor position: end of the last visual line.
     if is_insert {
-        let inner_width = area.width.saturating_sub(2) as usize; // minus left+right borders
-        let char_count = app.input.chars().count() + 2; // +2 for prompt glyph + space
+        let cursor_row = visual_lines.len().saturating_sub(1);
+        let cursor_col = visual_lines
+            .last()
+            .map_or(prompt_display_width, |l| display_width(l));
         #[allow(clippy::cast_possible_truncation)]
-        let (cursor_x, cursor_y) = if inner_width == 0 {
-            (area.x + 1, area.y + 1)
-        } else {
-            let col = char_count % inner_width;
-            let row = char_count / inner_width;
-            (area.x + col as u16 + 1, area.y + row as u16 + 1)
-        };
-        frame.set_cursor_position((cursor_x, cursor_y));
+        frame.set_cursor_position((
+            area.x + cursor_col as u16 + 1, // +1 for left border
+            area.y + cursor_row as u16 + 1, // +1 for top border
+        ));
     }
 }
 
@@ -673,14 +734,8 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         let empty = bar_width.saturating_sub(filled);
         vec![
             Span::styled("Ctx ", label_style),
-            Span::styled(
-                "\u{2588}".repeat(filled),
-                Style::default().fg(color),
-            ),
-            Span::styled(
-                "\u{2591}".repeat(empty),
-                Style::default().fg(STEEL_DIM),
-            ),
+            Span::styled("\u{2588}".repeat(filled), Style::default().fg(color)),
+            Span::styled("\u{2591}".repeat(empty), Style::default().fg(STEEL_DIM)),
             Span::styled(format!(" {pct:.0}%"), Style::default().fg(color)),
         ]
     } else {

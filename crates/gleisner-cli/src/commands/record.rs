@@ -386,6 +386,27 @@ mod linux_impl {
             }
         }
 
+        // ── 9d. Capture firewall denials from dmesg ──────────────────────
+        // The firewall rules log denied packets with the [gleisner-fw-deny]
+        // prefix. Try to capture these from dmesg to feed into the
+        // attestation pipeline. Best-effort: skip if dmesg is unavailable.
+        match gleisner_polis::capture_firewall_denials_from_dmesg() {
+            Ok(events) if !events.is_empty() => {
+                let n = events.len();
+                for event in &events {
+                    publisher.publish(event.clone());
+                }
+                tracing::info!(denials = n, "published firewall denial events from dmesg");
+            }
+            Ok(_) => {} // no denials
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "could not capture firewall denials from dmesg — skipping"
+                );
+            }
+        }
+
         // ── 10. Finalize recording ───────────────────────────────────────
         // Drop publisher/bus to close channels, then await both tasks.
         // IMPORTANT: await writer BEFORE hashing the audit log — the writer

@@ -49,15 +49,16 @@ pub use util::{build_claude_inner_command, expand_tilde, resolve_claude_bin};
 // ── Linux-only re-exports ───────────────────────────────────────────
 #[cfg(target_os = "linux")]
 pub use audit_log::{
-    KernelAuditConfig, collect_and_publish_denials, denial_to_events, parse_audit_line,
-    parse_kernel_denials,
+    KernelAuditConfig, capture_firewall_denials_from_dmesg, collect_and_publish_denials,
+    denial_to_events, parse_audit_line, parse_firewall_denial_line, parse_firewall_denials,
+    parse_firewall_denials_from_str, parse_kernel_denials,
 };
 #[cfg(target_os = "linux")]
 pub use bwrap::BwrapSandbox;
 #[cfg(target_os = "linux")]
 pub use landlock::{LandlockEnforcement, LandlockStatus, apply_landlock};
 #[cfg(target_os = "linux")]
-pub use netfilter::{NamespaceHandle, NetworkFilter, TapHandle, TapProvider};
+pub use netfilter::{FIREWALL_DENY_PREFIX, NamespaceHandle, NetworkFilter, TapHandle, TapProvider};
 #[cfg(target_os = "linux")]
 pub use resource::CgroupScope;
 #[cfg(target_os = "linux")]

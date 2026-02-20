@@ -49,6 +49,16 @@ pub struct LearnArgs {
     #[arg(long, value_name = "PATH")]
     pub kernel_audit_log: Option<PathBuf>,
 
+    /// Path to a kernel log file containing nftables/iptables firewall
+    /// denial entries (prefixed with `[gleisner-fw-deny]`).
+    ///
+    /// Typically captured from `dmesg > file` or `/var/log/messages`.
+    /// The firewall rules in gleisner's sandbox log denied packets;
+    /// this flag feeds those denials into the learner so the generated
+    /// profile includes the network destinations the session needed.
+    #[arg(long, value_name = "PATH")]
+    pub firewall_log: Option<PathBuf>,
+
     /// Watch the kernel audit log in real-time, showing denials as they happen.
     ///
     /// Tails the kernel audit log file (like `tail -f`), ingesting new
@@ -89,9 +99,9 @@ pub async fn execute(args: LearnArgs) -> Result<()> {
         return Err(eyre!("--watch requires Linux (Landlock V7 audit records)"));
     }
 
-    if args.audit_log.is_none() && args.kernel_audit_log.is_none() {
+    if args.audit_log.is_none() && args.kernel_audit_log.is_none() && args.firewall_log.is_none() {
         return Err(eyre!(
-            "at least one of --audit-log or --kernel-audit-log must be provided"
+            "at least one of --audit-log, --kernel-audit-log, or --firewall-log must be provided"
         ));
     }
 
@@ -160,6 +170,29 @@ pub async fn execute(args: LearnArgs) -> Result<()> {
     if args.kernel_audit_log.is_some() {
         return Err(eyre!(
             "--kernel-audit-log requires Linux (Landlock V7 audit records)"
+        ));
+    }
+
+    // ── Ingest firewall denial log (if provided) ─────────────────
+    #[cfg(target_os = "linux")]
+    if let Some(ref fw_log_path) = args.firewall_log {
+        let fw_events = gleisner_polis::parse_firewall_denials(fw_log_path)
+            .map_err(|e| eyre!("failed to read firewall log: {e}"))?;
+
+        let fw_count = fw_events.len();
+        for event in &fw_events {
+            learner.observe(event);
+        }
+
+        if !args.quiet {
+            eprintln!("Ingested {fw_count} firewall denial(s) from kernel log");
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    if args.firewall_log.is_some() {
+        return Err(eyre!(
+            "--firewall-log requires Linux (nftables/iptables firewall logging)"
         ));
     }
 

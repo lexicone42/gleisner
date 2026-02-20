@@ -31,6 +31,12 @@ use tracing::{debug, info, warn};
 use crate::error::SandboxError;
 use crate::profile::NetworkPolicy;
 
+/// Log prefix added to nftables/iptables rules for denied packets.
+///
+/// Used by the firewall denial parser in [`crate::audit_log`] to identify
+/// gleisner-originated denial entries in the kernel log.
+pub const FIREWALL_DENY_PREFIX: &str = "[gleisner-fw-deny]";
+
 /// Resolved network filter ready to apply inside a sandbox.
 ///
 /// Created by resolving domain names to IP addresses at sandbox startup.
@@ -170,6 +176,11 @@ if command -v nft >/dev/null 2>&1; then
             );
         }
 
+        // Log denied packets (everything not accepted above) before the chain
+        // policy drops them. This enables the audit2allow workflow: denied
+        // connections appear in dmesg/kernel log for `gleisner learn --firewall-log`.
+        script.push_str("  nft add rule inet gleisner output counter log prefix '[gleisner-fw-deny] ' level warn\n");
+
         script.push_str(
             r"elif command -v iptables >/dev/null 2>&1 && iptables -L -n >/dev/null 2>&1; then
   # iptables legacy fallback (only if kernel module is available)
@@ -200,6 +211,9 @@ if command -v nft >/dev/null 2>&1; then
                 "  iptables -A OUTPUT -p tcp -d {ip} --dport {port} -j ACCEPT"
             );
         }
+
+        // Log denied packets before the chain policy drops them.
+        script.push_str("  iptables -A OUTPUT -j LOG --log-prefix '[gleisner-fw-deny] '\n");
 
         script.push_str(
             r#"else
@@ -738,6 +752,16 @@ mod tests {
             "nft should allow resolved IPs"
         );
 
+        // nft logging present (audit2allow)
+        assert!(
+            script.contains("gleisner-fw-deny"),
+            "nft should log denied packets"
+        );
+        assert!(
+            script.contains("counter log prefix"),
+            "nft should use counter + log"
+        );
+
         // iptables fallback present
         assert!(
             script.contains("ip6tables"),
@@ -754,6 +778,12 @@ mod tests {
         assert!(
             script.contains("-d 104.18.0.1 --dport 443"),
             "iptables should allow resolved IPs"
+        );
+
+        // iptables logging present (audit2allow)
+        assert!(
+            script.contains("-j LOG --log-prefix"),
+            "iptables should log denied packets"
         );
     }
 

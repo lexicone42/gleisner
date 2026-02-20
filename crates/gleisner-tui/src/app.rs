@@ -351,20 +351,24 @@ impl App {
         if let Some(turns) = result.num_turns {
             self.security.turns += turns;
         }
-        // Extract token counts from modelUsage (latest invocation replaces totals).
+        // Extract context usage from modelUsage.
+        //
+        // input_tokens is cumulative across all agentic turns in this query.
+        // cache_read/cache_creation are subsets of input_tokens (not additive).
+        // output_tokens are generated tokens, not context window usage.
+        //
+        // To estimate current context fullness, divide by turn count.
         if let Some(ref usage_map) = result.model_usage {
-            let mut total_tokens = 0u64;
             let mut ctx_window = 0u64;
+            let mut primary_input = 0u64;
             for usage in usage_map.values() {
-                total_tokens += usage.input_tokens
-                    + usage.output_tokens
-                    + usage.cache_read_input_tokens
-                    + usage.cache_creation_input_tokens;
                 if usage.context_window > ctx_window {
                     ctx_window = usage.context_window;
+                    primary_input = usage.input_tokens;
                 }
             }
-            self.security.tokens_used = total_tokens;
+            let turns = u64::from(result.num_turns.unwrap_or(1).max(1));
+            self.security.tokens_used = primary_input / turns;
             self.security.context_window = ctx_window;
         }
 

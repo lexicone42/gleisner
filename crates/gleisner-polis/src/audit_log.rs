@@ -175,7 +175,8 @@ fn parse_audit_timestamp(line: &str) -> Option<DateTime<Utc>> {
 /// Extract a `key=value` or `key="quoted value"` field from an audit line.
 ///
 /// Returns the value with any surrounding quotes stripped.
-fn extract_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+/// Also used by the firewall denial parser for kernel log entries.
+pub(crate) fn extract_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     // Build the search pattern: "key=" (with space or start-of-content before it)
     let needle = format!("{key}=");
     let idx = find_field_start(line, &needle)?;
@@ -340,6 +341,124 @@ pub fn parse_kernel_denials(path: &Path) -> Result<Vec<AuditEvent>, std::io::Err
     }
 
     Ok(events)
+}
+
+// ── Firewall denial parsing ─────────────────────────────────────────
+//
+// nftables/iptables `log` rules produce kernel log entries like:
+//
+// ```text
+// [timestamp] [gleisner-fw-deny] IN= OUT=tap0 SRC=10.0.2.100 DST=142.250.179.110
+//   LEN=60 TOS=0x00 PREC=0x00 TTL=64 ID=12345 DF PROTO=TCP SPT=54321 DPT=443
+//   WINDOW=65535 RES=0x00 SYN URGP=0
+// ```
+//
+// These appear in dmesg / /var/log/messages / journalctl -k. The prefix
+// `[gleisner-fw-deny]` is set by the firewall rules in `netfilter.rs`.
+
+/// A parsed firewall denial from the kernel log.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FirewallDenial {
+    /// Destination IP address.
+    pub dst: String,
+    /// Destination port (0 if not present, e.g. ICMP).
+    pub dpt: u16,
+    /// Protocol (TCP, UDP, ICMP, etc.).
+    pub proto: String,
+}
+
+/// Parse a single kernel log line for a firewall denial entry.
+///
+/// Returns `None` if the line does not contain the gleisner firewall
+/// deny prefix or if the required `DST` field cannot be extracted.
+pub fn parse_firewall_denial_line(line: &str) -> Option<FirewallDenial> {
+    if !line.contains(crate::netfilter::FIREWALL_DENY_PREFIX) {
+        return None;
+    }
+
+    let dst = extract_field(line, "DST")?;
+    let dpt = extract_field(line, "DPT")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let proto = extract_field(line, "PROTO").unwrap_or("TCP").to_owned();
+
+    Some(FirewallDenial {
+        dst: dst.to_owned(),
+        dpt,
+        proto,
+    })
+}
+
+/// Parse firewall denial events from a kernel log file.
+///
+/// Reads dmesg output, `/var/log/messages`, or any file containing
+/// kernel log entries with the `[gleisner-fw-deny]` prefix. Returns
+/// deduplicated [`AuditEvent`]s with [`EventResult::Denied`] — each
+/// unique (destination IP, port) pair produces one event.
+///
+/// Used by `gleisner learn --firewall-log` and automatically by
+/// `gleisner record` (which captures dmesg after session exit).
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read.
+pub fn parse_firewall_denials(path: &Path) -> Result<Vec<AuditEvent>, std::io::Error> {
+    let contents = std::fs::read_to_string(path)?;
+    parse_firewall_denials_from_str(&contents)
+}
+
+/// Parse firewall denial events from a string (e.g. dmesg output).
+///
+/// Same as [`parse_firewall_denials`] but operates on an in-memory string
+/// instead of a file path. Useful when capturing dmesg output directly.
+pub fn parse_firewall_denials_from_str(contents: &str) -> Result<Vec<AuditEvent>, std::io::Error> {
+    let mut events = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for line in contents.lines() {
+        if let Some(denial) = parse_firewall_denial_line(line) {
+            // Deduplicate: one event per unique (dst, port) pair
+            let key = (denial.dst.clone(), denial.dpt);
+            if seen.insert(key) {
+                events.push(AuditEvent {
+                    timestamp: Utc::now(),
+                    sequence: 0,
+                    event: EventKind::NetworkConnect {
+                        target: denial.dst,
+                        port: denial.dpt,
+                    },
+                    result: EventResult::Denied {
+                        reason: format!(
+                            "firewall: {} dropped to port {}",
+                            denial.proto, denial.dpt
+                        ),
+                    },
+                });
+            }
+        }
+    }
+
+    Ok(events)
+}
+
+/// Attempt to capture firewall denials from `dmesg` output.
+///
+/// Runs `dmesg` as a subprocess and greps for the gleisner firewall deny
+/// prefix. Returns parsed, deduplicated events. Best-effort: returns an
+/// empty vec if `dmesg` cannot be executed (e.g. missing permissions or
+/// `kernel.dmesg_restrict=1`).
+pub fn capture_firewall_denials_from_dmesg() -> Result<Vec<AuditEvent>, std::io::Error> {
+    let output = std::process::Command::new("dmesg")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_firewall_denials_from_str(&stdout)
 }
 
 #[cfg(test)]
@@ -608,6 +727,123 @@ mod tests {
         assert!(matches!(events[1].event, EventKind::ProcessExec { .. }));
     }
 
+    // ── Firewall denial tests ──────────────────────────────────────
+
+    /// Realistic nftables log line (from `nft log prefix '[gleisner-fw-deny] '`).
+    const FW_DENY_NFT: &str = "[12345.678] [gleisner-fw-deny] IN= OUT=tap0 SRC=10.0.2.100 DST=142.250.179.110 LEN=60 TOS=0x00 PREC=0x00 TTL=64 ID=54321 DF PROTO=TCP SPT=45678 DPT=443 WINDOW=65535 RES=0x00 SYN URGP=0";
+    /// iptables-style log (same kernel format, just from iptables LOG target).
+    const FW_DENY_IPTABLES: &str = "Feb 20 12:00:00 host kernel: [gleisner-fw-deny] IN= OUT=tap0 SRC=10.0.2.100 DST=93.184.216.34 LEN=60 TOS=0x00 PREC=0x00 TTL=64 ID=12345 DF PROTO=TCP SPT=12345 DPT=80 WINDOW=65535 RES=0x00 SYN URGP=0";
+    /// UDP denial (e.g. NTP).
+    const FW_DENY_UDP: &str = "[12345.678] [gleisner-fw-deny] IN= OUT=tap0 SRC=10.0.2.100 DST=162.159.200.1 LEN=76 PROTO=UDP SPT=54321 DPT=123";
+
+    #[test]
+    fn parse_fw_denial_nft() {
+        let denial = parse_firewall_denial_line(FW_DENY_NFT).expect("should parse");
+        assert_eq!(denial.dst, "142.250.179.110");
+        assert_eq!(denial.dpt, 443);
+        assert_eq!(denial.proto, "TCP");
+    }
+
+    #[test]
+    fn parse_fw_denial_iptables() {
+        let denial = parse_firewall_denial_line(FW_DENY_IPTABLES).expect("should parse");
+        assert_eq!(denial.dst, "93.184.216.34");
+        assert_eq!(denial.dpt, 80);
+        assert_eq!(denial.proto, "TCP");
+    }
+
+    #[test]
+    fn parse_fw_denial_udp() {
+        let denial = parse_firewall_denial_line(FW_DENY_UDP).expect("should parse");
+        assert_eq!(denial.dst, "162.159.200.1");
+        assert_eq!(denial.dpt, 123);
+        assert_eq!(denial.proto, "UDP");
+    }
+
+    #[test]
+    fn parse_fw_denial_non_matching() {
+        // Regular kernel log line — should not match
+        assert!(parse_firewall_denial_line("kernel: TCP: out of memory").is_none());
+        // Landlock record — different parser
+        assert!(parse_firewall_denial_line(FS_DENIAL).is_none());
+        // Empty line
+        assert!(parse_firewall_denial_line("").is_none());
+    }
+
+    #[test]
+    fn parse_fw_denials_file_deduplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("dmesg.log");
+
+        // Same destination repeated 3 times
+        let lines = [FW_DENY_NFT, FW_DENY_NFT, FW_DENY_NFT].join("\n");
+        std::fs::write(&log_path, lines).unwrap();
+
+        let events = parse_firewall_denials(&log_path).expect("should parse");
+        assert_eq!(events.len(), 1, "should deduplicate same (dst, port)");
+        match &events[0].event {
+            EventKind::NetworkConnect { target, port } => {
+                assert_eq!(target, "142.250.179.110");
+                assert_eq!(*port, 443);
+            }
+            other => panic!("expected NetworkConnect, got {other:?}"),
+        }
+        assert!(matches!(events[0].result, EventResult::Denied { .. }));
+    }
+
+    #[test]
+    fn parse_fw_denials_file_multiple_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("dmesg.log");
+
+        let lines = [FW_DENY_NFT, FW_DENY_IPTABLES, FW_DENY_UDP].join("\n");
+        std::fs::write(&log_path, lines).unwrap();
+
+        let events = parse_firewall_denials(&log_path).expect("should parse");
+        assert_eq!(events.len(), 3, "three different (dst, port) pairs");
+    }
+
+    #[test]
+    fn parse_fw_denials_mixed_with_other_logs() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("mixed.log");
+
+        let content = format!(
+            "[1.0] kernel: normal boot message\n{FW_DENY_NFT}\n[2.0] systemd: Starting services...\n{FW_DENY_IPTABLES}\n[3.0] audit: type=SYSCALL\n",
+        );
+        std::fs::write(&log_path, content).unwrap();
+
+        let events = parse_firewall_denials(&log_path).expect("should parse");
+        assert_eq!(
+            events.len(),
+            2,
+            "should find both denial lines among other logs"
+        );
+    }
+
+    #[test]
+    fn parse_fw_denials_missing_file() {
+        let result = parse_firewall_denials(Path::new("/nonexistent/dmesg.log"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_fw_denials_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("empty.log");
+        std::fs::write(&log_path, "").unwrap();
+
+        let events = parse_firewall_denials(&log_path).expect("should parse");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn parse_fw_denials_from_str_works() {
+        let content = format!("{FW_DENY_NFT}\n{FW_DENY_UDP}\n");
+        let events = parse_firewall_denials_from_str(&content).expect("should parse");
+        assert_eq!(events.len(), 2);
+    }
+
     mod proptests {
         use super::*;
         use proptest::prelude::*;
@@ -677,6 +913,33 @@ mod tests {
                 for event in &events {
                     assert!(matches!(event.result, EventResult::Denied { .. }));
                 }
+            }
+
+            /// parse_firewall_denial_line never panics on arbitrary strings.
+            #[test]
+            fn fw_parse_never_panics(line in ".*") {
+                let _ = parse_firewall_denial_line(&line);
+            }
+
+            /// Valid firewall denial lines always produce a FirewallDenial.
+            #[test]
+            fn fw_valid_lines_parse(
+                dst_a in 1u8..=254,
+                dst_b in 0u8..=255,
+                dst_c in 0u8..=255,
+                dst_d in 1u8..=254,
+                dpt in 1u16..=65534,
+                proto in prop::sample::select(vec!["TCP", "UDP"]),
+            ) {
+                let line = format!(
+                    "[0.0] [gleisner-fw-deny] IN= OUT=tap0 SRC=10.0.2.100 DST={dst_a}.{dst_b}.{dst_c}.{dst_d} LEN=60 PROTO={proto} SPT=12345 DPT={dpt}"
+                );
+                let denial = parse_firewall_denial_line(&line);
+                prop_assert!(denial.is_some(), "valid fw line should parse: {line}");
+                let d = denial.unwrap();
+                prop_assert_eq!(&d.dst, &format!("{dst_a}.{dst_b}.{dst_c}.{dst_d}"));
+                prop_assert_eq!(d.dpt, dpt);
+                prop_assert_eq!(&d.proto, proto);
             }
 
             /// parse_kernel_denials roundtrips: if we write valid lines to a file

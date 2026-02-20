@@ -68,6 +68,7 @@ der = "0.7"
 # TUI
 ratatui = { version = "0.30", features = ["crossterm"] }
 crossterm = "0.29"
+unicode-width = "0.2"
 
 # Policy (WASM runtime for OPA/Rego)
 wasmtime = "27"

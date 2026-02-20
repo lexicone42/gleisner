@@ -15,6 +15,7 @@ keyless = ["gleisner-introdus/keyless"]
 # TUI
 ratatui.workspace = true
 crossterm.workspace = true
+unicode-width.workspace = true
 
 # Async
 tokio.workspace = true
