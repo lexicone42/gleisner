@@ -91,8 +91,16 @@ async fn collect_messages(
 }
 
 // ─── Driver unit tests ──────────────────────────────────────────
+//
+// These tests use `multi_thread` to avoid a race condition in the
+// default `current_thread` runtime. `spawn_query` puts the subprocess
+// reader on a `tokio::spawn` task — on a single-threaded runtime,
+// that task can only progress when the test yields. Under heavy
+// parallel test load (e.g. full workspace `cargo test`), the OS may
+// delay the runtime thread enough that the sender drops before the
+// receiver collects any events, causing spurious "got 0 events" failures.
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn driver_delivers_events_from_simple_fixture() {
     let script = make_fake_claude("simple_response.jsonl", None, 0);
     let config = config_for_fake(&script);
@@ -109,12 +117,18 @@ async fn driver_delivers_events_from_simple_fixture() {
 
     assert!(
         event_count >= 3,
-        "expected at least 3 events (system + assistant + result), got {event_count}"
+        "expected at least 3 events (system + assistant + result), got {event_count}; \
+         total messages: {}, types: {:?}",
+        messages.len(),
+        messages
+            .iter()
+            .map(std::mem::discriminant)
+            .collect::<Vec<_>>()
     );
     assert!(has_exited, "expected Exited message");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn driver_delivers_events_from_tool_use_fixture() {
     let script = make_fake_claude("tool_use_response.jsonl", None, 0);
     let config = config_for_fake(&script);
@@ -132,7 +146,7 @@ async fn driver_delivers_events_from_tool_use_fixture() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn driver_captures_stderr() {
     let script = make_fake_claude("simple_response.jsonl", Some("test stderr output"), 0);
     let config = config_for_fake(&script);
@@ -158,7 +172,7 @@ async fn driver_captures_stderr() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn driver_reports_nonzero_exit_code() {
     let script = make_fake_claude("simple_response.jsonl", None, 42);
     let config = config_for_fake(&script);
@@ -176,7 +190,7 @@ async fn driver_reports_nonzero_exit_code() {
     assert_eq!(exit_code, Some(42), "expected exit code 42");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn driver_reports_spawn_error_for_missing_binary() {
     let config = QueryConfig {
         claude_bin: "/nonexistent/binary".into(),
@@ -240,7 +254,7 @@ fn process_messages(app: &mut App, messages: &[DriverMessage]) {
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_pipeline_simple_response() {
     let script = make_fake_claude("simple_response.jsonl", None, 0);
     let config = config_for_fake(&script);
@@ -262,7 +276,7 @@ async fn full_pipeline_simple_response() {
     assert!(has_assistant, "expected assistant message");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_pipeline_tool_use_response() {
     let script = make_fake_claude("tool_use_response.jsonl", None, 0);
     let config = config_for_fake(&script);
@@ -281,7 +295,7 @@ async fn full_pipeline_tool_use_response() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_pipeline_with_stderr_shows_in_conversation() {
     let script = make_fake_claude(
         "simple_response.jsonl",
@@ -311,7 +325,7 @@ async fn full_pipeline_with_stderr_shows_in_conversation() {
 /// A subsequent nonzero exit code is correctly ignored — the session already
 /// completed via the result event. The "exited with code" message only appears
 /// when the process exits without producing a result event (crash/timeout).
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_pipeline_nonzero_exit_after_result_is_ignored() {
     let script = make_fake_claude("simple_response.jsonl", None, 1);
     let config = config_for_fake(&script);

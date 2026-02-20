@@ -16,8 +16,9 @@ Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligen
 - **Claude Code** -- Anthropic's CLI coding assistant (`npm install -g @anthropic-ai/claude-code`)
 
 Optional:
-- **nftables** or **iptables** -- for network domain allowlisting (slirp4netns + firewall rules)
-- **Sigstore** tools -- for keyless signing via Fulcio and transparency logging via Rekor
+- **[pasta](https://passt.top/)** or **slirp4netns** -- TAP networking for domain-filtered network access inside the sandbox
+- **nftables** or **iptables** -- firewall rules for domain allowlisting
+- **Sigstore** tools -- for keyless signing via Fulcio and transparency logging via Rekor (`cargo build --features keyless`)
 
 ## Architecture
 
@@ -68,12 +69,116 @@ gleisner verify --json bundle.json
 # Verify the full attestation chain from a bundle
 gleisner verify --chain bundle.json
 
+# Compare two attestation bundles
+gleisner diff bundle-old.json bundle-new.json
+
+# Generate a sandbox profile from kernel audit observations
+gleisner learn --kernel-audit-log /var/log/gleisner/landlock-audit.log
+gleisner learn --kernel-audit-log audit.log --base-profile developer --output learned.toml
+
 # Generate a Software Bill of Materials
 gleisner sbom
 gleisner sbom --json
 gleisner sbom --json --output sbom.json
 gleisner sbom --project-dir /path/to/project
 ```
+
+## TUI
+
+The TUI wraps Claude Code in an interactive terminal interface with live security telemetry:
+
+```bash
+# Interactive TUI (no sandbox)
+gleisner-tui --profile developer --project-dir /path/to/project
+
+# Sandboxed TUI with full attestation pipeline
+gleisner-tui --sandbox --profile developer --project-dir /path/to/project
+```
+
+Inside the TUI, slash commands provide security tooling inline:
+
+| Command | Description |
+|---------|-------------|
+| `/sbom` | Generate and display SBOM summary |
+| `/verify <path>` | Verify an attestation bundle |
+| `/inspect <path>` | Display attestation details |
+| `/help` | Show available commands |
+
+When running with `--sandbox`, the TUI automatically records an attestation bundle (`.gleisner/attestation-{timestamp}.json`) and audit log (`.gleisner/audit-{timestamp}.jsonl`) for each session. The dashboard shows a **REC** indicator while recording, tool call counts, file operations, and cost tracking.
+
+## Demo Walkthrough
+
+A complete pipeline demonstration, from sandbox to verified chain.
+
+### 1. Record a sandboxed session
+
+```bash
+gleisner record --profile developer -- claude -p "What is 2+2?"
+```
+
+This wraps the Claude session in a bubblewrap sandbox with Landlock filesystem rules, cgroup resource limits, and network filtering. When the session ends, Gleisner:
+- Captures a pre/post filesystem snapshot
+- Monitors child processes via `/proc`
+- Collects Landlock denial events (if kernel audit is configured)
+- Signs the attestation with a local ECDSA P-256 key
+- Links to the previous attestation in `.gleisner/` (chain)
+
+Output files appear in `.gleisner/`:
+```
+.gleisner/
+  attestation-2026-02-20T14-30-00Z.json   # Signed in-toto v1 statement
+  audit-2026-02-20T14-30-00Z.jsonl         # Raw event log
+```
+
+### 2. Inspect the attestation
+
+```bash
+gleisner inspect .gleisner/attestation-2026-02-20T14-30-00Z.json
+```
+
+Shows the statement type (in-toto v1.0.0), predicate type (SLSA Build v1.0), builder ID, session timing, subject/material counts, and sandbox profile used.
+
+Use `--detailed` for full subject and material listings, or `--json` for machine-readable output.
+
+### 3. Verify the attestation
+
+```bash
+gleisner verify .gleisner/attestation-2026-02-20T14-30-00Z.json
+```
+
+Checks:
+- **Signature**: ECDSA P-256 verification against the embedded public key
+- **Digests**: Audit log digest matches the referenced JSONL file
+- **Policy**: (optional) Enforce rules like `require_sandbox`, `max_session_duration_secs`, `allowed_profiles`
+
+Add `--chain` to walk the full attestation chain:
+
+```bash
+gleisner verify --chain .gleisner/attestation-2026-02-20T14-30-00Z.json
+```
+
+This resolves each `parentDigest` link backwards until it reaches the chain root, verifying digest integrity at every step.
+
+### 4. Run a second session and diff
+
+```bash
+gleisner record --profile developer -- claude -p "Add a docstring to main.rs"
+gleisner diff .gleisner/attestation-*-14-30-*.json .gleisner/attestation-*-14-45-*.json
+```
+
+The diff shows:
+- **Subjects**: Files added, removed, or changed (with digest comparison)
+- **Materials**: Input file differences
+- **Environment**: Model, profile, or sandbox config changes
+- **Timing**: Session duration comparison
+
+### 5. Generate an SBOM
+
+```bash
+gleisner sbom --json --output sbom.json
+```
+
+Parses `Cargo.lock` and produces a CycloneDX 1.5 JSON document listing every dependency with name, version, package URL (purl), and SHA-256 hash.
 
 ## Chain Verification
 
@@ -102,12 +207,14 @@ Use `--no-chain` with `gleisner record` to start a new chain (e.g., after a majo
 
 | Crate | Description |
 |-------|-------------|
-| `gleisner-cli` | CLI binary with `wrap`, `record`, `verify`, `inspect`, `sbom` commands |
-| `gleisner-polis` | Sandbox enforcement: Landlock LSM, cgroup resource limits, inotify file monitoring with snapshot reconciliation |
-| `gleisner-introdus` | Attestation bundle creation: in-toto statements, ECDSA P-256 signing |
-| `gleisner-lacerta` | Verification: signature checking (local key + Sigstore), digest verification, policy engine (JSON + WASM) |
+| `gleisner-cli` | CLI binary: `wrap`, `record`, `verify`, `inspect`, `sbom`, `diff`, `learn` |
+| `gleisner-tui` | Interactive TUI with live security telemetry, slash commands, and attestation recording |
+| `gleisner-polis` | Sandbox enforcement: Landlock LSM v7, cgroup resource limits, inotify monitoring, profile learning |
+| `gleisner-introdus` | Attestation bundles: in-toto v1 statements, ECDSA P-256 signing, chain linking |
+| `gleisner-lacerta` | Verification: signature checking (local key + Sigstore), digest verification, policy engine |
 | `gleisner-bridger` | SBOM generation: Cargo.lock parsing, CycloneDX 1.5 JSON output |
-| `gleisner-scapes` | Event bus and monitoring infrastructure |
+| `gleisner-scapes` | Event bus, JSONL audit writer, monitoring infrastructure |
+| `gleisner-sandbox-init` | Trampoline binary: applies Landlock rules inside bubblewrap before exec |
 
 ## Configuration
 
