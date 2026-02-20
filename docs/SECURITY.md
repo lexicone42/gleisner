@@ -40,8 +40,7 @@ kernel primitives. Claude Code runs inside a restricted environment where:
   paths.
 - Network egress is restricted to an explicit domain allowlist.
 - Process visibility is limited to the sandbox's own PID namespace.
-- Syscall surface is reduced via seccomp BPF profiles.
-- Resource consumption is bounded by cgroups v2 limits.
+- Resource consumption is bounded by cgroups v2 and rlimits (FSIZE, AS, NPROC, NOFILE).
 
 These constraints are applied externally at the kernel level. Claude Code
 cannot disable them from within the sandbox.

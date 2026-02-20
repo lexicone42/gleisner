@@ -93,9 +93,6 @@ pub struct ProcessPolicy {
     pub no_new_privileges: bool,
     /// Command allowlist. Empty means all commands are permitted (but logged).
     pub command_allowlist: Vec<String>,
-    /// Optional seccomp BPF profile path.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seccomp_profile: Option<PathBuf>,
 }
 
 /// Claude Code plugin and MCP tool policy.

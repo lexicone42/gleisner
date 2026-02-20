@@ -404,7 +404,6 @@ mod tests {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: vec![],
-                seccomp_profile: None,
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,

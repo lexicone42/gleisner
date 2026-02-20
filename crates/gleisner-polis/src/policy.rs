@@ -182,7 +182,6 @@ mod tests {
                     "rustc".to_owned(),
                     "/usr/bin/git".to_owned(),
                 ],
-                seccomp_profile: None,
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,
