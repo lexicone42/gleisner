@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 /// Tries `$HOME` first, falls back to system passwd lookup via
 /// `directories::BaseDirs`. Logs a warning and returns the path
 /// unchanged only if both methods fail.
+#[must_use]
 pub fn expand_tilde(path: &Path) -> PathBuf {
     let path_str = path.display().to_string();
     if path_str.starts_with('~') {
@@ -39,6 +40,7 @@ pub fn expand_tilde(path: &Path) -> PathBuf {
 /// 3. `~/.claude/local/bin/claude` (Claude's own installer)
 ///
 /// Falls back to `"claude"` (relies on PATH) if none found.
+#[must_use]
 pub fn resolve_claude_bin() -> String {
     if let Ok(home) = std::env::var("HOME") {
         let candidates = [
@@ -60,6 +62,7 @@ pub fn resolve_claude_bin() -> String {
 /// Constructs `[claude_bin, --dangerously-skip-permissions (if enabled),
 /// --disallowedTools (if any), ...extra_args]` — the common pattern
 /// used by `wrap` and `record`.
+#[must_use]
 pub fn build_claude_inner_command(
     claude_bin: &str,
     profile: &crate::Profile,
