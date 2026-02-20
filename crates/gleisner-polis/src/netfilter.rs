@@ -212,6 +212,7 @@ if command -v nft >/dev/null 2>&1; then
     ip6tables -P OUTPUT DROP 2>/dev/null || true
     ip6tables -P INPUT DROP 2>/dev/null || true
     ip6tables -P FORWARD DROP 2>/dev/null || true
+    ip6tables -A OUTPUT -j LOG --log-prefix '[gleisner-fw-deny] ' 2>/dev/null || true
   fi
   # IPv4: restrict outbound
   iptables -P FORWARD DROP

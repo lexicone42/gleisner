@@ -9,7 +9,7 @@ repository.workspace = true
 
 [features]
 default = []
-keyless = ["gleisner-introdus/keyless"]
+keyless = ["gleisner-introdus/keyless", "dep:sigstore-sign", "dep:sigstore-oidc"]
 
 [dependencies]
 # TUI
@@ -42,6 +42,10 @@ gleisner-introdus.workspace = true
 tokio-util.workspace = true
 chrono.workspace = true
 sha2.workspace = true
+
+# Sigstore keyless signing (optional, behind `keyless` feature)
+sigstore-sign = { workspace = true, optional = true }
+sigstore-oidc = { workspace = true, optional = true }
 
 [dev-dependencies]
 # PTY-based integration testing

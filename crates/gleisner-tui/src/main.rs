@@ -175,6 +175,8 @@ async fn run(
 
     // Active query handle — holds the message receiver and abort handle.
     let mut query: Option<QueryHandle> = None;
+    // Background cosign state — active while waiting for /cosigncode.
+    let mut cosign: Option<CosignState> = None;
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &app))?;
@@ -203,13 +205,37 @@ async fn run(
                                 query = Some(spawn_query(config, 256));
                             }
                             UserAction::Command(TuiCommand::Cosign(ref path_arg)) => {
-                                handle_cosign(
-                                    &mut app,
-                                    &mut terminal,
-                                    path_arg.as_deref(),
-                                    project_dir,
-                                )
-                                .await?;
+                                if cosign.is_some() {
+                                    app.push_message(
+                                        Role::System,
+                                        "[error] Cosign already in progress. Use /cosigncode <code> to complete.",
+                                    );
+                                } else {
+                                    cosign =
+                                        start_cosign(&mut app, path_arg.as_deref(), project_dir);
+                                }
+                            }
+                            UserAction::Command(TuiCommand::CosignCode(ref code)) => {
+                                if let Some(ref cs) = cosign {
+                                    info!("sending authorization code to cosign flow");
+                                    if cs.code_tx.send(code.clone()).is_err() {
+                                        app.push_message(
+                                            Role::System,
+                                            "[error] Cosign flow has ended. Try /cosign again.",
+                                        );
+                                        cosign = None;
+                                    } else {
+                                        app.push_message(
+                                            Role::System,
+                                            "Code submitted, signing...",
+                                        );
+                                    }
+                                } else {
+                                    app.push_message(
+                                        Role::System,
+                                        "[error] No cosign in progress. Start with /cosign first.",
+                                    );
+                                }
                             }
                             UserAction::Command(cmd) => {
                                 handle_command(&mut app, cmd, project_dir);
@@ -285,6 +311,50 @@ async fn run(
         // doesn't wait for the next poll timeout to show new content.
         if query.is_some() {
             terminal.draw(|frame| ui::draw(frame, &app))?;
+        }
+
+        // Poll for cosign results (non-blocking)
+        if let Some(ref cs) = cosign {
+            while let Ok(result) = cs.result_rx.try_recv() {
+                match result {
+                    CosignResult::AuthUrl(url) => {
+                        app.push_message(
+                            Role::System,
+                            format!(
+                                "Open this URL in a browser:\n  {url}\n\
+                                 Authenticate, then type: /cosigncode <code>"
+                            ),
+                        );
+                    }
+                    CosignResult::Success {
+                        bundle_path,
+                        sigstore_path,
+                    } => {
+                        info!(
+                            bundle = %bundle_path.display(),
+                            sigstore = %sigstore_path.display(),
+                            "cosign complete"
+                        );
+                        app.security.pending_cosign = false;
+                        app.security.cosigned = true;
+                        app.push_message(
+                            Role::System,
+                            format!(
+                                "Cosigned with Sigstore:\n  Bundle:   {}\n  Sigstore: {}",
+                                bundle_path.display(),
+                                sigstore_path.display()
+                            ),
+                        );
+                        cosign = None;
+                        break;
+                    }
+                    CosignResult::Error(e) => {
+                        app.push_message(Role::System, format!("[error] Cosign failed: {e}"));
+                        cosign = None;
+                        break;
+                    }
+                }
+            }
         }
 
         // Clean up the handle if the session is done
@@ -372,8 +442,8 @@ fn handle_command(app: &mut App, cmd: TuiCommand, project_dir: &std::path::Path)
                 }
             }
         }
-        TuiCommand::Cosign(_) => {
-            // Handled in the event loop — requires terminal access for TUI suspend/resume.
+        TuiCommand::Cosign(_) | TuiCommand::CosignCode(_) => {
+            // Handled in the event loop — needs access to cosign state.
         }
         TuiCommand::Help => {
             let help = "\
@@ -381,30 +451,51 @@ Available commands:
   /sbom              Generate SBOM for current project
   /verify <path>     Verify an attestation bundle
   /inspect <path>    Inspect an attestation bundle
-  /cosign            Cosign attestation with Sigstore (interactive OOB)
+  /cosign            Cosign attestation with Sigstore (starts OIDC flow)
   /cosign <token>    Cosign with a pre-obtained OIDC JWT (eyJ...)
-  /cosign <path>     Cosign a specific bundle file
+  /cosigncode <code> Submit auth code from browser for in-progress cosign
   /help              Show this help message";
             app.push_message(Role::System, help);
         }
     }
 }
 
-/// Cosign the latest (or specified) attestation bundle with Sigstore keyless signing.
+/// State for an in-progress background cosign operation.
 ///
-/// Suspends the TUI for the interactive OIDC auth flow, then resumes after signing.
-/// The bundle is re-signed with Sigstore and a native `.sigstore.json` is written
-/// alongside for `cosign verify-blob` / `gh attestation verify` compatibility.
-async fn handle_cosign(
+/// The OIDC auth flow runs on a separate thread (with its own tokio runtime)
+/// so `prompt_for_code()` can block without freezing the TUI event loop.
+/// The TUI displays the auth URL and accepts the code via `/cosigncode`.
+struct CosignState {
+    /// Send the authorization code to the background OIDC flow.
+    code_tx: std::sync::mpsc::Sender<String>,
+    /// Receive the signing result from the background thread.
+    result_rx: std::sync::mpsc::Receiver<CosignResult>,
+}
+
+/// Result of a background cosign operation.
+#[allow(dead_code)] // Variants constructed behind #[cfg(feature = "keyless")]
+enum CosignResult {
+    /// The auth URL is ready — display it to the user.
+    AuthUrl(String),
+    /// Signing completed successfully.
+    Success {
+        bundle_path: PathBuf,
+        sigstore_path: PathBuf,
+    },
+    /// Signing failed.
+    Error(String),
+}
+
+/// Start a background cosign flow for the latest (or specified) attestation bundle.
+///
+/// Returns a `CosignState` if the flow was started, or `None` if there was an
+/// error (already reported to the user via app messages).
+fn start_cosign(
     app: &mut App,
-    terminal: &mut DefaultTerminal,
     path_arg: Option<&str>,
     project_dir: &std::path::Path,
-) -> color_eyre::Result<()> {
-    info!(path = ?path_arg, "running /cosign command");
-
-    // Detect if the argument is a JWT token (for headless cosigning).
-    // JWT tokens start with "eyJ" (base64 of '{"'). Otherwise treat as bundle path.
+) -> Option<CosignState> {
+    // Detect JWT token vs file path
     let (bundle_path_arg, oidc_token) = match path_arg {
         Some(arg) if arg.starts_with("eyJ") => (None, Some(arg.to_owned())),
         other => (other, None),
@@ -422,11 +513,11 @@ async fn handle_cosign(
                     Role::System,
                     "[error] No attestation bundles found in .gleisner/",
                 );
-                return Ok(());
+                return None;
             }
             Err(e) => {
                 app.push_message(Role::System, format!("[error] {e}"));
-                return Ok(());
+                return None;
             }
         }
     };
@@ -436,7 +527,7 @@ async fn handle_cosign(
         Ok(json) => json,
         Err(e) => {
             app.push_message(Role::System, format!("[error] Cannot read bundle: {e}"));
-            return Ok(());
+            return None;
         }
     };
     let bundle: gleisner_introdus::bundle::AttestationBundle =
@@ -444,99 +535,194 @@ async fn handle_cosign(
             Ok(b) => b,
             Err(e) => {
                 app.push_message(Role::System, format!("[error] Invalid bundle JSON: {e}"));
-                return Ok(());
+                return None;
             }
         };
 
     #[cfg(feature = "keyless")]
     {
-        use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
-
-        let has_token = oidc_token.is_some();
-        let mode_label = if has_token {
-            "token"
+        if oidc_token.is_some() {
+            app.push_message(
+                Role::System,
+                format!(
+                    "Cosigning with pre-supplied token: {}",
+                    bundle_path.display()
+                ),
+            );
         } else {
-            "interactive OOB"
-        };
-        app.push_message(
-            Role::System,
-            format!("Cosigning: {} (mode: {mode_label})", bundle_path.display()),
-        );
-        terminal.draw(|frame| ui::draw(frame, app))?;
-
-        // Suspend TUI for OIDC auth flow (interactive OOB prints URL + waits for code)
-        crossterm::terminal::disable_raw_mode()?;
-        crossterm::execute!(std::io::stdout(), LeaveAlternateScreen)?;
-
-        println!("\n--- Sigstore keyless signing ---");
-        println!("Bundle: {}", bundle_path.display());
-        if !has_token {
-            println!("A URL will be printed below. Open it in a browser on any device,");
-            println!("authenticate, then paste the authorization code here.");
+            app.push_message(
+                Role::System,
+                format!("Starting Sigstore OIDC flow for: {}", bundle_path.display()),
+            );
         }
-        println!();
 
-        // Sigstore bundle goes alongside the attestation
         let sigstore_path = bundle_path.with_extension("sigstore.json");
 
-        let signer =
-            gleisner_introdus::signer::SigstoreSigner::new(Some(sigstore_path.clone()), oidc_token);
+        // Channels: TUI ←→ background thread
+        let (code_tx, code_rx) = std::sync::mpsc::channel::<String>();
+        let (result_tx, result_rx) = std::sync::mpsc::channel::<CosignResult>();
 
-        // Sign the existing payload directly (no need to deserialize InTotoStatement)
-        let result = signer.sign_payload(&bundle.payload).await;
+        let payload = bundle.payload.clone();
+        let bp = bundle_path.clone();
+        let sp = sigstore_path.clone();
 
-        // Resume TUI
-        crossterm::execute!(std::io::stdout(), EnterAlternateScreen)?;
-        crossterm::terminal::enable_raw_mode()?;
-        terminal.clear()?;
+        // Spawn the OIDC + signing flow on a separate thread with its own runtime.
+        // This lets prompt_for_code() block without freezing the TUI.
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime for cosign");
 
-        match result {
-            Ok(cosigned_bundle) => {
-                // Write the cosigned bundle (replaces local-key signature with Sigstore)
-                let cosigned_json = serde_json::to_string_pretty(&cosigned_bundle)
-                    .expect("bundle serializes to JSON");
-                if let Err(e) = std::fs::write(&bundle_path, &cosigned_json) {
-                    app.push_message(
-                        Role::System,
-                        format!("[error] Failed to write cosigned bundle: {e}"),
-                    );
+            rt.block_on(async move {
+                // Custom callback that sends URL to TUI and waits for code from TUI
+                let callback = TuiAuthCallback {
+                    result_tx: result_tx.clone(),
+                    code_rx,
+                };
+
+                let token = if let Some(jwt) = oidc_token {
+                    // Pre-supplied token — skip interactive flow
+                    match sigstore_oidc::parse_identity_token(&jwt) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            let _ =
+                                result_tx.send(CosignResult::Error(format!("invalid token: {e}")));
+                            return;
+                        }
+                    }
                 } else {
-                    info!(
-                        bundle = %bundle_path.display(),
-                        sigstore = %sigstore_path.display(),
-                        "cosign complete"
-                    );
-                    app.security.pending_cosign = false;
-                    app.security.cosigned = true;
-                    app.push_message(
-                        Role::System,
-                        format!(
-                            "Cosigned with Sigstore:\n  Bundle:   {}\n  Sigstore: {}",
-                            bundle_path.display(),
-                            sigstore_path.display()
-                        ),
-                    );
+                    // Interactive OIDC via custom callback
+                    let client = sigstore_oidc::OAuthClient::sigstore();
+                    match client
+                        .auth_with_options(callback, sigstore_oidc::AuthOptions { force_oob: true })
+                        .await
+                    {
+                        Ok(t) => t,
+                        Err(e) => {
+                            let _ = result_tx
+                                .send(CosignResult::Error(format!("OIDC auth failed: {e}")));
+                            return;
+                        }
+                    }
+                };
+
+                // Sign with the obtained token
+                let context = sigstore_sign::SigningContext::production();
+                let signer = context.signer(token);
+                match signer.sign_raw_statement(payload.as_bytes()).await {
+                    Ok(sigstore_bundle) => {
+                        // Write native Sigstore bundle
+                        if let Ok(json) = serde_json::to_string_pretty(&sigstore_bundle) {
+                            let _ = std::fs::write(&sp, &json);
+                        }
+
+                        // Build our attestation bundle format
+                        let bundle_json =
+                            serde_json::to_string_pretty(&sigstore_bundle).unwrap_or_default();
+                        let bundle_value: serde_json::Value =
+                            serde_json::from_str(&bundle_json).unwrap_or_default();
+
+                        let cert_chain = bundle_value
+                            .pointer("/verificationMaterial/certificate/rawBytes")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_owned();
+
+                        let rekor_log_id = bundle_value
+                            .pointer("/verificationMaterial/tlogEntries/0/logIndex")
+                            .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
+                            .unwrap_or("")
+                            .to_owned();
+
+                        let cosigned = gleisner_introdus::bundle::AttestationBundle {
+                            payload,
+                            signature: String::new(),
+                            verification_material:
+                                gleisner_introdus::bundle::VerificationMaterial::Sigstore {
+                                    certificate_chain: cert_chain,
+                                    rekor_log_id,
+                                },
+                        };
+
+                        if let Ok(json) = serde_json::to_string_pretty(&cosigned) {
+                            if let Err(e) = std::fs::write(&bp, &json) {
+                                let _ = result_tx.send(CosignResult::Error(format!(
+                                    "failed to write bundle: {e}"
+                                )));
+                                return;
+                            }
+                        }
+
+                        let _ = result_tx.send(CosignResult::Success {
+                            bundle_path: bp,
+                            sigstore_path: sp,
+                        });
+                    }
+                    Err(e) => {
+                        let _ = result_tx
+                            .send(CosignResult::Error(format!("Sigstore signing failed: {e}")));
+                    }
                 }
-            }
-            Err(e) => {
-                app.push_message(
-                    Role::System,
-                    format!("[error] Sigstore signing failed: {e}"),
-                );
-            }
-        }
+            });
+        });
+
+        return Some(CosignState { code_tx, result_rx });
     }
 
     #[cfg(not(feature = "keyless"))]
     {
-        let _ = (&bundle_path, &bundle, &terminal, &oidc_token);
+        let _ = (&bundle_path, &bundle, &oidc_token);
         app.push_message(
             Role::System,
             "[error] Sigstore keyless not available. Rebuild with: cargo build --features keyless",
         );
+        None
+    }
+}
+
+/// Custom OIDC auth callback that integrates with the TUI event loop.
+///
+/// Instead of reading from stdin (which doesn't work in TUI mode),
+/// sends the auth URL to the TUI for display and blocks on a channel
+/// waiting for the user to submit the code via `/cosigncode`.
+#[cfg(feature = "keyless")]
+struct TuiAuthCallback {
+    result_tx: std::sync::mpsc::Sender<CosignResult>,
+    code_rx: std::sync::mpsc::Receiver<String>,
+}
+
+#[cfg(feature = "keyless")]
+impl sigstore_oidc::templates::HtmlTemplates for TuiAuthCallback {
+    fn success_html(&self) -> &str {
+        "<html><body><h1>Authentication successful!</h1><p>You can close this tab.</p></body></html>"
     }
 
-    Ok(())
+    fn error_html(&self, error: &str) -> String {
+        format!("<html><body><h1>Error</h1><p>{error}</p></body></html>")
+    }
+}
+
+#[cfg(feature = "keyless")]
+impl sigstore_oidc::AuthCallback for TuiAuthCallback {
+    fn auth_url_ready(&self, url: &str, _mode: sigstore_oidc::AuthMode) {
+        let _ = self.result_tx.send(CosignResult::AuthUrl(url.to_owned()));
+    }
+
+    fn prompt_for_code(&self) -> std::io::Result<String> {
+        // Block this thread until the TUI sends the code via /cosigncode.
+        // This runs on a separate thread so it doesn't freeze the TUI.
+        self.code_rx.recv().map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "cosign cancelled — no code received",
+            )
+        })
+    }
+
+    fn waiting_for_redirect(&self) {}
+
+    fn auth_complete(&self) {}
 }
 
 /// Initialize file-based debug logging.

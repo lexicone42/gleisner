@@ -87,6 +87,8 @@ pub enum TuiCommand {
     Inspect(String),
     /// Cosign the latest attestation with Sigstore keyless signing.
     Cosign(Option<String>),
+    /// Submit the OIDC authorization code for an in-progress cosign flow.
+    CosignCode(String),
     /// Show available TUI commands.
     Help,
 }
@@ -210,6 +212,14 @@ impl App {
                 }
                 "cosign" if arg.is_empty() => Some(TuiCommand::Cosign(None)),
                 "cosign" => Some(TuiCommand::Cosign(Some(arg))),
+                "cosigncode" if !arg.is_empty() => Some(TuiCommand::CosignCode(arg)),
+                "cosigncode" => {
+                    self.push_message(
+                        Role::System,
+                        "/cosigncode requires the authorization code from the browser",
+                    );
+                    return None;
+                }
                 "help" => Some(TuiCommand::Help),
                 _ => None,
             };

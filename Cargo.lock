@@ -2578,6 +2578,8 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sigstore-oidc",
+ "sigstore-sign",
  "tempfile",
  "tokio",
  "tokio-util",
