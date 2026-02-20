@@ -585,6 +585,15 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         Span::styled("\u{25CB} ---", label_style)
     };
 
+    let cosign_span = if sec.pending_cosign {
+        Span::styled(
+            "\u{25CF} /cosign",
+            Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled("\u{25CB} ---", label_style)
+    };
+
     let exo_self_span = if sec.exo_self_active {
         Span::styled(
             "\u{25CF} active",
@@ -612,6 +621,7 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(perm_mode, value_style),
         ]),
         Line::from(vec![Span::styled("Attest  ", label_style), recording_span]),
+        Line::from(vec![Span::styled("Cosign  ", label_style), cosign_span]),
         Line::from(vec![Span::styled("Exo     ", label_style), exo_self_span]),
         Line::from(""),
         // ── Sensors ──

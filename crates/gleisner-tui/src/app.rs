@@ -57,6 +57,8 @@ pub struct SecurityState {
     pub tokens_used: u64,
     /// Context window size from the model.
     pub context_window: u64,
+    /// An attestation was recorded but not yet cosigned with Sigstore.
+    pub pending_cosign: bool,
 }
 
 /// The input mode determines how keystrokes are interpreted.
@@ -77,6 +79,8 @@ pub enum TuiCommand {
     Verify(String),
     /// Inspect an attestation bundle.
     Inspect(String),
+    /// Cosign the latest attestation with Sigstore keyless signing.
+    Cosign(Option<String>),
     /// Show available TUI commands.
     Help,
 }
@@ -198,6 +202,8 @@ impl App {
                     );
                     return None;
                 }
+                "cosign" if arg.is_empty() => Some(TuiCommand::Cosign(None)),
+                "cosign" => Some(TuiCommand::Cosign(Some(arg))),
                 "help" => Some(TuiCommand::Help),
                 _ => None,
             };

@@ -122,7 +122,8 @@ async fn main() -> color_eyre::Result<()> {
         &project_dir,
         use_sigstore,
         sigstore_token.as_deref(),
-    );
+    )
+    .await;
     ratatui::restore();
 
     info!("gleisner-tui exited");
@@ -130,7 +131,7 @@ async fn main() -> color_eyre::Result<()> {
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
-fn run(
+async fn run(
     mut terminal: DefaultTerminal,
     profile: &gleisner_polis::profile::Profile,
     sandbox: Option<&SandboxConfig>,
@@ -192,6 +193,15 @@ fn run(
                                 }
                                 query = Some(spawn_query(config, 256));
                             }
+                            UserAction::Command(TuiCommand::Cosign(ref path_arg)) => {
+                                handle_cosign(
+                                    &mut app,
+                                    &mut terminal,
+                                    path_arg.as_deref(),
+                                    project_dir,
+                                )
+                                .await?;
+                            }
                             UserAction::Command(cmd) => {
                                 handle_command(&mut app, cmd, project_dir);
                             }
@@ -222,6 +232,7 @@ fn run(
                     DriverMessage::AttestationComplete { path, event_count } => {
                         info!(path = %path.display(), events = event_count, "attestation complete");
                         app.security.recording = false;
+                        app.security.pending_cosign = true;
                         app.push_message(
                             Role::System,
                             format!(
@@ -343,16 +354,157 @@ fn handle_command(app: &mut App, cmd: TuiCommand, project_dir: &std::path::Path)
                 }
             }
         }
+        TuiCommand::Cosign(_) => {
+            // Handled in the event loop — requires terminal access for TUI suspend/resume.
+        }
         TuiCommand::Help => {
             let help = "\
 Available commands:
   /sbom              Generate SBOM for current project
   /verify <path>     Verify an attestation bundle
   /inspect <path>    Inspect an attestation bundle
+  /cosign [path]     Cosign attestation with Sigstore (keyless)
   /help              Show this help message";
             app.push_message(Role::System, help);
         }
     }
+}
+
+/// Cosign the latest (or specified) attestation bundle with Sigstore keyless signing.
+///
+/// Suspends the TUI for the interactive OIDC auth flow, then resumes after signing.
+/// The bundle is re-signed with Sigstore and a native `.sigstore.json` is written
+/// alongside for `cosign verify-blob` / `gh attestation verify` compatibility.
+async fn handle_cosign(
+    app: &mut App,
+    terminal: &mut DefaultTerminal,
+    path_arg: Option<&str>,
+    project_dir: &std::path::Path,
+) -> color_eyre::Result<()> {
+    info!(path = ?path_arg, "running /cosign command");
+
+    // Find the bundle to cosign
+    let gleisner_dir = project_dir.join(".gleisner");
+    let bundle_path = if let Some(p) = path_arg {
+        PathBuf::from(p)
+    } else {
+        match gleisner_introdus::chain::find_latest_attestation(&gleisner_dir) {
+            Ok(Some(link)) => link.path,
+            Ok(None) => {
+                app.push_message(
+                    Role::System,
+                    "[error] No attestation bundles found in .gleisner/",
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                app.push_message(Role::System, format!("[error] {e}"));
+                return Ok(());
+            }
+        }
+    };
+
+    // Load and parse the existing bundle
+    let bundle_json = match std::fs::read_to_string(&bundle_path) {
+        Ok(json) => json,
+        Err(e) => {
+            app.push_message(Role::System, format!("[error] Cannot read bundle: {e}"));
+            return Ok(());
+        }
+    };
+    let bundle: gleisner_introdus::bundle::AttestationBundle =
+        match serde_json::from_str(&bundle_json) {
+            Ok(b) => b,
+            Err(e) => {
+                app.push_message(Role::System, format!("[error] Invalid bundle JSON: {e}"));
+                return Ok(());
+            }
+        };
+
+    #[cfg(feature = "keyless")]
+    {
+        use crossterm::terminal::{EnterAlternateScreen, LeaveAlternateScreen};
+
+        app.push_message(
+            Role::System,
+            format!(
+                "Cosigning: {} (suspending TUI for auth...)",
+                bundle_path.display()
+            ),
+        );
+        terminal.draw(|frame| ui::draw(frame, app))?;
+
+        // Suspend TUI for interactive OIDC auth flow
+        crossterm::terminal::disable_raw_mode()?;
+        crossterm::execute!(std::io::stdout(), LeaveAlternateScreen)?;
+
+        println!("\n--- Sigstore keyless signing ---");
+        println!("Bundle: {}", bundle_path.display());
+        println!();
+
+        // Sigstore bundle goes alongside the attestation
+        let sigstore_path = bundle_path.with_extension("sigstore.json");
+
+        // Create signer with no token — let sigstore-sign handle interactive OIDC
+        let signer = gleisner_introdus::signer::SigstoreSigner::new(
+            Some(sigstore_path.clone()),
+            None, // fresh interactive auth
+        );
+
+        // Sign the existing payload directly (no need to deserialize InTotoStatement)
+        let result = signer.sign_payload(&bundle.payload).await;
+
+        // Resume TUI
+        crossterm::execute!(std::io::stdout(), EnterAlternateScreen)?;
+        crossterm::terminal::enable_raw_mode()?;
+        terminal.clear()?;
+
+        match result {
+            Ok(cosigned_bundle) => {
+                // Write the cosigned bundle (replaces local-key signature with Sigstore)
+                let cosigned_json = serde_json::to_string_pretty(&cosigned_bundle)
+                    .expect("bundle serializes to JSON");
+                if let Err(e) = std::fs::write(&bundle_path, &cosigned_json) {
+                    app.push_message(
+                        Role::System,
+                        format!("[error] Failed to write cosigned bundle: {e}"),
+                    );
+                } else {
+                    info!(
+                        bundle = %bundle_path.display(),
+                        sigstore = %sigstore_path.display(),
+                        "cosign complete"
+                    );
+                    app.security.pending_cosign = false;
+                    app.push_message(
+                        Role::System,
+                        format!(
+                            "Cosigned with Sigstore:\n  Bundle:   {}\n  Sigstore: {}",
+                            bundle_path.display(),
+                            sigstore_path.display()
+                        ),
+                    );
+                }
+            }
+            Err(e) => {
+                app.push_message(
+                    Role::System,
+                    format!("[error] Sigstore signing failed: {e}"),
+                );
+            }
+        }
+    }
+
+    #[cfg(not(feature = "keyless"))]
+    {
+        let _ = (&bundle_path, &bundle, &terminal);
+        app.push_message(
+            Role::System,
+            "[error] Sigstore keyless not available. Rebuild with: cargo build --features keyless",
+        );
+    }
+
+    Ok(())
 }
 
 /// Initialize file-based debug logging.

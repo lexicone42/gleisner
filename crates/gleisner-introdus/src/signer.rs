@@ -197,10 +197,15 @@ impl SigstoreSigner {
 }
 
 #[cfg(feature = "keyless")]
-impl Signer for SigstoreSigner {
-    async fn sign(
+impl SigstoreSigner {
+    /// Sign a pre-serialized in-toto statement payload with Sigstore keyless.
+    ///
+    /// This is the core signing method. Use this when you already have the
+    /// statement JSON (e.g., cosigning an existing attestation bundle).
+    /// The `Signer::sign` trait method delegates here after serialization.
+    pub async fn sign_payload(
         &self,
-        statement: &InTotoStatement,
+        payload_json: &str,
     ) -> Result<AttestationBundle, AttestationError> {
         use sigstore_sign::SigningContext;
 
@@ -240,10 +245,12 @@ impl Signer for SigstoreSigner {
         let signer = context.signer(token);
 
         // 3. Sign the in-toto statement as a DSSE envelope
-        let payload = serde_json::to_vec(statement)?;
-        let bundle = signer.sign_raw_statement(&payload).await.map_err(|e| {
-            AttestationError::SigningFailed(format!("Sigstore signing failed: {e}"))
-        })?;
+        let bundle = signer
+            .sign_raw_statement(payload_json.as_bytes())
+            .await
+            .map_err(|e| {
+                AttestationError::SigningFailed(format!("Sigstore signing failed: {e}"))
+            })?;
 
         // 4. Serialize the native Sigstore bundle
         let bundle_json = serde_json::to_string_pretty(&bundle).map_err(|e| {
@@ -262,11 +269,6 @@ impl Signer for SigstoreSigner {
         }
 
         // 6. Extract verification material for our attestation format
-        //    We store the Sigstore bundle JSON as-is in our format's payload,
-        //    and reference the certificate/rekor data in verification_material.
-        let statement_json = serde_json::to_string(statement)?;
-
-        // Extract certificate and rekor entry from the native bundle
         let bundle_value: serde_json::Value = serde_json::from_str(&bundle_json)?;
         let certificate_chain = bundle_value
             .pointer("/verificationMaterial/certificate/rawBytes")
@@ -293,13 +295,24 @@ impl Signer for SigstoreSigner {
         };
 
         Ok(AttestationBundle {
-            payload: statement_json,
+            payload: payload_json.to_owned(),
             signature: String::new(), // signature is in the DSSE envelope inside the Sigstore bundle
             verification_material: VerificationMaterial::Sigstore {
                 certificate_chain: cert_pem,
                 rekor_log_id,
             },
         })
+    }
+}
+
+#[cfg(feature = "keyless")]
+impl Signer for SigstoreSigner {
+    async fn sign(
+        &self,
+        statement: &InTotoStatement,
+    ) -> Result<AttestationBundle, AttestationError> {
+        let payload = serde_json::to_string(statement)?;
+        self.sign_payload(&payload).await
     }
 
     fn description(&self) -> &'static str {
