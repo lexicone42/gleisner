@@ -9,11 +9,10 @@ use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyEventKind};
 use ratatui::DefaultTerminal;
-use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
 use gleisner_tui::app::{App, Role, SessionState, TuiCommand, UserAction};
-use gleisner_tui::claude::{DriverMessage, QueryConfig, SandboxConfig, spawn_query};
+use gleisner_tui::claude::{DriverMessage, QueryConfig, QueryHandle, SandboxConfig, spawn_query};
 use gleisner_tui::ui;
 
 #[tokio::main]
@@ -157,9 +156,8 @@ fn run(
         );
     }
 
-    // Channel for receiving stream events from background Claude tasks.
-    // None when no query is active.
-    let mut stream_rx: Option<mpsc::Receiver<DriverMessage>> = None;
+    // Active query handle — holds the message receiver and abort handle.
+    let mut query: Option<QueryHandle> = None;
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &app))?;
@@ -182,14 +180,23 @@ fn run(
                                 if let Some(bin) = claude_bin {
                                     bin.clone_into(&mut config.claude_bin);
                                 }
-                                // Mark recording active for sandboxed sessions
                                 if config.sandbox.is_some() {
                                     app.security.recording = true;
                                 }
-                                stream_rx = Some(spawn_query(config, 256));
+                                query = Some(spawn_query(config, 256));
                             }
                             UserAction::Command(cmd) => {
                                 handle_command(&mut app, cmd, project_dir);
+                            }
+                            UserAction::Interrupt => {
+                                info!("user interrupt — aborting current query");
+                                if let Some(handle) = query.take() {
+                                    handle.task.abort();
+                                }
+                                app.session_state = SessionState::Idle;
+                                app.streaming_buffer.clear();
+                                app.security.recording = false;
+                                app.push_message(Role::System, "[interrupted]");
                             }
                         }
                     }
@@ -198,8 +205,8 @@ fn run(
         }
 
         // Drain any pending stream events (non-blocking)
-        if let Some(ref mut rx) = stream_rx {
-            while let Ok(msg) = rx.try_recv() {
+        if let Some(ref mut handle) = query {
+            while let Ok(msg) = handle.rx.try_recv() {
                 match msg {
                     DriverMessage::Event(event) => {
                         debug!(event_type = ?std::mem::discriminant(&*event), "stream event");
@@ -244,13 +251,11 @@ fn run(
             }
         }
 
-        // Clean up the receiver if the session is done
-        if app.session_state == SessionState::Idle && stream_rx.is_some() {
-            // Keep the receiver around briefly to drain final messages,
-            // but if it's closed, drop it
-            if let Some(ref mut rx) = stream_rx {
-                if rx.try_recv().is_err() {
-                    stream_rx = None;
+        // Clean up the handle if the session is done
+        if app.session_state == SessionState::Idle && query.is_some() {
+            if let Some(ref mut handle) = query {
+                if handle.rx.try_recv().is_err() {
+                    query = None;
                 }
             }
         }

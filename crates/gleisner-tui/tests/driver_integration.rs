@@ -2,7 +2,7 @@
 //!
 //! Uses dynamically-generated scripts to simulate the Claude CLI subprocess,
 //! outputting stream-json fixtures to stdout. Tests exercise the full pipeline:
-//! `spawn_query` → `mpsc::Receiver<DriverMessage>` → app state.
+//! `spawn_query` → `QueryHandle` → app state.
 //!
 //! This is the layer that was previously untestable without a real
 //! Claude API key or TTY.
@@ -104,8 +104,8 @@ async fn collect_messages(
 async fn driver_delivers_events_from_simple_fixture() {
     let script = make_fake_claude("simple_response.jsonl", None, 0);
     let config = config_for_fake(&script);
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(10)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
 
     let event_count = messages
         .iter()
@@ -132,8 +132,8 @@ async fn driver_delivers_events_from_simple_fixture() {
 async fn driver_delivers_events_from_tool_use_fixture() {
     let script = make_fake_claude("tool_use_response.jsonl", None, 0);
     let config = config_for_fake(&script);
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(10)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
 
     let event_count = messages
         .iter()
@@ -150,8 +150,8 @@ async fn driver_delivers_events_from_tool_use_fixture() {
 async fn driver_captures_stderr() {
     let script = make_fake_claude("simple_response.jsonl", Some("test stderr output"), 0);
     let config = config_for_fake(&script);
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(10)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
 
     let stderr_messages: Vec<&str> = messages
         .iter()
@@ -176,8 +176,8 @@ async fn driver_captures_stderr() {
 async fn driver_reports_nonzero_exit_code() {
     let script = make_fake_claude("simple_response.jsonl", None, 42);
     let config = config_for_fake(&script);
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(10)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
 
     let exit_code = messages.iter().find_map(|m| {
         if let DriverMessage::Exited(code) = m {
@@ -201,8 +201,8 @@ async fn driver_reports_spawn_error_for_missing_binary() {
         ..QueryConfig::default()
     };
 
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(5)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(5)).await;
 
     let has_error = messages
         .iter()
@@ -258,8 +258,8 @@ fn process_messages(app: &mut App, messages: &[DriverMessage]) {
 async fn full_pipeline_simple_response() {
     let script = make_fake_claude("simple_response.jsonl", None, 0);
     let config = config_for_fake(&script);
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(10)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
 
     let mut app = App::new("test-profile");
     app.session_state = SessionState::Streaming;
@@ -280,8 +280,8 @@ async fn full_pipeline_simple_response() {
 async fn full_pipeline_tool_use_response() {
     let script = make_fake_claude("tool_use_response.jsonl", None, 0);
     let config = config_for_fake(&script);
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(10)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
 
     let mut app = App::new("test-profile");
     app.session_state = SessionState::Streaming;
@@ -303,8 +303,8 @@ async fn full_pipeline_with_stderr_shows_in_conversation() {
         0,
     );
     let config = config_for_fake(&script);
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(10)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
 
     let mut app = App::new("test-profile");
     app.session_state = SessionState::Streaming;
@@ -329,8 +329,8 @@ async fn full_pipeline_with_stderr_shows_in_conversation() {
 async fn full_pipeline_nonzero_exit_after_result_is_ignored() {
     let script = make_fake_claude("simple_response.jsonl", None, 1);
     let config = config_for_fake(&script);
-    let rx = gleisner_tui::claude::spawn_query(config, 256);
-    let messages = collect_messages(rx, Duration::from_secs(10)).await;
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
 
     let mut app = App::new("test-profile");
     app.session_state = SessionState::Streaming;

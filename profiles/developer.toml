@@ -74,8 +74,45 @@ max_disk_write_mb = 20480
 skip_permissions = true
 add_dirs = ["~/.claude/exo-self"]
 disallowed_tools = [
+    # Serena: block shell/file escape vectors (keep analysis tools)
     "mcp__plugin_serena_serena__execute_shell_command",
     "mcp__plugin_serena_serena__create_text_file",
+    # Playwright: entire browser automation suite — network escape vector
+    "mcp__plugin_playwright_playwright__browser_close",
+    "mcp__plugin_playwright_playwright__browser_resize",
+    "mcp__plugin_playwright_playwright__browser_console_messages",
+    "mcp__plugin_playwright_playwright__browser_handle_dialog",
+    "mcp__plugin_playwright_playwright__browser_evaluate",
+    "mcp__plugin_playwright_playwright__browser_file_upload",
+    "mcp__plugin_playwright_playwright__browser_fill_form",
+    "mcp__plugin_playwright_playwright__browser_install",
+    "mcp__plugin_playwright_playwright__browser_press_key",
+    "mcp__plugin_playwright_playwright__browser_type",
+    "mcp__plugin_playwright_playwright__browser_navigate",
+    "mcp__plugin_playwright_playwright__browser_navigate_back",
+    "mcp__plugin_playwright_playwright__browser_network_requests",
+    "mcp__plugin_playwright_playwright__browser_run_code",
+    "mcp__plugin_playwright_playwright__browser_take_screenshot",
+    "mcp__plugin_playwright_playwright__browser_snapshot",
+    "mcp__plugin_playwright_playwright__browser_click",
+    "mcp__plugin_playwright_playwright__browser_drag",
+    "mcp__plugin_playwright_playwright__browser_hover",
+    "mcp__plugin_playwright_playwright__browser_select_option",
+    "mcp__plugin_playwright_playwright__browser_tabs",
+    "mcp__plugin_playwright_playwright__browser_wait_for",
+    # Greptile: code review service — not needed for g-in-g development
+    "mcp__plugin_greptile_greptile__list_custom_context",
+    "mcp__plugin_greptile_greptile__get_custom_context",
+    "mcp__plugin_greptile_greptile__search_custom_context",
+    "mcp__plugin_greptile_greptile__list_merge_requests",
+    "mcp__plugin_greptile_greptile__list_pull_requests",
+    "mcp__plugin_greptile_greptile__get_merge_request",
+    "mcp__plugin_greptile_greptile__list_merge_request_comments",
+    "mcp__plugin_greptile_greptile__list_code_reviews",
+    "mcp__plugin_greptile_greptile__get_code_review",
+    "mcp__plugin_greptile_greptile__trigger_code_review",
+    "mcp__plugin_greptile_greptile__search_greptile_comments",
+    "mcp__plugin_greptile_greptile__create_custom_context",
 ]
 mcp_network_domains = [
     "context7.com",

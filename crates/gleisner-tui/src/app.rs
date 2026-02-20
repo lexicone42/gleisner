@@ -88,6 +88,8 @@ pub enum UserAction {
     Prompt(String),
     /// Execute a local TUI command.
     Command(TuiCommand),
+    /// Interrupt the current streaming session (Ctrl-C / Esc while streaming).
+    Interrupt,
 }
 
 /// Whether the app is idle or waiting for Claude.
@@ -391,8 +393,13 @@ impl App {
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> Option<UserAction> {
         use crossterm::event::{KeyCode, KeyModifiers};
 
-        // Ctrl+C quits from any mode.
+        let is_streaming = self.session_state == SessionState::Streaming;
+
+        // Ctrl+C: interrupt during streaming, quit otherwise.
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if is_streaming {
+                return Some(UserAction::Interrupt);
+            }
             self.should_quit = true;
             return None;
         }
@@ -400,8 +407,11 @@ impl App {
         match self.input_mode {
             InputMode::Normal => {
                 match key.code {
-                    KeyCode::Char('q') => self.should_quit = true,
+                    KeyCode::Char('q') if !is_streaming => self.should_quit = true,
                     KeyCode::Char('i') => self.input_mode = InputMode::Insert,
+                    KeyCode::Esc if is_streaming => {
+                        return Some(UserAction::Interrupt);
+                    }
                     KeyCode::Up | KeyCode::Char('k') => {
                         self.scroll_offset = self.scroll_offset.saturating_add(1);
                     }
@@ -415,11 +425,9 @@ impl App {
                         self.scroll_offset = self.scroll_offset.saturating_sub(Self::PAGE_SCROLL);
                     }
                     KeyCode::Home | KeyCode::Char('g') => {
-                        // Jump to top — set a large offset (clamped by renderer)
                         self.scroll_offset = u16::MAX;
                     }
                     KeyCode::End | KeyCode::Char('G') => {
-                        // Jump to bottom
                         self.scroll_offset = 0;
                     }
                     _ => {}
@@ -427,6 +435,7 @@ impl App {
                 None
             }
             InputMode::Insert => match key.code {
+                KeyCode::Esc if is_streaming => Some(UserAction::Interrupt),
                 KeyCode::Esc => {
                     self.input_mode = InputMode::Normal;
                     None

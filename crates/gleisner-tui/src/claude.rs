@@ -179,21 +179,28 @@ pub enum DriverMessage {
     },
 }
 
+/// Handle to a running query — holds the receiver and a way to abort.
+pub struct QueryHandle {
+    /// Stream of driver messages.
+    pub rx: mpsc::Receiver<DriverMessage>,
+    /// Abort handle — dropping or calling `.abort()` kills the task.
+    pub task: tokio::task::JoinHandle<()>,
+}
+
 /// Spawn a Claude query as a background task.
 ///
-/// Returns an `mpsc::Receiver` that streams [`DriverMessage`]s
-/// as the subprocess produces output. The task runs until the
-/// subprocess exits.
-pub fn spawn_query(config: QueryConfig, buffer_size: usize) -> mpsc::Receiver<DriverMessage> {
+/// Returns a [`QueryHandle`] with a receiver that streams [`DriverMessage`]s
+/// and a `JoinHandle` that can be aborted to kill the subprocess.
+pub fn spawn_query(config: QueryConfig, buffer_size: usize) -> QueryHandle {
     let (tx, rx) = mpsc::channel(buffer_size);
 
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         if let Err(e) = run_query(&config, &tx).await {
             let _ = tx.send(DriverMessage::Error(e.to_string())).await;
         }
     });
 
-    rx
+    QueryHandle { rx, task }
 }
 
 /// Handles to sandbox infrastructure that must outlive the subprocess.
