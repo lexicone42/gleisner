@@ -40,7 +40,7 @@ pub struct PreparedSandbox {
     pub command: std::process::Command,
     /// Network namespace handle — must stay alive while the child runs.
     pub ns: Option<crate::NamespaceHandle>,
-    /// TAP provider process (pasta or slirp4netns) — must stay alive while the child runs.
+    /// pasta TAP handle — must stay alive while the child runs.
     pub tap: Option<crate::TapHandle>,
     /// Landlock policy JSON tempfile — bwrap bind-mounts this.
     pub policy_file: Option<tempfile::NamedTempFile>,
@@ -76,7 +76,7 @@ impl PreparedSandbox {
 /// 5. Detect and enable `gleisner-sandbox-init` for Landlock-inside-bwrap
 /// 6. Resolve selective network filter (TAP provider check)
 /// 7. Build bwrap command with the inner command
-/// 8. Set up namespace + TAP provider (pasta/slirp4netns) + nftables when filtering is needed
+/// 8. Set up namespace + pasta + nftables when filtering is needed
 ///
 /// # Returns
 ///
@@ -127,45 +127,38 @@ pub fn prepare_sandbox(
         && (!profile_ref.network.allow_domains.is_empty()
             || !sandbox.extra_allow_domains().is_empty());
 
-    let (filter, tap_provider) = if needs_filter {
-        // Verify a TAP provider is available before resolving the filter.
-        let provider = netfilter::preferred_tap_provider().map_err(|_| {
+    let filter = if needs_filter {
+        // Verify pasta is available before resolving the filter.
+        netfilter::require_pasta().map_err(|_| {
             let profile_name = sandbox.profile().name.clone();
             SandboxError::NetworkSetupFailed(format!(
-                "no TAP provider found — install pasta (preferred) or slirp4netns for selective network filtering\n\
+                "pasta not found — required for selective network filtering\n\
                  Hint: The profile '{profile_name}' declares allow_domains with network deny, \
-                 which requires a TAP provider to create a filtered network namespace.\n\
-                 Without it, use --profile carter-zimmerman for full network access, \
-                 or install passt (emerge net-misc/passt) or slirp4netns.",
+                 which requires pasta to create a filtered network namespace.\n\
+                 Install passt (emerge net-misc/passt) or use --profile carter-zimmerman \
+                 for full network access.",
             ))
         })?;
         let network_policy = &sandbox.profile().network;
         let extra = sandbox.extra_allow_domains().to_vec();
-        (
-            Some(crate::NetworkFilter::resolve(network_policy, &extra)?),
-            Some(provider),
-        )
+        Some(crate::NetworkFilter::resolve(network_policy, &extra)?)
     } else {
-        (None, None)
+        None
     };
 
     // ── 7. Build bwrap command ────────────────────────────────────
     let has_filter = filter.is_some();
     let (bwrap_cmd, policy_file) = sandbox.build_command(inner_command, has_filter);
 
-    // ── 8. Set up namespace + TAP provider + firewall ──────────────
+    // ── 8. Set up namespace + pasta + nftables ──────────────────────
     // When filtering is active, we:
     // 1. Create a user+net namespace pair (NamespaceHandle)
-    // 2. Start TAP provider (pasta or slirp4netns) targeting that namespace
-    // 3. Apply firewall rules via nsenter (before bwrap starts)
+    // 2. Run pasta to configure networking in that namespace
+    // 3. Apply nftables rules via nsenter (before bwrap starts)
     // 4. Wrap bwrap in nsenter to enter the pre-created namespace
     let (ns, tap, cmd) = if let Some(ref f) = filter {
         let ns = crate::NamespaceHandle::create()?;
-        // SAFETY: tap_provider is always Some when filter is Some (set together above)
-        let tap = crate::TapHandle::start(
-            ns.pid(),
-            tap_provider.expect("tap_provider set with filter"),
-        )?;
+        let tap = crate::TapHandle::start(ns.pid())?;
 
         // Apply firewall rules before starting bwrap — bwrap's --unshare-user
         // creates a nested namespace that loses CAP_NET_ADMIN
@@ -426,14 +419,13 @@ mod tests {
     }
 
     #[test]
-    fn prepare_sandbox_deny_network_without_tap_provider_returns_error() {
+    fn prepare_sandbox_deny_network_without_pasta_returns_error() {
         if which::which("bwrap").is_err() {
             return;
         }
-        // This test verifies the error path when a TAP provider is needed
-        // but not available. We can only test this reliably if neither pasta
-        // nor slirp4netns is installed — skip otherwise.
-        if netfilter::pasta_available() || netfilter::slirp4netns_available() {
+        // This test verifies the error path when pasta is needed but
+        // not available. Skip if pasta is installed.
+        if netfilter::pasta_available() {
             return;
         }
 
@@ -450,12 +442,9 @@ mod tests {
 
         let err = match result {
             Err(e) => e.to_string(),
-            Ok(_) => panic!("should error when deny-network profile needs TAP provider"),
+            Ok(_) => panic!("should error when deny-network profile needs pasta"),
         };
-        assert!(
-            err.contains("TAP provider") || err.contains("pasta") || err.contains("slirp4netns"),
-            "error should mention TAP provider: {err}"
-        );
+        assert!(err.contains("pasta"), "error should mention pasta: {err}");
     }
 
     #[test]

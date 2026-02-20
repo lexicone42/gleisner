@@ -45,7 +45,7 @@ pub enum SandboxError {
     #[error("monitor error: {0}")]
     MonitorError(String),
 
-    /// Neither pasta nor slirp4netns found on PATH.
+    /// pasta not found on PATH.
     #[error("{provider} not found — {install_hint}")]
     TapProviderNotFound {
         /// Which provider(s) were looked for.
@@ -54,7 +54,7 @@ pub enum SandboxError {
         install_hint: &'static str,
     },
 
-    /// Network setup (slirp4netns, iptables, or child PID detection) failed.
+    /// Network setup (pasta, nftables, or child PID detection) failed.
     #[error("network setup failed: {0}")]
     NetworkSetupFailed(String),
 

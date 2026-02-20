@@ -156,10 +156,10 @@ impl BwrapSandbox {
         let home_dir = std::env::var("HOME").ok().map(PathBuf::from);
         for path in &fs.readonly_bind {
             let expanded = expand_tilde(path);
-            let is_user_dir = home_dir
+            let is_user_subdir = home_dir
                 .as_ref()
-                .is_some_and(|home| expanded.starts_with(home));
-            let has_symlinks = is_user_dir
+                .is_some_and(|home| expanded.starts_with(home) && expanded != *home);
+            let has_symlinks = is_user_subdir
                 && expanded.is_dir()
                 && std::fs::read_dir(&expanded)
                     .map(|e| e.flatten().any(|e| e.path().is_symlink()))
@@ -255,7 +255,7 @@ impl BwrapSandbox {
     /// Apply network isolation.
     ///
     /// When the profile default is `Deny`, the network namespace is
-    /// always unshared. Selective domain filtering (via slirp4netns +
+    /// always unshared. Selective domain filtering (via pasta +
     /// iptables) is applied by the `NetworkFilter` wrapper passed to
     /// `build_command()`.
     fn apply_network_policy(&self, cmd: &mut Command) {

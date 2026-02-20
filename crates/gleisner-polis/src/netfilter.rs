@@ -1,4 +1,4 @@
-//! Selective network filtering via slirp4netns + nftables/iptables.
+//! Selective network filtering via pasta + nftables.
 //!
 //! When a sandbox profile declares `network.default = "deny"` with
 //! `allow_domains`, this module provides domain-level outbound filtering
@@ -6,20 +6,19 @@
 //!
 //! 1. Resolving domain names to IP addresses before sandbox entry
 //! 2. Creating a user+network namespace pair via `unshare`
-//! 3. Starting slirp4netns to provide a TAP device in that namespace
+//! 3. Starting pasta to configure networking in that namespace
 //! 4. Running bwrap inside the namespace via `nsenter` (inheriting the
 //!    filtered network instead of using `--unshare-net`)
-//! 5. Applying iptables rules inside the namespace to restrict outbound
+//! 5. Applying nftables rules inside the namespace to restrict outbound
 //!    traffic to only the resolved IPs
 //!
-//! ## Why not `--unshare-net` + external slirp4netns?
+//! ## Why not `--unshare-net` inside bwrap?
 //!
 //! bwrap implicitly creates a user namespace when run unprivileged.
 //! Network namespaces are *owned* by the user namespace they were created
 //! in, and `setns(CLONE_NEWNET)` requires `CAP_SYS_ADMIN` in the owning
-//! user namespace. Since slirp4netns runs in the init user namespace, it
-//! can't enter bwrap's network namespace. By creating the namespaces
-//! ourselves first, slirp4netns can attach before bwrap starts.
+//! user namespace. By creating the namespaces ourselves first, pasta can
+//! configure networking before bwrap starts.
 
 use std::fmt::Write as _;
 use std::net::ToSocketAddrs;
@@ -105,7 +104,7 @@ impl NetworkFilter {
         if !ipv6_only_domains.is_empty() {
             warn!(
                 domains = ?ipv6_only_domains,
-                "domains resolved only to IPv6 — not reachable through slirp4netns, traffic will be blocked"
+                "domains resolved only to IPv6 — not reachable through pasta TAP, traffic will be blocked"
             );
         }
 
@@ -335,7 +334,7 @@ exec "$@"
 /// Holds a user+network namespace pair created via `unshare`.
 ///
 /// The namespace is kept alive by a long-running `sleep` process.
-/// slirp4netns attaches to this namespace, and bwrap enters it via
+/// pasta configures this namespace, and bwrap enters it via
 /// `nsenter` instead of creating its own with `--unshare-net`.
 ///
 /// On drop, the holder process is killed, which destroys the namespace.
@@ -422,48 +421,29 @@ impl Drop for NamespaceHandle {
 ///
 /// `Pasta` uses L4 socket mapping via `splice()` — faster for few connections.
 /// `Slirp4netns` implements a full userspace TCP/IP stack — wider compatibility.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TapProvider {
-    /// passt/pasta — L4 socket mapping via `splice()`.
-    Pasta,
-    /// slirp4netns — full userspace TCP/IP stack.
-    Slirp4netns,
-}
-
-/// Handle for a running TAP provider process (pasta or slirp4netns).
+/// Handle for the pasta TAP provider process.
 ///
-/// For slirp4netns, this owns the child process and kills it on drop.
-/// For pasta, the process exits after configuring the namespace (no
-/// long-running child), so this is a no-op sentinel.
+/// pasta configures the namespace and exits — there's no long-running child.
+/// This sentinel type exists so callers can hold it for the session lifetime.
 ///
 /// Keep this alive for the duration of the sandboxed session.
 #[derive(Debug)]
 pub struct TapHandle {
-    child: Option<Child>,
-    provider: TapProvider,
+    _private: (),
 }
 
 impl TapHandle {
-    /// Start the given TAP provider for the given namespace holder PID.
+    /// Start pasta for the given namespace holder PID.
     ///
-    /// The process will create a `tap0` device inside the network
-    /// namespace with the default addressing:
-    /// - Guest IP: 10.0.2.100/24 (slirp4netns) or auto-assigned (pasta)
-    /// - Gateway:  10.0.2.2
-    /// - DNS:      10.0.2.3
+    /// pasta creates a `tap0` device inside the network namespace using
+    /// L4 socket mapping via `splice()`. It configures the namespace and
+    /// exits — no long-running child process.
     ///
     /// # Errors
     ///
-    /// Returns `TapProviderNotFound` if the binary isn't installed, or
-    /// `NetworkSetupFailed` if spawn fails or the process exits immediately.
-    pub fn start(ns_holder_pid: u32, provider: TapProvider) -> Result<Self, SandboxError> {
-        match provider {
-            TapProvider::Pasta => Self::start_pasta(ns_holder_pid),
-            TapProvider::Slirp4netns => Self::start_slirp4netns(ns_holder_pid),
-        }
-    }
-
-    fn start_pasta(ns_holder_pid: u32) -> Result<Self, SandboxError> {
+    /// Returns `TapProviderNotFound` if pasta isn't installed, or
+    /// `NetworkSetupFailed` if spawn fails or the process exits with error.
+    pub fn start(ns_holder_pid: u32) -> Result<Self, SandboxError> {
         which::which("pasta").map_err(|_| SandboxError::TapProviderNotFound {
             provider: "pasta",
             install_hint: "emerge net-misc/passt",
@@ -471,8 +451,6 @@ impl TapHandle {
 
         info!(pid = ns_holder_pid, "starting pasta");
 
-        // pasta configures the namespace and exits — it does NOT stay running
-        // like slirp4netns. The kernel handles socket mapping via splice().
         let output = Command::new("pasta")
             .args([
                 "--config-net",
@@ -505,94 +483,11 @@ impl TapHandle {
             debug!(stderr = %stderr_output, "pasta output");
         }
 
-        Ok(Self {
-            child: None,
-            provider: TapProvider::Pasta,
-        })
-    }
-
-    fn start_slirp4netns(ns_holder_pid: u32) -> Result<Self, SandboxError> {
-        which::which("slirp4netns").map_err(|_| SandboxError::TapProviderNotFound {
-            provider: "slirp4netns",
-            install_hint: "install slirp4netns (apt install slirp4netns / dnf install slirp4netns)",
-        })?;
-
-        info!(pid = ns_holder_pid, "starting slirp4netns");
-
-        let mut child = Command::new("slirp4netns")
-            .args([
-                "--configure",
-                "--disable-host-loopback",
-                &ns_holder_pid.to_string(),
-                "tap0",
-            ])
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| SandboxError::NetworkSetupFailed(format!("slirp4netns spawn: {e}")))?;
-
-        let tap_pid = child.id();
-        debug!(tap_pid, "slirp4netns started");
-
-        // Give slirp4netns a moment to attach, then check it hasn't crashed
-        std::thread::sleep(Duration::from_millis(500));
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut stderr_output = String::new();
-                if let Some(mut stderr) = child.stderr {
-                    use std::io::Read;
-                    let _ = stderr.read_to_string(&mut stderr_output);
-                }
-                return Err(SandboxError::NetworkSetupFailed(format!(
-                    "slirp4netns exited immediately with {status}: {stderr_output}"
-                )));
-            }
-            Ok(None) => debug!(tap_pid, "slirp4netns running"),
-            Err(e) => warn!(error = %e, "could not check slirp4netns status"),
-        }
-
-        Ok(Self {
-            child: Some(child),
-            provider: TapProvider::Slirp4netns,
-        })
+        Ok(Self { _private: () })
     }
 }
 
-impl Drop for TapHandle {
-    fn drop(&mut self) {
-        // pasta exits after configuring — nothing to kill
-        let Some(ref mut child) = self.child else {
-            return;
-        };
-
-        let pid = child.id();
-        let name = match self.provider {
-            TapProvider::Pasta => "pasta",
-            TapProvider::Slirp4netns => "slirp4netns",
-        };
-        debug!(tap_pid = pid, provider = name, "stopping TAP provider");
-
-        // Try graceful SIGTERM first, then SIGKILL
-        #[allow(clippy::cast_possible_wrap)]
-        let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
-        if let Err(e) = nix::sys::signal::kill(nix_pid, nix::sys::signal::Signal::SIGTERM) {
-            warn!(error = %e, "failed to send SIGTERM to {name}");
-        }
-
-        // Brief wait then force kill
-        if !matches!(child.try_wait(), Ok(Some(_))) {
-            if let Err(e) = child.kill() {
-                warn!(
-                    tap_pid = pid,
-                    error = %e,
-                    "failed to kill {name} — process may leak"
-                );
-            }
-            let _ = child.wait();
-        }
-    }
-}
+// pasta configures and exits — no Drop cleanup needed for TapHandle.
 
 /// Build an nsenter prefix command that enters the given namespace.
 ///
@@ -679,32 +574,24 @@ pub fn wait_for_child_pid(parent_pid: u32, timeout: Duration) -> Result<u32, San
     )))
 }
 
-/// Check whether slirp4netns is installed on the system.
-#[must_use]
-pub fn slirp4netns_available() -> bool {
-    which::which("slirp4netns").is_ok()
-}
-
 /// Check whether pasta (passt) is installed on the system.
 #[must_use]
 pub fn pasta_available() -> bool {
     which::which("pasta").is_ok()
 }
 
-/// Returns the preferred TAP provider: pasta if available, else slirp4netns.
+/// Verify that pasta is available.
 ///
 /// # Errors
 ///
-/// Returns `TapProviderNotFound` if neither provider is installed.
-pub fn preferred_tap_provider() -> Result<TapProvider, SandboxError> {
+/// Returns `TapProviderNotFound` if pasta is not installed.
+pub fn require_pasta() -> Result<(), SandboxError> {
     if pasta_available() {
-        Ok(TapProvider::Pasta)
-    } else if slirp4netns_available() {
-        Ok(TapProvider::Slirp4netns)
+        Ok(())
     } else {
         Err(SandboxError::TapProviderNotFound {
-            provider: "pasta or slirp4netns",
-            install_hint: "emerge net-misc/passt (preferred) or install slirp4netns",
+            provider: "pasta",
+            install_hint: "emerge net-misc/passt",
         })
     }
 }
@@ -904,31 +791,16 @@ mod tests {
     }
 
     #[test]
-    fn slirp_check_does_not_panic() {
-        // Just verify it doesn't panic — result depends on system
-        let _ = slirp4netns_available();
-    }
-
-    #[test]
     fn pasta_check_does_not_panic() {
-        // Just verify it doesn't panic — result depends on system
         let _ = pasta_available();
     }
 
     #[test]
-    fn preferred_tap_provider_returns_ok_if_any_available() {
-        // On CI or dev machines, at least one provider should be installed.
-        // If neither is installed, this test just verifies we get the right error.
-        match preferred_tap_provider() {
-            Ok(TapProvider::Pasta) => assert!(pasta_available()),
-            Ok(TapProvider::Slirp4netns) => {
-                assert!(!pasta_available());
-                assert!(slirp4netns_available());
-            }
-            Err(_) => {
-                assert!(!pasta_available());
-                assert!(!slirp4netns_available());
-            }
+    fn require_pasta_matches_availability() {
+        if pasta_available() {
+            assert!(require_pasta().is_ok());
+        } else {
+            assert!(require_pasta().is_err());
         }
     }
 
@@ -942,6 +814,132 @@ mod tests {
         };
         let filter = NetworkFilter::resolve(&policy, &[]).unwrap();
         assert!(!filter.has_endpoints());
+    }
+
+    /// E2E: create namespace + start pasta + verify network is up.
+    #[test]
+    fn e2e_namespace_with_pasta_has_network() {
+        if !pasta_available() || which::which("nsenter").is_err() {
+            return;
+        }
+
+        let ns = NamespaceHandle::create().expect("create namespace");
+        let _tap = TapHandle::start(ns.pid()).expect("start pasta");
+
+        // Verify we can run a command inside the namespace that sees a tap0 device
+        let output = Command::new("nsenter")
+            .args([
+                &format!("--user=/proc/{}/ns/user", ns.pid()),
+                &format!("--net=/proc/{}/ns/net", ns.pid()),
+                "--preserve-credentials",
+                "--no-fork",
+                "--",
+                "ip",
+                "link",
+                "show",
+                "tap0",
+            ])
+            .output()
+            .expect("nsenter ip link");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("tap0"),
+            "tap0 device should exist in namespace: {stdout}"
+        );
+    }
+
+    /// E2E: create namespace + pasta + nftables + verify filtering.
+    #[test]
+    fn e2e_firewall_blocks_disallowed_traffic() {
+        if !pasta_available()
+            || which::which("nsenter").is_err()
+            || which::which("nft").is_err()
+            || which::which("curl").is_err()
+        {
+            return;
+        }
+
+        // Allow only a known-good domain (httpbin.org on 443)
+        let policy = NetworkPolicy {
+            default: crate::profile::PolicyDefault::Deny,
+            allow_domains: vec!["api.anthropic.com".to_owned()],
+            allow_ports: vec![443],
+            allow_dns: true,
+        };
+
+        let filter = NetworkFilter::resolve(&policy, &[]).expect("resolve filter");
+        if !filter.has_endpoints() {
+            // DNS resolution failed (no network) — skip test
+            return;
+        }
+
+        let ns = NamespaceHandle::create().expect("create namespace");
+        let _tap = TapHandle::start(ns.pid()).expect("start pasta");
+
+        // Apply firewall
+        filter
+            .apply_firewall_via_nsenter(&ns)
+            .expect("apply firewall");
+
+        // Allowed: api.anthropic.com should connect (we don't need a response,
+        // just verify the connection attempt isn't blocked by nftables).
+        // Use curl with a short timeout — connect success = allowed by firewall.
+        let allowed = Command::new("nsenter")
+            .args([
+                &format!("--user=/proc/{}/ns/user", ns.pid()),
+                &format!("--net=/proc/{}/ns/net", ns.pid()),
+                "--preserve-credentials",
+                "--no-fork",
+                "--",
+                "curl",
+                "-sf",
+                "--connect-timeout",
+                "5",
+                "--max-time",
+                "5",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                "https://api.anthropic.com/",
+            ])
+            .output()
+            .expect("curl allowed");
+
+        let allowed_stdout = String::from_utf8_lossy(&allowed.stdout);
+        // Any HTTP response (even 4xx) means the connection was allowed through
+        assert!(
+            allowed.status.success() || allowed_stdout.starts_with('4'),
+            "api.anthropic.com should be reachable (got: {}, stdout: {allowed_stdout})",
+            allowed.status
+        );
+
+        // Blocked: example.com should NOT be reachable
+        let blocked = Command::new("nsenter")
+            .args([
+                &format!("--user=/proc/{}/ns/user", ns.pid()),
+                &format!("--net=/proc/{}/ns/net", ns.pid()),
+                "--preserve-credentials",
+                "--no-fork",
+                "--",
+                "curl",
+                "-sf",
+                "--connect-timeout",
+                "3",
+                "--max-time",
+                "3",
+                "-o",
+                "/dev/null",
+                "https://example.com/",
+            ])
+            .output()
+            .expect("curl blocked");
+
+        assert!(
+            !blocked.status.success(),
+            "example.com should be blocked by firewall"
+        );
     }
 
     #[test]

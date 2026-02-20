@@ -221,7 +221,7 @@ struct SandboxHandles;
 /// When `config.sandbox` is set, wraps the claude invocation in a
 /// bubblewrap sandbox with filesystem/network/process isolation.
 /// If the profile declares `network.default = "deny"` with allowed
-/// domains, sets up TAP networking (pasta/slirp4netns) + nftables for selective filtering
+/// domains, sets up TAP networking (pasta) + nftables for selective filtering
 /// (matching the behavior of `gleisner wrap`).
 ///
 /// When sandboxed, also runs the attestation pipeline:
