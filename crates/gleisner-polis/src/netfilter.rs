@@ -128,6 +128,27 @@ impl NetworkFilter {
         })
     }
 
+    /// Check whether nft log support is available (`nf_log_syslog` module loaded).
+    ///
+    /// Returns `Ok(())` if logging will work, or `Err` with a human-readable
+    /// message explaining how to fix it. Call before starting a sandboxed
+    /// session that needs audit2allow network observability.
+    pub fn check_log_available() -> Result<(), String> {
+        // Check /sys/module/nf_log_syslog — present when module is loaded or built-in
+        if std::path::Path::new("/sys/module/nf_log_syslog").exists() {
+            return Ok(());
+        }
+        // Also check if nft_log is built-in (some kernels integrate it)
+        if std::path::Path::new("/sys/module/nft_log").exists() {
+            return Ok(());
+        }
+        Err(
+            "nf_log_syslog kernel module not loaded — firewall denial logging disabled.\n\
+             Fix: sudo modprobe nf_log_syslog"
+                .to_owned(),
+        )
+    }
+
     /// Generate the firewall setup script to run inside the sandbox.
     ///
     /// The script auto-detects the firewall backend: prefers `nft` (nftables),
@@ -180,7 +201,7 @@ if command -v nft >/dev/null 2>&1; then
         // policy drops them. This enables the audit2allow workflow: denied
         // connections appear in dmesg/kernel log for `gleisner learn --firewall-log`.
         // nf_log_syslog module must be loaded for nft log to work.
-        script.push_str("  modprobe nf_log_syslog 2>/dev/null || true\n");
+        // Pre-flight check: `NetworkFilter::check_log_available()`.
         script.push_str("  nft add rule inet gleisner output counter log prefix '\"[gleisner-fw-deny] \"' level warn 2>/dev/null || true\n");
 
         script.push_str(

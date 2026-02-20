@@ -165,6 +165,14 @@ async fn run(
         );
     }
 
+    // Pre-flight: check nft log support for audit2allow network observability.
+    #[cfg(target_os = "linux")]
+    if sandbox.is_some() {
+        if let Err(msg) = gleisner_polis::NetworkFilter::check_log_available() {
+            app.push_message(Role::System, format!("[warn] {msg}"));
+        }
+    }
+
     // Active query handle — holds the message receiver and abort handle.
     let mut query: Option<QueryHandle> = None;
 
