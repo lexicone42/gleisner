@@ -548,10 +548,11 @@ fn format_tool_result(content: &serde_json::Value, is_error: bool) -> String {
     }
 }
 
-/// Truncate a string to `max` chars with `...` suffix.
+/// Truncate a string to `max` display chars with `...` suffix.
 fn truncate_line(s: &str, max: usize) -> String {
-    if s.len() > max {
-        format!("{}...", &s[..max.saturating_sub(3)])
+    if s.chars().count() > max {
+        let truncated: String = s.chars().take(max.saturating_sub(3)).collect();
+        format!("{truncated}...")
     } else {
         s.to_owned()
     }

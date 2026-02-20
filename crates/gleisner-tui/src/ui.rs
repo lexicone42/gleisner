@@ -15,8 +15,17 @@ use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    Block, BorderType, Borders, Padding, Paragraph, Scrollbar, ScrollbarOrientation,
+    ScrollbarState, Wrap,
 };
+
+// ─── Palette ────────────────────────────────────────────────────
+// Inspired by magitek armor plating — brushed steel frame, green conduit glow.
+const STEEL: Color = Color::Rgb(130, 148, 180);
+const STEEL_DIM: Color = Color::Rgb(80, 95, 120);
+const CONDUIT: Color = Color::Rgb(80, 200, 130);
+const CONDUIT_DIM: Color = Color::Rgb(50, 140, 90);
+const AMBER: Color = Color::Rgb(230, 180, 80);
 
 use crate::app::{App, InputMode, Message, Role, SessionState};
 
@@ -40,13 +49,13 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Left side: conversation + input + status
     // Input height grows with text wrapping: 2 (borders) + number of wrapped lines.
+    // +2 accounts for the "❯ " prompt prefix.
     let input_inner_width = outer[0].width.saturating_sub(2) as usize; // minus left+right borders
     let input_lines = if input_inner_width == 0 {
         1
     } else {
-        // Each line of input text wraps at the inner width.
-        let len = app.input.len().max(1);
-        ((len - 1) / input_inner_width + 1).min(6) // cap at 6 lines to avoid eating the conversation
+        let char_count = (app.input.chars().count() + 2).max(1); // +2 for prompt glyph
+        ((char_count - 1) / input_inner_width + 1).min(6) // cap at 6 lines
     };
     #[allow(clippy::cast_possible_truncation)]
     let input_height = input_lines as u16 + 2; // +2 for top+bottom borders
@@ -95,10 +104,8 @@ fn render_message(lines: &mut Vec<Line<'static>>, msg: &Message) {
     let mut in_code_block = false;
     let code_style = Style::default().fg(Color::Rgb(180, 180, 180));
     let fence_style = Style::default().fg(Color::DarkGray);
-    let header_style = Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD);
-    let bullet_style = Style::default().fg(Color::Yellow);
+    let header_style = Style::default().fg(STEEL).add_modifier(Modifier::BOLD);
+    let bullet_style = Style::default().fg(AMBER);
 
     for line in msg.content.lines() {
         if line.starts_with("```") {
@@ -238,30 +245,33 @@ fn parse_indented_inline(line: &str, base_style: Style) -> Vec<Span<'static>> {
 }
 
 /// Create a role badge `Line` (colored background, bold).
+///
+/// Uses the palette colors to keep badges visually consistent with
+/// the border hierarchy.
 fn role_badge(role: Role) -> Line<'static> {
     let (label, style) = match role {
         Role::User => (
             " you ",
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Cyan)
+                .bg(STEEL)
                 .add_modifier(Modifier::BOLD),
         ),
         Role::Assistant => (
             " claude ",
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Green)
+                .bg(CONDUIT)
                 .add_modifier(Modifier::BOLD),
         ),
         Role::System => (
             " suit ",
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Yellow)
+                .bg(AMBER)
                 .add_modifier(Modifier::BOLD),
         ),
-        Role::Tool => (" tool ", Style::default().fg(Color::DarkGray)),
+        Role::Tool => (" tool ", Style::default().fg(STEEL_DIM)),
     };
     Line::from(Span::styled(label.to_owned(), style))
 }
@@ -278,7 +288,7 @@ fn text_style_for(role: Role) -> Style {
 fn render_streaming_text(lines: &mut Vec<Line<'static>>, text: &str) {
     let text_style = Style::default().fg(Color::White);
     let cursor_style = Style::default()
-        .fg(Color::Green)
+        .fg(CONDUIT)
         .add_modifier(Modifier::RAPID_BLINK);
 
     // Badge
@@ -348,20 +358,38 @@ fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
 
     if lines.is_empty() {
         lines.push(Line::from(Span::styled(
-            format!("{INDENT}Press 'i' to enter insert mode, then type a message."),
-            Style::default().fg(Color::DarkGray),
+            "Press 'i' to enter insert mode, then type a message.",
+            Style::default().fg(STEEL_DIM),
         )));
     }
 
-    let block = Block::default()
-        .title(TITLE)
+    // Scroll hint in the bottom border when content overflows.
+    let visible_height = area.height.saturating_sub(2) as usize;
+    let has_overflow = lines.len() > visible_height;
+    let scroll_hint = if has_overflow && app.scroll_offset > 0 {
+        Line::from(Span::styled(
+            format!(" \u{2191}{} ", app.scroll_offset),
+            Style::default().fg(STEEL_DIM),
+        ))
+        .right_aligned()
+    } else {
+        Line::default()
+    };
+
+    let mut block = Block::default()
+        .title_top(Line::from(TITLE).left_aligned())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Blue));
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(STEEL))
+        .padding(Padding::horizontal(1));
+
+    if has_overflow {
+        block = block.title_bottom(scroll_hint);
+    }
 
     // Calculate scroll position.
     // scroll_offset=0 means "at the bottom" (auto-scroll).
     // Increasing scroll_offset means "scrolled up by N lines".
-    let visible_height = area.height.saturating_sub(2) as usize; // minus borders
     let total_lines = lines.len();
     let max_scroll = total_lines.saturating_sub(visible_height);
     let scroll_pos = max_scroll.saturating_sub(app.scroll_offset as usize);
@@ -375,7 +403,7 @@ fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(paragraph, area);
 
     // Scrollbar (only shown when content overflows).
-    if total_lines > visible_height {
+    if has_overflow {
         let mut scrollbar_state = ScrollbarState::new(max_scroll).position(scroll_pos);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("\u{2191}"))
@@ -386,34 +414,56 @@ fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
 
 // ─── Input field ────────────────────────────────────────────────
 
-/// Render the input field.
+/// Render the input field with a REPL-style prompt.
 ///
-/// Enter submits the prompt. Esc returns to normal mode.
+/// In insert mode the border lights up and a `❯` prompt appears.
+/// Enter submits, Esc returns to normal mode.
 fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
-    let (border_color, title) = match app.input_mode {
-        InputMode::Normal => (Color::DarkGray, " NORMAL "),
-        InputMode::Insert => (Color::Yellow, " INSERT "),
+    let is_insert = app.input_mode == InputMode::Insert;
+
+    let (border_color, mode_label) = if is_insert {
+        (AMBER, " INSERT ")
+    } else {
+        (STEEL_DIM, " NORMAL ")
     };
 
     let block = Block::default()
-        .title(title)
+        .title_top(Line::from(mode_label).left_aligned())
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(border_color));
 
-    let input = Paragraph::new(app.input.as_str())
+    // Build the input line with a prompt glyph.
+    let prompt_style = if is_insert {
+        Style::default().fg(CONDUIT).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(STEEL_DIM)
+    };
+    let prompt = Span::styled("\u{276F} ", prompt_style); // ❯
+    let text_style = if is_insert {
+        Style::default().fg(Color::White)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let content = Span::styled(app.input.clone(), text_style);
+    let input_line = Line::from(vec![prompt, content]);
+
+    let input = Paragraph::new(input_line)
         .block(block)
         .wrap(Wrap { trim: false });
     frame.render_widget(input, area);
 
     // Show cursor in insert mode, accounting for line wrapping.
-    if app.input_mode == InputMode::Insert {
+    // Offset by 2 for the "❯ " prompt prefix.
+    if is_insert {
         let inner_width = area.width.saturating_sub(2) as usize; // minus left+right borders
+        let char_count = app.input.chars().count() + 2; // +2 for prompt glyph + space
         #[allow(clippy::cast_possible_truncation)]
         let (cursor_x, cursor_y) = if inner_width == 0 {
             (area.x + 1, area.y + 1)
         } else {
-            let col = app.input.len() % inner_width;
-            let row = app.input.len() / inner_width;
+            let col = char_count % inner_width;
+            let row = char_count / inner_width;
             (area.x + col as u16 + 1, area.y + row as u16 + 1)
         };
         frame.set_cursor_position((cursor_x, cursor_y));
@@ -424,84 +474,87 @@ fn draw_input(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Render the bottom status bar.
 ///
-/// Layout: `[profile] model STREAMING mode    t:N $0.1234 #session`
+/// Compact layout inspired by Claude Code's REPL:
+/// `[profile] model  LINKED  q:quit ...    t:3 $0.12 #abc123`
 fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
+    let sep = Span::styled(" \u{2502} ", Style::default().fg(STEEL_DIM)); // │ separator
+
     let mut left_spans: Vec<Span> = Vec::new();
 
-    // Profile badge.
+    // Profile badge — pill style.
     left_spans.push(Span::styled(
         format!(" {} ", app.security.profile),
         Style::default()
             .fg(Color::Black)
-            .bg(Color::Blue)
+            .bg(STEEL)
             .add_modifier(Modifier::BOLD),
     ));
-    left_spans.push(Span::raw(" "));
 
     // Model name.
     if let Some(ref model) = app.model {
-        left_spans.push(Span::styled(
-            model.clone(),
-            Style::default().fg(Color::Cyan),
-        ));
-        left_spans.push(Span::raw(" "));
+        left_spans.push(sep.clone());
+        left_spans.push(Span::styled(model.clone(), Style::default().fg(STEEL)));
     }
 
     // Streaming indicator — "LINKED" means the polis link is active.
     if app.session_state == SessionState::Streaming {
+        left_spans.push(Span::raw(" "));
         left_spans.push(Span::styled(
             " LINKED ",
             Style::default()
                 .fg(Color::Black)
-                .bg(Color::Cyan)
+                .bg(CONDUIT)
                 .add_modifier(Modifier::BOLD),
         ));
-        left_spans.push(Span::raw(" "));
     }
 
-    // Mode hint.
+    // Mode hints — dimmed, only the essentials.
+    left_spans.push(sep.clone());
     let mode = match app.input_mode {
-        InputMode::Normal => "q:quit i:insert j/k:scroll PgUp/Dn g/G:top/bot",
+        InputMode::Normal => "q:quit i:insert j/k:scroll",
         InputMode::Insert => "Esc:normal Enter:send",
     };
-    left_spans.push(Span::styled(
-        mode.to_owned(),
-        Style::default().fg(Color::DarkGray),
-    ));
+    left_spans.push(Span::styled(mode, Style::default().fg(STEEL_DIM)));
 
     // Right-aligned info: turns, cost, session ID.
     let mut right_spans: Vec<Span> = Vec::new();
 
     if app.security.turns > 0 {
         right_spans.push(Span::styled(
-            format!("t:{} ", app.security.turns),
-            Style::default().fg(Color::DarkGray),
+            format!("t:{}", app.security.turns),
+            Style::default().fg(STEEL_DIM),
         ));
     }
 
     if app.security.cost_usd > 0.0 {
+        if !right_spans.is_empty() {
+            right_spans.push(sep.clone());
+        }
         right_spans.push(Span::styled(
-            format!("${:.4} ", app.security.cost_usd),
-            Style::default().fg(Color::DarkGray),
+            format!("${:.4}", app.security.cost_usd),
+            Style::default().fg(CONDUIT_DIM),
         ));
     }
 
     if let Some(ref sid) = app.session_id {
         let short_sid = &sid[..sid.len().min(8)];
+        if !right_spans.is_empty() {
+            right_spans.push(sep);
+        }
         right_spans.push(Span::styled(
             format!("#{short_sid}"),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(STEEL_DIM),
         ));
     }
 
     // Compute padding to right-align.
     let left_width: usize = left_spans.iter().map(|s| s.content.len()).sum();
     let right_width: usize = right_spans.iter().map(|s| s.content.len()).sum();
-    let padding = (area.width as usize).saturating_sub(left_width + right_width);
+    let gap = (area.width as usize).saturating_sub(left_width + right_width);
 
     let mut spans = left_spans;
-    if padding > 0 {
-        spans.push(Span::raw(" ".repeat(padding)));
+    if gap > 0 {
+        spans.push(Span::raw(" ".repeat(gap)));
     }
     spans.extend(right_spans);
 
@@ -512,25 +565,33 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 // ─── Security dashboard ─────────────────────────────────────────
 
 /// Render the security dashboard sidebar.
+///
+/// Two sections: system state (profile, attestation, exo-self) and
+/// live counters (reads, writes, tools, turns, cost).
 fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
     let sec = &app.security;
+    let label_style = Style::default().fg(STEEL_DIM);
+    let value_style = Style::default().fg(Color::White);
+    let section_style = Style::default()
+        .fg(CONDUIT_DIM)
+        .add_modifier(Modifier::BOLD);
 
-    let recording_indicator = if sec.recording { "REC" } else { "---" };
-    let recording_color = if sec.recording {
-        Color::Red
-    } else {
-        Color::DarkGray
-    };
-
-    let exo_self_indicator = if sec.exo_self_active {
+    let recording_span = if sec.recording {
         Span::styled(
-            "ACTIVE",
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
+            "\u{25CF} REC",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )
     } else {
-        Span::styled("---", Style::default().fg(Color::DarkGray))
+        Span::styled("\u{25CB} ---", label_style)
+    };
+
+    let exo_self_span = if sec.exo_self_active {
+        Span::styled(
+            "\u{25CF} active",
+            Style::default().fg(CONDUIT).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled("\u{25CB} ---", label_style)
     };
 
     let perm_mode = if sec.permission_mode.is_empty() {
@@ -540,52 +601,65 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let lines = vec![
-        Line::from(""),
+        // ── State ──
+        Line::from(Span::styled("\u{2500} State \u{2500}", section_style)),
         Line::from(vec![
-            Span::raw("  Profile: "),
-            Span::styled(&sec.profile, Style::default().fg(Color::Cyan)),
+            Span::styled("Profile    ", label_style),
+            Span::styled(&sec.profile, Style::default().fg(CONDUIT)),
         ]),
         Line::from(vec![
-            Span::raw("  Mode:    "),
-            Span::styled(perm_mode, Style::default().fg(Color::White)),
+            Span::styled("Mode       ", label_style),
+            Span::styled(perm_mode, value_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Attest.    ", label_style),
+            recording_span,
+        ]),
+        Line::from(vec![
+            Span::styled("Exo-self   ", label_style),
+            exo_self_span,
         ]),
         Line::from(""),
+        // ── Sensors ──
+        Line::from(Span::styled("\u{2500} Sensors \u{2500}", section_style)),
         Line::from(vec![
-            Span::raw("  Attestation: "),
+            Span::styled("Reads      ", label_style),
+            Span::styled(format!("{}", sec.file_reads), value_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Writes     ", label_style),
+            Span::styled(format!("{}", sec.file_writes), value_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Tools      ", label_style),
+            Span::styled(format!("{}", sec.tool_calls), value_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Plugins    ", label_style),
+            Span::styled(format!("{}", sec.plugin_count), value_style),
+        ]),
+        Line::from(""),
+        // ── Link ──
+        Line::from(Span::styled("\u{2500} Link \u{2500}", section_style)),
+        Line::from(vec![
+            Span::styled("Turns      ", label_style),
+            Span::styled(format!("{}", sec.turns), value_style),
+        ]),
+        Line::from(vec![
+            Span::styled("Cost       ", label_style),
             Span::styled(
-                recording_indicator,
-                Style::default()
-                    .fg(recording_color)
-                    .add_modifier(Modifier::BOLD),
+                format!("${:.4}", sec.cost_usd),
+                Style::default().fg(CONDUIT),
             ),
         ]),
-        Line::from(vec![Span::raw("  Exo-self:    "), exo_self_indicator]),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  \u{2500}\u{2500} Sensors \u{2500}\u{2500}",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(format!("  File reads:  {}", sec.file_reads)),
-        Line::from(format!("  File writes: {}", sec.file_writes)),
-        Line::from(format!("  Tool calls:  {}", sec.tool_calls)),
-        Line::from(format!("  Plugins:     {}", sec.plugin_count)),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  \u{2500}\u{2500} Link \u{2500}\u{2500}",
-            Style::default()
-                .fg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )),
-        Line::from(format!("  Turns: {}", sec.turns)),
-        Line::from(format!("  Cost:  ${:.4}", sec.cost_usd)),
     ];
 
     let block = Block::default()
-        .title(" Telemetry ")
+        .title_top(Line::from(" Telemetry ").left_aligned())
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Magenta));
+        .border_type(BorderType::Thick)
+        .border_style(Style::default().fg(CONDUIT))
+        .padding(Padding::new(1, 1, 1, 0));
 
     let dashboard = Paragraph::new(lines).block(block);
     frame.render_widget(dashboard, area);
