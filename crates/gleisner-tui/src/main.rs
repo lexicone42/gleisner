@@ -77,11 +77,18 @@ async fn main() -> color_eyre::Result<()> {
     let use_sigstore = args.iter().any(|a| a == "--sigstore");
 
     // Parse --sigstore-token argument — pre-supplied OIDC JWT for headless signing
-    let sigstore_token = args
+    let mut sigstore_token = args
         .iter()
         .position(|a| a == "--sigstore-token")
         .and_then(|i| args.get(i + 1))
         .cloned();
+
+    // ── Pre-flight Sigstore OIDC ────────────────────────────────
+    // If --sigstore is set but no token provided, run the OIDC flow
+    // in the normal terminal before entering ratatui raw mode.
+    if use_sigstore && sigstore_token.is_none() {
+        sigstore_token = Some(preflight_sigstore_auth().await?);
+    }
 
     // Load the gleisner security profile
     let profile = gleisner_polis::profile::resolve_profile(&profile_name)?;
@@ -370,4 +377,81 @@ fn dirs_log_dir() -> PathBuf {
         |_| PathBuf::from("/tmp/gleisner"),
         |home| PathBuf::from(home).join(".local/share/gleisner"),
     )
+}
+
+// ─── Sigstore OIDC pre-flight ────────────────────────────────
+
+const SIGSTORE_AUTH_URL: &str = "https://oauth2.sigstore.dev/auth";
+const SIGSTORE_CLIENT_ID: &str = "sigstore";
+const SIGSTORE_REDIRECT_OOB: &str = "urn:ietf:wg:oauth:2.0:oob";
+
+/// Run the Sigstore OIDC authorization code flow interactively.
+///
+/// Prints an auth URL, waits for the user to paste the code,
+/// then exchanges it for an identity token JWT. This runs
+/// *before* ratatui enters raw mode so normal terminal I/O works.
+async fn preflight_sigstore_auth() -> color_eyre::Result<String> {
+    use color_eyre::eyre::eyre;
+
+    // Pre-encoded redirect URI (urn:ietf:wg:oauth:2.0:oob).
+    const REDIRECT_ENCODED: &str = "urn%3Aietf%3Awg%3Aoauth%3A2.0%3Aoob";
+
+    let auth_url = format!(
+        "{SIGSTORE_AUTH_URL}/auth?\
+         client_id={SIGSTORE_CLIENT_ID}&\
+         redirect_uri={REDIRECT_ENCODED}&\
+         response_type=code&\
+         scope=openid+email&\
+         nonce=gleisner",
+    );
+
+    eprintln!();
+    eprintln!(
+        "\x1b[1;36m\u{27E8}gleisner\u{27E9}\x1b[0m Sigstore keyless signing requires authentication."
+    );
+    eprintln!();
+    eprintln!("  Open this URL in your browser:");
+    eprintln!();
+    eprintln!("  \x1b[4;37m{auth_url}\x1b[0m");
+    eprintln!();
+    eprint!("  Paste the authorization code here: ");
+
+    let mut code = String::new();
+    std::io::stdin().read_line(&mut code)?;
+    let code = code.trim();
+
+    if code.is_empty() {
+        return Err(eyre!("no authorization code provided"));
+    }
+
+    eprintln!("  Exchanging code for identity token...");
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("{SIGSTORE_AUTH_URL}/token"))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("client_id", SIGSTORE_CLIENT_ID),
+            ("redirect_uri", SIGSTORE_REDIRECT_OOB),
+        ])
+        .send()
+        .await
+        .map_err(|e| eyre!("token exchange request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(eyre!("token exchange failed: {body}"));
+    }
+
+    let token_data: serde_json::Value = resp.json().await?;
+    let id_token = token_data["id_token"]
+        .as_str()
+        .ok_or_else(|| eyre!("no id_token in response"))?
+        .to_owned();
+
+    eprintln!("  \x1b[1;32m\u{2713}\x1b[0m Authenticated. Starting TUI...");
+    eprintln!();
+
+    Ok(id_token)
 }
