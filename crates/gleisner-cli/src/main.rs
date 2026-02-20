@@ -1,6 +1,7 @@
 //! Gleisner CLI — supply chain security for Claude Code.
 //!
 //! Sandbox Claude Code sessions, attest every action, verify provenance.
+//! cosign test: 2026-02-20
 
 mod commands;
 mod config;
