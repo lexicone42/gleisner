@@ -78,40 +78,18 @@ jobs:
             echo "No attestation bundles found — skipping verification"
           fi
 
-  attest:
+  # Verify the keyless (Sigstore) feature compiles.
+  # Full sandboxed attestation recording requires a Docker-based runner
+  # with user namespace support — deferred until self-hosted runners.
+  build-keyless:
     runs-on: ubuntu-latest
     needs: test
-    permissions:
-      id-token: write
-      contents: read
-      attestations: write
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y bubblewrap passt nftables
       - name: Build with Sigstore support
         run: cargo build --release --bin gleisner --features keyless
-      - name: Record with Sigstore keyless signing
-        run: |
-          cargo run --release --bin gleisner --features keyless -- \
-            record --sigstore --no-proc-monitor -- \
-            claude -p "CI attestation test: confirm you are running"
-      - name: Verify attestation
-        run: |
-          LATEST=$(ls -t .gleisner/attestation-*.json 2>/dev/null | head -1)
-          if [ -n "$LATEST" ]; then
-            cargo run --release --bin gleisner -- verify "$LATEST" --json
-          fi
-      - name: Upload attestation artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: attestation
-          path: |
-            .gleisner/attestation-*.json
-            .gleisner/attestation-*.sigstore.json
-            .gleisner/audit-*.jsonl
+      - name: Build TUI with Sigstore support
+        run: cargo build --release --bin gleisner-tui --features keyless

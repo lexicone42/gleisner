@@ -42,9 +42,6 @@ tokio-util.workspace = true
 chrono.workspace = true
 sha2.workspace = true
 
-# Sigstore OIDC pre-flight
-reqwest.workspace = true
-
 [dev-dependencies]
 # PTY-based integration testing
 portable-pty.workspace = true
