@@ -105,13 +105,13 @@ impl CgroupScope {
             );
         }
 
-        // io.max requires a major:minor block device identifier which is
-        // environment-specific. Log a warning so users know this field is
-        // advisory until block device detection is implemented.
+        // Disk write limits are enforced via RLIMIT_FSIZE (per-file max size)
+        // in apply_rlimits(). Cgroup io.max would provide total I/O throttling
+        // but requires a major:minor block device identifier.
         if limits.max_disk_write_mb > 0 {
-            warn!(
+            debug!(
                 max_disk_write_mb = limits.max_disk_write_mb,
-                "disk write limit is advisory — cgroup io.max enforcement requires block device detection (not yet implemented)"
+                "disk write limit will be enforced via RLIMIT_FSIZE after spawn"
             );
         }
 
@@ -169,15 +169,18 @@ impl Drop for CgroupScope {
 /// Discover a writable cgroup v2 base directory.
 ///
 /// Probes (in order):
-/// 1. **OpenRC/elogind**: `/sys/fs/cgroup/openrc.user.{username}/`
-/// 2. **systemd user slice**: `/sys/fs/cgroup/user.slice/user-{uid}.slice/`
-/// 3. **Direct root**: `/sys/fs/cgroup/`
+/// 1. **Gleisner-dedicated**: `/sys/fs/cgroup/gleisner.{username}/`
+///    (not managed by elogind, survives session changes)
+/// 2. **OpenRC/elogind**: `/sys/fs/cgroup/openrc.user.{username}/`
+///    (may be reset by elogind on session events)
+/// 3. **systemd user slice**: `/sys/fs/cgroup/user.slice/user-{uid}.slice/`
+/// 4. **Direct root**: `/sys/fs/cgroup/`
 ///
 /// Returns the first path that exists and is writable by the current user.
 fn discover_cgroup_base() -> Result<PathBuf, SandboxError> {
     let uid = nix::unistd::getuid();
 
-    // Resolve username for OpenRC/elogind path
+    // Resolve username for cgroup path construction
     let username = nix::unistd::User::from_uid(uid)
         .ok()
         .flatten()
@@ -185,19 +188,22 @@ fn discover_cgroup_base() -> Result<PathBuf, SandboxError> {
 
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    // 1. OpenRC/elogind: /sys/fs/cgroup/openrc.user.{username}/
     if let Some(ref name) = username {
+        // 1. Gleisner-dedicated: not managed by elogind, stable across sessions
+        candidates.push(PathBuf::from(CGROUP_ROOT).join(format!("gleisner.{name}")));
+
+        // 2. OpenRC/elogind: may be reset by elogind on session events
         candidates.push(PathBuf::from(CGROUP_ROOT).join(format!("openrc.user.{name}")));
     }
 
-    // 2. systemd user slice: /sys/fs/cgroup/user.slice/user-{uid}.slice/
+    // 3. systemd user slice: /sys/fs/cgroup/user.slice/user-{uid}.slice/
     candidates.push(
         PathBuf::from(CGROUP_ROOT)
             .join("user.slice")
             .join(format!("user-{uid}.slice")),
     );
 
-    // 3. Direct root (works if running as root or cgroup is delegated)
+    // 4. Direct root (works if running as root or cgroup is delegated)
     candidates.push(PathBuf::from(CGROUP_ROOT));
 
     for candidate in &candidates {
@@ -214,8 +220,8 @@ fn discover_cgroup_base() -> Result<PathBuf, SandboxError> {
             std::io::ErrorKind::PermissionDenied,
             format!(
                 "no writable cgroup base found (tried: {}). \
-                 Hint: run `sudo chown $USER /sys/fs/cgroup/openrc.user.$USER/` \
-                 to delegate cgroup access",
+                 Hint: run `sudo sh /tmp/gleisner-cgroup-fix.sh` \
+                 to set up cgroup delegation",
                 candidates
                     .iter()
                     .map(|p| p.display().to_string())

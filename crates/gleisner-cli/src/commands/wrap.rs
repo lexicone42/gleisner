@@ -111,7 +111,7 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
         .spawn()
         .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-    // Apply rlimits (NOFILE, AS, NPROC) — fallback for cgroup limits and defense-in-depth.
+    // Apply rlimits (NOFILE, AS, NPROC, FSIZE) — fallback for cgroup limits and defense-in-depth.
     let child_pid = child.id();
     #[expect(clippy::cast_possible_wrap, reason = "PID fits in i32")]
     if let Err(e) = prepared.apply_rlimits(nix::unistd::Pid::from_raw(child_pid as i32)) {

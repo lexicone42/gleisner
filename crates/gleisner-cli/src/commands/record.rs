@@ -235,7 +235,7 @@ mod linux_impl {
             .spawn()
             .map_err(|e| eyre!("failed to spawn sandboxed process: {e}"))?;
 
-        // Apply rlimits (NOFILE, AS, NPROC) — fallback for cgroup limits and defense-in-depth.
+        // Apply rlimits (NOFILE, AS, NPROC, FSIZE) — fallback for cgroup limits and defense-in-depth.
         if let Some(pid) = child.id() {
             #[expect(clippy::cast_possible_wrap, reason = "PID fits in i32")]
             if let Err(e) = prepared.apply_rlimits(nix::unistd::Pid::from_raw(pid as i32)) {

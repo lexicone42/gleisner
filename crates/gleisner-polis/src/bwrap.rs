@@ -279,7 +279,8 @@ impl BwrapSandbox {
     /// Apply resource limits to a running child process via `prlimit(1)`.
     ///
     /// Sets `RLIMIT_NOFILE` (file descriptors), `RLIMIT_AS` (virtual memory),
-    /// and `RLIMIT_NPROC` (max processes). These serve as a fallback when
+    /// `RLIMIT_NPROC` (max processes), and `RLIMIT_FSIZE` (max file size).
+    /// These serve as a fallback when
     /// cgroup-based limits cannot be applied (e.g., without `CAP_SYS_ADMIN`),
     /// and as defense-in-depth when cgroups are active.
     ///
@@ -321,6 +322,23 @@ impl BwrapSandbox {
             let val = limits.max_pids;
             Self::run_prlimit(&pid_arg, &format!("--nproc={val}:{val}"), "RLIMIT_NPROC")?;
             debug!(pid = pid.as_raw(), max_pids = val, "applied RLIMIT_NPROC");
+        }
+
+        // RLIMIT_FSIZE: max size (bytes) of any single file the process can
+        // write. This is per-file, not total I/O, but provides a hard ceiling
+        // that works without cgroup io.max or block device detection.
+        if limits.max_disk_write_mb > 0 {
+            let bytes = limits.max_disk_write_mb * 1024 * 1024;
+            Self::run_prlimit(
+                &pid_arg,
+                &format!("--fsize={bytes}:{bytes}"),
+                "RLIMIT_FSIZE",
+            )?;
+            debug!(
+                pid = pid.as_raw(),
+                max_disk_write_mb = limits.max_disk_write_mb,
+                "applied RLIMIT_FSIZE"
+            );
         }
 
         Ok(())

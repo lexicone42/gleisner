@@ -49,7 +49,7 @@ pub struct PreparedSandbox {
 }
 
 impl PreparedSandbox {
-    /// Apply rlimits (`RLIMIT_AS`, `RLIMIT_NPROC`, `RLIMIT_NOFILE`) to a child.
+    /// Apply rlimits (`RLIMIT_AS`, `RLIMIT_NPROC`, `RLIMIT_NOFILE`, `RLIMIT_FSIZE`) to a child.
     ///
     /// Call this after spawning the child process. Logs a warning on failure.
     pub fn apply_rlimits(&self, pid: nix::unistd::Pid) -> Result<(), SandboxError> {
