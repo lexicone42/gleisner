@@ -59,6 +59,12 @@ pub struct SecurityState {
     pub context_window: u64,
     /// An attestation was recorded but not yet cosigned with Sigstore.
     pub pending_cosign: bool,
+    /// The current session's attestation has been cosigned with Sigstore.
+    pub cosigned: bool,
+    /// Whether the sandbox (bwrap) is active for this session.
+    pub sandbox_active: bool,
+    /// Number of attestation events recorded during this session.
+    pub attest_events: u64,
 }
 
 /// The input mode determines how keystrokes are interpreted.
@@ -401,12 +407,12 @@ impl App {
 
         let is_streaming = self.session_state == SessionState::Streaming;
 
-        // Ctrl+C: interrupt during streaming, quit otherwise.
+        // Ctrl+C: interrupt during streaming, ignored otherwise.
+        // Use 'q' in normal mode to quit — prevents accidental session kill.
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if is_streaming {
                 return Some(UserAction::Interrupt);
             }
-            self.should_quit = true;
             return None;
         }
 

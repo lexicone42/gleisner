@@ -38,12 +38,15 @@ const INDENT: &str = "  ";
 
 /// Render the entire UI.
 pub fn draw(frame: &mut Frame, app: &App) {
-    // Main layout: conversation + security sidebar
+    // Main layout: conversation + security sidebar.
+    // Sidebar gets a fixed width — its content (label + value) never needs
+    // more than ~28 columns. The conversation area takes all remaining space,
+    // which minimizes wrapping on narrow terminals.
     let outer = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Percentage(75), // conversation area
-            Constraint::Percentage(25), // security dashboard (grows with terminal)
+            Constraint::Min(40),        // conversation area (takes remaining)
+            Constraint::Length(30),      // security dashboard (fixed width)
         ])
         .split(frame.area());
 
@@ -363,9 +366,26 @@ fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
-    // Scroll hint in the bottom border when content overflows.
+    // Compute visual line count: each Line wraps based on its display width
+    // vs the inner width of the conversation area.
+    // This is critical for correct scroll math — Paragraph::scroll() operates
+    // on visual (post-wrap) lines, not logical lines.
+    let inner_width = area.width.saturating_sub(2 + 2) as usize; // borders + horizontal padding
     let visible_height = area.height.saturating_sub(2) as usize;
-    let has_overflow = lines.len() > visible_height;
+
+    let visual_line_count: usize = lines
+        .iter()
+        .map(|line| {
+            let w = line.width();
+            if w == 0 || inner_width == 0 {
+                1
+            } else {
+                w.div_ceil(inner_width)
+            }
+        })
+        .sum();
+
+    let has_overflow = visual_line_count > visible_height;
     let scroll_hint = if has_overflow && app.scroll_offset > 0 {
         Line::from(Span::styled(
             format!(" \u{2191}{} ", app.scroll_offset),
@@ -387,11 +407,10 @@ fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
         block = block.title_bottom(scroll_hint);
     }
 
-    // Calculate scroll position.
+    // Calculate scroll position using visual line count.
     // scroll_offset=0 means "at the bottom" (auto-scroll).
     // Increasing scroll_offset means "scrolled up by N lines".
-    let total_lines = lines.len();
-    let max_scroll = total_lines.saturating_sub(visible_height);
+    let max_scroll = visual_line_count.saturating_sub(visible_height);
     let scroll_pos = max_scroll.saturating_sub(app.scroll_offset as usize);
 
     #[allow(clippy::cast_possible_truncation)]
@@ -566,8 +585,10 @@ fn draw_status_bar(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Render the security dashboard sidebar.
 ///
-/// Two sections: system state (profile, attestation, exo-self) and
-/// live counters (reads, writes, tools, turns, cost).
+/// Three sections: suit state (profile, sandbox, attestation),
+/// live sensors (reads, writes, tools), and link stats (turns, cost, context).
+/// Context window uses a visual bar for at-a-glance usage.
+#[allow(clippy::too_many_lines, clippy::cast_precision_loss)]
 fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
     let sec = &app.security;
     let label_style = Style::default().fg(STEEL_DIM);
@@ -576,16 +597,42 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         .fg(CONDUIT_DIM)
         .add_modifier(Modifier::BOLD);
 
-    let recording_span = if sec.recording {
+    // ── Sandbox indicator ──
+    let sandbox_span = if sec.sandbox_active {
         Span::styled(
-            "\u{25CF} REC",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            "\u{25CF} bwrap",
+            Style::default().fg(CONDUIT).add_modifier(Modifier::BOLD),
         )
     } else {
-        Span::styled("\u{25CB} ---", label_style)
+        Span::styled("\u{25CB} off", label_style)
     };
 
-    let cosign_span = if sec.pending_cosign {
+    // ── Attest indicator (shows live event count while recording) ──
+    let attest_spans: Vec<Span> = if sec.recording {
+        vec![
+            Span::styled(
+                "\u{25CF} REC",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" {}", sec.attest_events), value_style),
+        ]
+    } else if sec.attest_events > 0 {
+        // Recording finished, show final count dimmed
+        vec![
+            Span::styled("\u{25CB} ", label_style),
+            Span::styled(format!("{}", sec.attest_events), label_style),
+        ]
+    } else {
+        vec![Span::styled("\u{25CB} ---", label_style)]
+    };
+
+    // ── Cosign indicator ──
+    let cosign_span = if sec.cosigned {
+        Span::styled(
+            "\u{25CF} signed",
+            Style::default().fg(CONDUIT).add_modifier(Modifier::BOLD),
+        )
+    } else if sec.pending_cosign {
         Span::styled(
             "\u{25CF} /cosign",
             Style::default().fg(AMBER).add_modifier(Modifier::BOLD),
@@ -609,7 +656,41 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         &sec.permission_mode
     };
 
-    let lines = vec![
+    // ── Context window bar ──
+    // 10-column bar: █ for used, ░ for free, colored by usage level.
+    let ctx_line = if sec.context_window > 0 {
+        let pct = (sec.tokens_used as f64 / sec.context_window as f64) * 100.0;
+        let color = if pct > 80.0 {
+            Color::Red
+        } else if pct > 60.0 {
+            AMBER
+        } else {
+            CONDUIT
+        };
+        let bar_width: usize = 10;
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let filled = ((pct / 100.0) * bar_width as f64).round() as usize;
+        let empty = bar_width.saturating_sub(filled);
+        vec![
+            Span::styled("Ctx ", label_style),
+            Span::styled(
+                "\u{2588}".repeat(filled),
+                Style::default().fg(color),
+            ),
+            Span::styled(
+                "\u{2591}".repeat(empty),
+                Style::default().fg(STEEL_DIM),
+            ),
+            Span::styled(format!(" {pct:.0}%"), Style::default().fg(color)),
+        ]
+    } else {
+        vec![
+            Span::styled("Ctx ", label_style),
+            Span::styled("---", label_style),
+        ]
+    };
+
+    let mut lines = vec![
         // ── State ──
         Line::from(Span::styled("\u{2500} State \u{2500}", section_style)),
         Line::from(vec![
@@ -620,7 +701,15 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled("Mode    ", label_style),
             Span::styled(perm_mode, value_style),
         ]),
-        Line::from(vec![Span::styled("Attest  ", label_style), recording_span]),
+        Line::from(vec![Span::styled("Sandbox ", label_style), sandbox_span]),
+    ];
+
+    // Attest line uses a Vec<Span> (variable number of spans)
+    let mut attest_line = vec![Span::styled("Attest  ", label_style)];
+    attest_line.extend(attest_spans);
+    lines.push(Line::from(attest_line));
+
+    lines.extend([
         Line::from(vec![Span::styled("Cosign  ", label_style), cosign_span]),
         Line::from(vec![Span::styled("Exo     ", label_style), exo_self_span]),
         Line::from(""),
@@ -656,23 +745,8 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(CONDUIT),
             ),
         ]),
-        Line::from(vec![
-            Span::styled("Ctx    ", label_style),
-            if sec.context_window > 0 {
-                let pct = (sec.tokens_used as f64 / sec.context_window as f64) * 100.0;
-                let color = if pct > 80.0 {
-                    Color::Red
-                } else if pct > 60.0 {
-                    AMBER
-                } else {
-                    CONDUIT
-                };
-                Span::styled(format!("{pct:.0}%"), Style::default().fg(color))
-            } else {
-                Span::styled("---", label_style)
-            },
-        ]),
-    ];
+        Line::from(ctx_line),
+    ]);
 
     let block = Block::default()
         .title_top(Line::from(" Telemetry ").left_aligned())

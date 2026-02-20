@@ -142,6 +142,7 @@ async fn run(
     sigstore_token: Option<&str>,
 ) -> color_eyre::Result<()> {
     let mut app = App::new(&profile.name);
+    app.security.sandbox_active = sandbox.is_some();
 
     let sandbox_indicator = if sandbox.is_some() { " [embodied]" } else { "" };
     let sigstore_indicator = if use_sigstore { " [sigstore]" } else { "" };
@@ -227,6 +228,9 @@ async fn run(
                 match msg {
                     DriverMessage::Event(event) => {
                         debug!(event_type = ?std::mem::discriminant(&*event), "stream event");
+                        if app.security.recording {
+                            app.security.attest_events += 1;
+                        }
                         app.handle_stream_event(*event);
                     }
                     DriverMessage::AttestationComplete { path, event_count } => {
@@ -476,6 +480,7 @@ async fn handle_cosign(
                         "cosign complete"
                     );
                     app.security.pending_cosign = false;
+                    app.security.cosigned = true;
                     app.push_message(
                         Role::System,
                         format!(
