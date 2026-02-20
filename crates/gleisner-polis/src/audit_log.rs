@@ -186,10 +186,10 @@ fn extract_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     }
 
     let rest = &line[value_start..];
-    if rest.starts_with('"') {
+    if let Some(inner) = rest.strip_prefix('"') {
         // Quoted value: find the closing quote.
-        let close = rest[1..].find('"')?;
-        Some(&rest[1..=close])
+        let close = inner.find('"')?;
+        Some(&inner[..close])
     } else {
         // Bare value: ends at next whitespace.
         let end = rest.find(' ').unwrap_or(rest.len());

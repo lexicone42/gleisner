@@ -31,6 +31,12 @@ gleisner-scapes.workspace = true
 gleisner-polis.workspace = true
 gleisner-bridger.workspace = true
 gleisner-lacerta.workspace = true
+gleisner-introdus.workspace = true
+
+# Attestation pipeline
+tokio-util.workspace = true
+chrono.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 # PTY-based integration testing

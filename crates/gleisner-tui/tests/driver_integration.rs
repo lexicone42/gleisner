@@ -226,6 +226,16 @@ fn process_messages(app: &mut App, messages: &[DriverMessage]) {
             DriverMessage::Stderr(line) => {
                 app.push_message(Role::System, format!("[stderr] {line}"));
             }
+            DriverMessage::AttestationComplete { path, event_count } => {
+                app.security.recording = false;
+                app.push_message(
+                    Role::System,
+                    format!(
+                        "Attestation recorded ({event_count} events): {}",
+                        path.display()
+                    ),
+                );
+            }
         }
     }
 }

@@ -158,6 +158,10 @@ fn run(
                                 if let Some(bin) = claude_bin {
                                     bin.clone_into(&mut config.claude_bin);
                                 }
+                                // Mark recording active for sandboxed sessions
+                                if config.sandbox.is_some() {
+                                    app.security.recording = true;
+                                }
                                 stream_rx = Some(spawn_query(config, 256));
                             }
                             UserAction::Command(cmd) => {
@@ -177,10 +181,22 @@ fn run(
                         debug!(event_type = ?std::mem::discriminant(&*event), "stream event");
                         app.handle_stream_event(*event);
                     }
+                    DriverMessage::AttestationComplete { path, event_count } => {
+                        info!(path = %path.display(), events = event_count, "attestation complete");
+                        app.security.recording = false;
+                        app.push_message(
+                            Role::System,
+                            format!(
+                                "Attestation recorded ({event_count} events): {}",
+                                path.display()
+                            ),
+                        );
+                    }
                     DriverMessage::Exited(code) => {
                         info!(?code, "subprocess exited");
                         if app.session_state != SessionState::Idle {
                             app.session_state = SessionState::Idle;
+                            app.security.recording = false;
                             if let Some(code) = code {
                                 if code != 0 {
                                     app.push_message(

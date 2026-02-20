@@ -2565,9 +2565,11 @@ dependencies = [
 name = "gleisner-tui"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "color-eyre",
  "crossterm",
  "gleisner-bridger",
+ "gleisner-introdus",
  "gleisner-lacerta",
  "gleisner-polis",
  "gleisner-scapes",
@@ -2575,8 +2577,10 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "vt100",
