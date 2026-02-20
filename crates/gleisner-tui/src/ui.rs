@@ -42,8 +42,8 @@ pub fn draw(frame: &mut Frame, app: &App) {
     let outer = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Min(40),    // conversation area
-            Constraint::Length(28), // security dashboard
+            Constraint::Percentage(75), // conversation area
+            Constraint::Percentage(25), // security dashboard (grows with terminal)
         ])
         .split(frame.area());
 
@@ -604,53 +604,63 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         // ── State ──
         Line::from(Span::styled("\u{2500} State \u{2500}", section_style)),
         Line::from(vec![
-            Span::styled("Profile    ", label_style),
+            Span::styled("Profile ", label_style),
             Span::styled(&sec.profile, Style::default().fg(CONDUIT)),
         ]),
         Line::from(vec![
-            Span::styled("Mode       ", label_style),
+            Span::styled("Mode    ", label_style),
             Span::styled(perm_mode, value_style),
         ]),
-        Line::from(vec![
-            Span::styled("Attest.    ", label_style),
-            recording_span,
-        ]),
-        Line::from(vec![
-            Span::styled("Exo-self   ", label_style),
-            exo_self_span,
-        ]),
+        Line::from(vec![Span::styled("Attest  ", label_style), recording_span]),
+        Line::from(vec![Span::styled("Exo     ", label_style), exo_self_span]),
         Line::from(""),
         // ── Sensors ──
         Line::from(Span::styled("\u{2500} Sensors \u{2500}", section_style)),
         Line::from(vec![
-            Span::styled("Reads      ", label_style),
+            Span::styled("Reads  ", label_style),
             Span::styled(format!("{}", sec.file_reads), value_style),
         ]),
         Line::from(vec![
-            Span::styled("Writes     ", label_style),
+            Span::styled("Writes ", label_style),
             Span::styled(format!("{}", sec.file_writes), value_style),
         ]),
         Line::from(vec![
-            Span::styled("Tools      ", label_style),
+            Span::styled("Tools  ", label_style),
             Span::styled(format!("{}", sec.tool_calls), value_style),
         ]),
         Line::from(vec![
-            Span::styled("Plugins    ", label_style),
+            Span::styled("MCP    ", label_style),
             Span::styled(format!("{}", sec.plugin_count), value_style),
         ]),
         Line::from(""),
         // ── Link ──
         Line::from(Span::styled("\u{2500} Link \u{2500}", section_style)),
         Line::from(vec![
-            Span::styled("Turns      ", label_style),
+            Span::styled("Turns  ", label_style),
             Span::styled(format!("{}", sec.turns), value_style),
         ]),
         Line::from(vec![
-            Span::styled("Cost       ", label_style),
+            Span::styled("Cost   ", label_style),
             Span::styled(
                 format!("${:.4}", sec.cost_usd),
                 Style::default().fg(CONDUIT),
             ),
+        ]),
+        Line::from(vec![
+            Span::styled("Ctx    ", label_style),
+            if sec.context_window > 0 {
+                let pct = (sec.tokens_used as f64 / sec.context_window as f64) * 100.0;
+                let color = if pct > 80.0 {
+                    Color::Red
+                } else if pct > 60.0 {
+                    AMBER
+                } else {
+                    CONDUIT
+                };
+                Span::styled(format!("{pct:.0}%"), Style::default().fg(color))
+            } else {
+                Span::styled("---", label_style)
+            },
         ]),
     ];
 
@@ -661,6 +671,8 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         .border_style(Style::default().fg(CONDUIT))
         .padding(Padding::new(1, 1, 1, 0));
 
-    let dashboard = Paragraph::new(lines).block(block);
+    let dashboard = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     frame.render_widget(dashboard, area);
 }

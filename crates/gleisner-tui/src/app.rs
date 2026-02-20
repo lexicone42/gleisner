@@ -53,6 +53,10 @@ pub struct SecurityState {
     pub plugin_count: usize,
     /// Permission mode from the init event.
     pub permission_mode: String,
+    /// Total tokens used (input + cache + output) across all prompts.
+    pub tokens_used: u64,
+    /// Context window size from the model.
+    pub context_window: u64,
 }
 
 /// The input mode determines how keystrokes are interpreted.
@@ -332,6 +336,22 @@ impl App {
         }
         if let Some(turns) = result.num_turns {
             self.security.turns += turns;
+        }
+        // Extract token counts from modelUsage (latest invocation replaces totals).
+        if let Some(ref usage_map) = result.model_usage {
+            let mut total_tokens = 0u64;
+            let mut ctx_window = 0u64;
+            for usage in usage_map.values() {
+                total_tokens += usage.input_tokens
+                    + usage.output_tokens
+                    + usage.cache_read_input_tokens
+                    + usage.cache_creation_input_tokens;
+                if usage.context_window > ctx_window {
+                    ctx_window = usage.context_window;
+                }
+            }
+            self.security.tokens_used = total_tokens;
+            self.security.context_window = ctx_window;
         }
 
         if result.is_error {

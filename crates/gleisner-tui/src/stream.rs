@@ -219,6 +219,33 @@ pub struct ResultEvent {
     /// Total cost in USD.
     #[serde(default)]
     pub total_cost_usd: Option<f64>,
+    /// Per-model usage breakdown (token counts, context window size).
+    #[serde(default, rename = "modelUsage")]
+    pub model_usage: Option<HashMap<String, ModelUsage>>,
+}
+
+/// Per-model token usage from a result event.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsage {
+    /// Prompt tokens (excluding cache).
+    #[serde(default)]
+    pub input_tokens: u64,
+    /// Completion tokens.
+    #[serde(default)]
+    pub output_tokens: u64,
+    /// Tokens served from cache.
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+    /// Tokens written to cache.
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+    /// Model's total context window size.
+    #[serde(default)]
+    pub context_window: u64,
+    /// Cost in USD for this model's usage.
+    #[serde(default)]
+    pub cost_usd: Option<f64>,
 }
 
 // ─── Stream delta events ─────────────────────────────────────
@@ -310,6 +337,31 @@ mod tests {
                 assert_eq!(res.session_id.as_deref(), Some("abc-123"));
                 assert_eq!(res.result.as_deref(), Some("hello"));
                 assert!((res.total_cost_usd.unwrap() - 0.286).abs() < 0.001);
+            }
+            _ => panic!("expected Result event"),
+        }
+    }
+
+    #[test]
+    fn parse_result_event_with_model_usage() {
+        let line = r#"{"type":"result","subtype":"success","is_error":false,"duration_ms":4584,"num_turns":1,"result":"4","session_id":"abc","total_cost_usd":0.060547,"modelUsage":{"claude-opus-4-6":{"inputTokens":3,"outputTokens":5,"cacheReadInputTokens":39214,"cacheCreationInputTokens":6528,"contextWindow":200000,"costUSD":0.060547}}}"#;
+        let event = parse_event(line).expect("should parse");
+        match event {
+            StreamEvent::Result(res) => {
+                let usage_map = res.model_usage.expect("should have modelUsage");
+                let usage = usage_map.get("claude-opus-4-6").expect("should have opus");
+                assert_eq!(usage.input_tokens, 3);
+                assert_eq!(usage.output_tokens, 5);
+                assert_eq!(usage.cache_read_input_tokens, 39214);
+                assert_eq!(usage.cache_creation_input_tokens, 6528);
+                assert_eq!(usage.context_window, 200_000);
+                let total = usage.input_tokens
+                    + usage.output_tokens
+                    + usage.cache_read_input_tokens
+                    + usage.cache_creation_input_tokens;
+                assert_eq!(total, 45750);
+                let pct = total as f64 / usage.context_window as f64 * 100.0;
+                assert!((pct - 22.875).abs() < 0.01);
             }
             _ => panic!("expected Result event"),
         }
