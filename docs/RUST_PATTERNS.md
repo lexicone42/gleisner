@@ -570,12 +570,12 @@ and exit. The explicit `drop()` calls make the ordering visible to the reader.
 when a value goes out of scope, and using explicit `drop()` calls when cleanup
 must happen at a specific point.
 
-**Why it matters:** Gleisner manages external processes (slirp4netns, namespace
-holder) that must be killed when the session ends. If the program calls
+**Why it matters:** Gleisner manages external processes (namespace holder) that
+must be killed when the session ends. If the program calls
 `std::process::exit()`, Rust skips destructors. Without careful ordering, child
 processes would leak.
 
-### The `Drop` implementations
+### The `Drop` implementation
 
 From `netfilter.rs`:
 
@@ -587,32 +587,14 @@ impl Drop for NamespaceHandle {
         let _ = self.holder.wait();
     }
 }
-
-impl Drop for SlirpHandle {
-    fn drop(&mut self) {
-        let pid = self.child.id();
-        debug!(slirp_pid = pid, "stopping slirp4netns");
-
-        // Try graceful SIGTERM first, then SIGKILL
-        #[allow(clippy::cast_possible_wrap)]
-        let nix_pid = nix::unistd::Pid::from_raw(pid as i32);
-        if let Err(e) = nix::sys::signal::kill(
-            nix_pid, nix::sys::signal::Signal::SIGTERM
-        ) {
-            warn!(error = %e, "failed to send SIGTERM to slirp4netns");
-        }
-
-        if !matches!(self.child.try_wait(), Ok(Some(_))) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
-}
 ```
 
 Notice the `let _ =` pattern -- `kill()` and `wait()` return `Result`, but in
 a destructor you cannot propagate errors. The `let _ =` explicitly discards the
 result, which also satisfies the `#[must_use]` lint.
+
+Note: `TapHandle` (pasta) does not need a `Drop` implementation because pasta
+configures the namespace and exits -- there is no long-running child process.
 
 ### Explicit `drop()` before `exit()`
 
@@ -620,8 +602,8 @@ From `record.rs`:
 
 ```rust
 // Drop network handles before exit() -- exit() skips destructors,
-// which would leak slirp4netns and namespace holder processes.
-drop(slirp);
+// which would leak namespace holder processes.
+drop(tap);
 drop(ns);
 drop(cgroup_scope);
 
@@ -629,7 +611,7 @@ std::process::exit(exit_code);
 ```
 
 `std::process::exit()` terminates immediately without running destructors. If
-the code just called `exit()`, the `SlirpHandle` and `NamespaceHandle` would
+the code just called `exit()`, the `NamespaceHandle` would
 never be dropped, leaving orphan processes. The explicit `drop()` calls before
 `exit()` ensure cleanup happens. The comment explains *why* -- this is the kind
 of code that looks wrong without the comment.

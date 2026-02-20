@@ -384,7 +384,7 @@ impl NamespaceHandle {
 
     /// Get the PID of the namespace holder process.
     ///
-    /// Used as the target for both slirp4netns and nsenter.
+    /// Used as the target for both pasta and nsenter.
     #[must_use]
     pub const fn pid(&self) -> u32 {
         self.holder_pid

@@ -128,7 +128,7 @@ each enforced by a different Linux kernel subsystem:
 | 3 | Landlock LSM | Fine-grained filesystem access control (independent of mount namespace) |
 | 4 | Seccomp BPF | Syscall filtering, `PR_SET_NO_NEW_PRIVS` |
 | 5 | Cgroups v2 | Memory, CPU, and PID limits |
-| 6 | Network filtering | slirp4netns + nftables/iptables for domain-level allowlisting |
+| 6 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
 
 Compromising one layer does not automatically compromise the others. For
 example, even if bubblewrap's mount namespace is bypassed, Landlock
@@ -419,8 +419,8 @@ Practical steps for users setting up Gleisner in a new environment.
 
 - [ ] **Install bubblewrap.** Gleisner requires `bwrap` on PATH.
       (`apt install bubblewrap` / `pacman -S bubblewrap` / etc.)
-- [ ] **Install slirp4netns** (for network filtering).
-      (`apt install slirp4netns` / `pacman -S slirp4netns`)
+- [ ] **Install passt** (for network filtering via pasta).
+      (`apt install passt` / `pacman -S passt` / `emerge net-misc/passt`)
 - [ ] **Verify kernel version.** Landlock requires Linux 5.13+.
       Run `uname -r` to check.
 - [ ] **Verify cgroups v2.** Check that `/sys/fs/cgroup` is the unified

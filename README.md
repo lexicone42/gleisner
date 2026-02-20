@@ -16,26 +16,30 @@ Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligen
 - **Claude Code** -- Anthropic's CLI coding assistant (`npm install -g @anthropic-ai/claude-code`)
 
 Optional:
-- **[pasta](https://passt.top/)** or **slirp4netns** -- TAP networking for domain-filtered network access inside the sandbox
+- **[pasta](https://passt.top/)** (from passt) -- TAP networking for domain-filtered network access inside the sandbox
 - **nftables** or **iptables** -- firewall rules for domain allowlisting
 - **Sigstore** tools -- for keyless signing via Fulcio and transparency logging via Rekor (`cargo build --features keyless`)
 
 ## Architecture
 
 ```
-                           +──────────────+
-                           │ gleisner-cli │  CLI entry point
-                           +──────┬───────+
-                                  │
-          ┌──────────┬────────────┼────────────┐
-          ▼          ▼            ▼             ▼
+                 +──────────────+     +──────────────+
+                 │ gleisner-cli │     │ gleisner-tui │
+                 +──────┬───────+     +──────┬───────+
+                        │                    │
+          ┌──────────┬──┴────────────────────┴──┐
+          ▼          ▼            ▼              ▼
     +-----------+ +----------+ +-----------+ +----------+
     │   polis   │ │ introdus │ │  lacerta  │ │ bridger  │
     │ (sandbox) │ │ (attest) │ │ (verify)  │ │  (SBOM)  │
     +-----------+ +----------+ +-----------+ +----------+
+          │
+    +---------------+
+    │ sandbox-init  │  Landlock trampoline (inside bwrap)
+    +---------------+
 
-    polis ─────► Landlock/cgroup sandbox, inotify monitoring
-    introdus ──► in-toto attestation bundles, ECDSA signing
+    polis ─────► bwrap/Landlock/cgroup sandbox, pasta networking
+    introdus ──► in-toto attestation bundles, ECDSA + Sigstore signing
     lacerta ───► signature/digest verification, policy engine
     bridger ───► Cargo.lock → CycloneDX 1.5 SBOM generation
 ```
@@ -102,6 +106,7 @@ Inside the TUI, slash commands provide security tooling inline:
 | `/sbom` | Generate and display SBOM summary |
 | `/verify <path>` | Verify an attestation bundle |
 | `/inspect <path>` | Display attestation details |
+| `/cosign` | Sign the session attestation with Sigstore (keyless OIDC) |
 | `/help` | Show available commands |
 
 When running with `--sandbox`, the TUI automatically records an attestation bundle (`.gleisner/attestation-{timestamp}.json`) and audit log (`.gleisner/audit-{timestamp}.jsonl`) for each session. The dashboard shows a **REC** indicator while recording, tool call counts, file operations, and cost tracking.

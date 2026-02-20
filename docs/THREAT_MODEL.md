@@ -298,11 +298,11 @@ process has the necessary permissions. Critical targets include:
 ### 6.7 Network Filtering Attack Surface
 
 > For the full network filtering architecture (namespace creation,
-> slirp4netns, firewall rule application), see
+> pasta, firewall rule application), see
 > [ARCHITECTURE.md § Sandbox Architecture](ARCHITECTURE.md#sandbox-architecture).
 
 When `allow_domains` is configured, Gleisner creates a user+network namespace
-with slirp4netns and applies firewall rules. The attack surface includes:
+with pasta and applies firewall rules. The attack surface includes:
 
 - **Firewall backend detection** -- Gleisner probes for nftables then falls
   back to iptables. If neither is available, the sandbox starts without
@@ -310,9 +310,9 @@ with slirp4netns and applies firewall rules. The attack surface includes:
 - **DNS resolution timing** -- domains are resolved once at setup time.
   DNS-rebinding attacks could cause re-resolution to attacker IPs after rules
   are applied.
-- **slirp4netns process lifecycle** -- the slirp4netns process runs outside
-  the sandbox and must be properly cleaned up. Process leaks were identified
-  and fixed (explicit `drop()` before `exit()`).
+- **pasta process lifecycle** -- pasta configures the namespace and exits
+  (no long-running child process). The `NamespaceHandle` holds the namespace
+  open and its `Drop` implementation cleans up the holder process.
 
 ### 6.8 Attestation Chain Attack Surface
 
@@ -529,10 +529,10 @@ the impact is the same as LACERTA-001.
 
 **Gleisner Mitigation:**
 - `gleisner-polis` network filtering: when `allow_domains` is configured,
-  Gleisner creates a user+network namespace with `slirp4netns` providing a
+  Gleisner creates a user+network namespace with `pasta` providing a
   TAP-based network stack, then applies nftables (preferred) or iptables
   (fallback) rules that restrict outbound connections to resolved IP addresses
-  of allowed domains only. DNS queries to the slirp4netns resolver
+  of allowed domains only. DNS queries to the pasta resolver
   (`10.0.2.3`) are permitted; all other DNS is blocked.
 - `gleisner-polis` network policy: outbound connections to
   `api.anthropic.com` are permitted but other domains are blocked, limiting
@@ -758,7 +758,7 @@ attestations via policy.
 ### LACERTA-010: Network Filter Bypass
 
 **Description:** An attacker (via prompt injection or compromised model)
-attempts to bypass the slirp4netns + nftables/iptables network filtering:
+attempts to bypass the pasta + nftables/iptables network filtering:
 
 1. **Firewall backend unavailability:** If neither nftables nor iptables is
    available on the host, Gleisner logs a warning but starts the sandbox
@@ -767,16 +767,16 @@ attempts to bypass the slirp4netns + nftables/iptables network filtering:
 2. **DNS rebinding:** The allowed domains are resolved to IP addresses at
    sandbox setup time. An attacker who controls a DNS record for an allowed
    domain could change it after resolution, causing the domain to resolve to
-   a different IP inside the sandbox (slirp4netns DNS resolver re-resolves
+   a different IP inside the sandbox (pasta DNS resolver re-resolves
    independently).
 3. **IP aliasing:** If an allowed domain resolves to multiple IPs, only the
    IPs resolved at setup time are permitted. An attacker could use a domain
    that load-balances across many IPs, some of which point to
    attacker-controlled infrastructure, that were not captured during initial
    resolution.
-4. **slirp4netns escape:** A vulnerability in slirp4netns could allow the
-   sandboxed process to escape the network namespace and access the host
-   network stack directly.
+4. **pasta escape:** A vulnerability in pasta's namespace configuration
+   could allow the sandboxed process to escape the network namespace and
+   access the host network stack directly.
 5. **Tunneling through allowed domains:** If `api.anthropic.com` is
    allowlisted (necessarily), an attacker could encode exfiltration data in
    API request headers, query parameters, or body content that reaches an
@@ -785,8 +785,8 @@ attempts to bypass the slirp4netns + nftables/iptables network filtering:
 **Likelihood:** Medium -- firewall backend unavailability is the most likely
 scenario (some minimal Linux installations lack both nftables and iptables).
 DNS rebinding and IP aliasing are well-known techniques but require attacker
-control of DNS records for allowed domains. slirp4netns escape is low
-probability.
+control of DNS records for allowed domains. pasta escape is low probability
+(pasta configures and exits, reducing the attack window).
 
 **Impact:** High -- network filter bypass enables unrestricted outbound
 connections, enabling credential exfiltration, malicious payload download,
@@ -797,11 +797,11 @@ and communication with attacker infrastructure.
   kernel support) first, then falls back to iptables (`iptables` binary and
   `ip_tables` kernel module). Logs a clear warning if neither is available.
 - `gleisner-polis` firewall rules: restrict outbound to resolved IPs on ports
-  80 and 443 only. DNS is limited to the slirp4netns resolver (`10.0.2.3`).
+  80 and 443 only. DNS is limited to the pasta resolver (`10.0.2.3`).
   All other traffic is dropped.
-- `gleisner-polis` process cleanup: `SlirpHandle` implements `Drop` to kill
-  the slirp4netns process, and `record`/`wrap` commands explicitly drop
-  handles before exit to prevent process leaks.
+- `gleisner-polis` process cleanup: pasta configures and exits (no
+  long-running child). `NamespaceHandle` implements `Drop` to kill the
+  namespace holder, and commands explicitly drop handles before exit.
 - `gleisner-scapes` audit log: network activity is logged, enabling post-hoc
   detection of connection attempts to unexpected destinations.
 
@@ -810,7 +810,7 @@ is available is a deliberate usability trade-off. The `api.anthropic.com`
 exfiltration channel (tunneling through allowed domains) is inherent and
 cannot be closed without breaking Claude Code's core functionality. DNS
 rebinding mitigation requires pinning resolved IPs, which is implemented but
-does not protect against re-resolution by the slirp4netns resolver itself.
+does not protect against re-resolution by the pasta resolver itself.
 
 ---
 
@@ -880,7 +880,7 @@ mitigation.
 | **LACERTA-007** Attestation forgery/tampering | -- | Sigstore signing, timestamps, audit log digest | Audit log as ground truth | -- | Signature verification, digest checks, OPA policy |
 | **LACERTA-008** Gleisner dependency compromise | -- | -- | -- | -- | cargo-deny, lockfile pinning, forbid unsafe |
 | **LACERTA-009** Attestation chain manipulation | `.gleisner/` read-only in sandbox | Chain digest linking, payload canonicalization, cycle detection, duplicate digest handling | -- | -- | Chain verification (`--chain`), unsigned link detection, `require_parent_attestation` policy |
-| **LACERTA-010** Network filter bypass | slirp4netns + nftables/iptables, IP pinning | -- | Network activity logged | -- | -- |
+| **LACERTA-010** Network filter bypass | pasta + nftables/iptables, IP pinning | -- | Network activity logged | -- | -- |
 | **LACERTA-011** Unsigned attestation acceptance | -- | `--no-sign` warning | -- | -- | Policy: `require_signature`, verification warnings, chain unsigned link detection |
 
 ### 8.1 Defense in Depth Layers
@@ -958,7 +958,7 @@ in approximate priority order.
 
 ### 10.1 Network Traffic Inspection (Planned)
 
-The current slirp4netns-based network filtering (Phase E) restricts
+The current pasta-based network filtering (Phase E) restricts
 connections at the IP/port level but does not inspect request content. A
 future version could add a transparent HTTP proxy within the namespace that
 logs outbound request bodies before they reach the TLS layer. This would
@@ -1041,7 +1041,7 @@ than filesystem-based ECDSA keys but cannot use Sigstore keyless mode.
 | **seccomp BPF** | Linux kernel feature for system call filtering |
 | **Sigstore** | An open-source project for signing, verifying, and protecting software |
 | **SLSA** | Supply-chain Levels for Software Artifacts -- a security framework by Google |
-| **slirp4netns** | User-mode networking for rootless containers, providing TAP-based network access inside user namespaces |
+| **pasta** | Part of the passt project. Configures TAP-based network access inside user namespaces, then exits (no long-running daemon) |
 | **TOCTOU** | Time-of-check/time-of-use -- a class of race condition vulnerabilities |
 
 ## Appendix B: Threat ID Index

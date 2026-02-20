@@ -51,7 +51,8 @@ The project is a Cargo workspace with six crates. All version numbers and lint c
 | Crate | Role | Key Types |
 |-------|------|-----------|
 | `gleisner-cli` | Binary entry point. CLI parsing, command dispatch, pipeline orchestration. | `RecordArgs`, `WrapArgs`, `VerifyArgs` |
-| `gleisner-polis` | Sandbox enforcement. Bubblewrap command construction, Landlock LSM, cgroup v2 resource limits, inotify filesystem monitoring with snapshot reconciliation, `/proc` process monitoring, network filtering. | `BwrapSandbox`, `Profile`, `CgroupScope`, `NetworkFilter`, `NamespaceHandle`, `SlirpHandle` |
+| `gleisner-polis` | Sandbox enforcement. Bubblewrap command construction, Landlock LSM, cgroup v2 resource limits, inotify filesystem monitoring with snapshot reconciliation, `/proc` process monitoring, network filtering. | `BwrapSandbox`, `Profile`, `CgroupScope`, `NetworkFilter`, `NamespaceHandle`, `TapHandle` |
+| `gleisner-sandbox-init` | Landlock trampoline. Applies Landlock restrictions inside bwrap from a JSON policy file, then exec's the inner command. | `LandlockPolicy` (via gleisner-polis) |
 | `gleisner-introdus` | Attestation creation. In-toto statement assembly, ECDSA P-256 signing, chain discovery, git state capture, Claude Code context capture, session recording. | `InTotoStatement`, `GleisnerProvenance`, `AttestationBundle`, `LocalSigner`, `ChainLink` |
 | `gleisner-lacerta` | Verification. Signature verification (local key + Sigstore), digest checking, policy evaluation (builtin JSON + WASM/OPA), chain walking. | `Verifier`, `VerificationReport`, `BuiltinPolicy`, `WasmPolicy` |
 | `gleisner-scapes` | Event infrastructure. Audit event types, broadcast channel event bus, JSONL audit log writer. | `EventBus`, `EventPublisher`, `AuditEvent`, `EventKind`, `JsonlWriter` |
@@ -176,7 +177,7 @@ sequenceDiagram
 
 **Phase 4: Sandbox Spawn**
 - Construct `BwrapSandbox` from the profile
-- If selective network filtering is needed (network deny + allowed domains): resolve domains to IPs, create user+net namespace, start slirp4netns, wrap bwrap in nsenter
+- If selective network filtering is needed (network deny + allowed domains): resolve domains to IPs, create user+net namespace, start pasta, apply nftables via nsenter, wrap bwrap in nsenter
 - Otherwise: plain bwrap with `--unshare-net` for full network denial
 
 **Phase 5: Monitoring**
@@ -403,7 +404,7 @@ The sandbox uses multiple Linux security mechanisms in layers:
 ```mermaid
 graph TB
     subgraph "Outer: User+Network Namespace"
-        subgraph "slirp4netns TAP device"
+        subgraph "pasta TAP network"
             subgraph "nftables/iptables rules"
                 subgraph "bubblewrap container"
                     subgraph "Landlock LSM"
@@ -450,7 +451,7 @@ Two modes:
 
 2. **Namespace creation**: `unshare --user --map-root-user --net -- sleep infinity` creates a long-lived user+network namespace pair. The `sleep` process holds the namespaces open.
 
-3. **slirp4netns**: Starts a userspace TCP/IP stack that creates a `tap0` device inside the network namespace. The sandbox gets addresses `10.0.2.100/24` with gateway `10.0.2.2` and DNS `10.0.2.3`.
+3. **pasta**: Configures a `tap0` device inside the network namespace, then exits. The sandbox gets addresses `10.0.2.100/24` with gateway `10.0.2.2` and DNS `10.0.2.3`. Unlike slirp4netns, pasta configures and exits — there is no long-running child process to manage.
 
 4. **Firewall rules**: The inner command is wrapped in a shell script that auto-detects the firewall backend:
    - **nftables** (preferred): Creates an `inet gleisner` table with output policy `drop`, loopback accept, optional DNS accept, and per-IP+port accept rules
@@ -459,7 +460,7 @@ Two modes:
 
 5. **nsenter**: The bwrap command is wrapped with `nsenter --user=... --net=... --preserve-credentials --no-fork` to enter the pre-created namespace instead of using `--unshare-net`.
 
-Why not just `--unshare-net` with external slirp4netns? Because bwrap implicitly creates a user namespace when run unprivileged, and network namespaces are owned by their creating user namespace. slirp4netns running in the init user namespace cannot `setns(CLONE_NEWNET)` into bwrap's namespace without `CAP_SYS_ADMIN` in the owning user namespace. Creating the namespaces first lets slirp4netns attach before bwrap starts.
+Why not just `--unshare-net` with external pasta? Because bwrap's `--unshare-user` creates a nested user namespace that loses `CAP_NET_ADMIN`, preventing nftables rules from being applied inside. Creating the namespaces first, applying firewall rules via nsenter, and then running bwrap inside the pre-created namespace avoids this problem.
 
 ### Layer 3: Cgroup v2 Resource Limits
 
