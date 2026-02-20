@@ -179,7 +179,7 @@ if command -v nft >/dev/null 2>&1; then
         // Log denied packets (everything not accepted above) before the chain
         // policy drops them. This enables the audit2allow workflow: denied
         // connections appear in dmesg/kernel log for `gleisner learn --firewall-log`.
-        script.push_str("  nft add rule inet gleisner output counter log prefix '[gleisner-fw-deny] ' level warn\n");
+        script.push_str("  nft add rule inet gleisner output counter log prefix '\"[gleisner-fw-deny] \"' level warn\n");
 
         script.push_str(
             r"elif command -v iptables >/dev/null 2>&1 && iptables -L -n >/dev/null 2>&1; then
