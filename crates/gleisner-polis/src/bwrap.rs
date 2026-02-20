@@ -272,8 +272,17 @@ impl BwrapSandbox {
     fn apply_landlock_policy(&self, cmd: &mut Command) -> Option<tempfile::NamedTempFile> {
         let init_bin = self.landlock_init_bin.as_ref()?;
 
+        // Expand tildes to absolute paths before serializing — the
+        // sandbox-init binary runs inside bwrap where `~` is not shell-expanded
+        // and `Path::new("~/.cache")` is a literal nonexistent path.
+        let mut fs = self.profile.filesystem.clone();
+        fs.readonly_bind = fs.readonly_bind.iter().map(|p| expand_tilde(p)).collect();
+        fs.readwrite_bind = fs.readwrite_bind.iter().map(|p| expand_tilde(p)).collect();
+        fs.deny = fs.deny.iter().map(|p| expand_tilde(p)).collect();
+        fs.tmpfs = fs.tmpfs.iter().map(|p| expand_tilde(p)).collect();
+
         let policy = crate::policy::LandlockPolicy {
-            filesystem: self.profile.filesystem.clone(),
+            filesystem: fs,
             network: self.profile.network.clone(),
             project_dir: self.project_dir.clone(),
             extra_rw_paths: self.extra_rw_paths.clone(),
@@ -634,5 +643,57 @@ mod tests {
         assert_eq!(parsed.project_dir, PathBuf::from("/home/user/project"));
         assert_eq!(parsed.filesystem.readonly_bind.len(), 1);
         assert_eq!(parsed.network.allow_ports, vec![443]);
+    }
+
+    #[test]
+    fn landlock_policy_expands_tildes() {
+        if which::which("bwrap").is_err() {
+            return;
+        }
+
+        let mut profile = test_profile(PolicyDefault::Allow);
+        profile
+            .filesystem
+            .readonly_bind
+            .push(PathBuf::from("~/.config/gh"));
+        profile
+            .filesystem
+            .readwrite_bind
+            .push(PathBuf::from("~/.cache"));
+        profile.filesystem.deny.push(PathBuf::from("~/.ssh"));
+
+        let mut sandbox = BwrapSandbox::new(profile, PathBuf::from("/tmp/test-project"))
+            .expect("bwrap should be found");
+        sandbox.enable_landlock(PathBuf::from("/usr/bin/gleisner-sandbox-init"));
+
+        let (_cmd, policy_file) = sandbox.build_command(&["true".to_owned()], false);
+        let policy_file = policy_file.expect("should have policy file");
+
+        let json = std::fs::read_to_string(policy_file.path()).expect("read policy JSON");
+        let policy: crate::policy::LandlockPolicy =
+            serde_json::from_str(&json).expect("parse policy JSON");
+
+        // All tilde paths should be expanded to absolute paths
+        for path in &policy.filesystem.readonly_bind {
+            assert!(
+                !path.starts_with("~"),
+                "readonly_bind should not contain tilde: {}",
+                path.display()
+            );
+        }
+        for path in &policy.filesystem.readwrite_bind {
+            assert!(
+                !path.starts_with("~"),
+                "readwrite_bind should not contain tilde: {}",
+                path.display()
+            );
+        }
+        for path in &policy.filesystem.deny {
+            assert!(
+                !path.starts_with("~"),
+                "deny should not contain tilde: {}",
+                path.display()
+            );
+        }
     }
 }
