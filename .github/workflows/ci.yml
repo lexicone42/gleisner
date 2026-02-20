@@ -23,7 +23,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap slirp4netns nftables
+          sudo apt-get install -y bubblewrap passt nftables
 
       - name: Build
         run: cargo build --workspace

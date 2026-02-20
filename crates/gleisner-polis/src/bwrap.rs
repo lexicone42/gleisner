@@ -138,6 +138,13 @@ impl BwrapSandbox {
 
     /// Apply filesystem isolation: readonly binds, readwrite binds,
     /// deny paths (tmpfs overlays), and extra tmpfs mounts.
+    ///
+    /// Mount ordering matters: later mounts shadow earlier ones. The order is:
+    /// 1. Read-only binds (system paths)
+    /// 2. Read-write binds (profile + extra + project)
+    /// 3. Symlink-resolved overlays (must come AFTER parent RW mounts so
+    ///    they shadow the parent rather than being shadowed by it)
+    /// 4. Deny paths (tmpfs overlays shadow everything)
     fn apply_filesystem_policy(&self, cmd: &mut Command) {
         let fs = &self.profile.filesystem;
 
@@ -145,50 +152,45 @@ impl BwrapSandbox {
         cmd.args(["--proc", "/proc"]);
         cmd.args(["--dev", "/dev"]);
 
-        // Read-only bind mounts (system paths like /usr, /lib, /etc)
-        //
+        // ── Phase 1: Read-only bind mounts ──────────────────────────────
         // For user-managed directories under $HOME that contain symlinks
-        // (e.g. ~/.claude/bin/), we bind each entry individually instead
-        // of the whole directory. Symlinks are resolved to their targets
-        // so the actual binaries appear inside the sandbox. We can't bind
-        // the directory first and then override entries because --ro-bind
-        // makes it read-only, preventing bwrap from creating mount points.
+        // (e.g. ~/.claude/bin/), we still bind the directory normally here
+        // but collect the resolved symlinks for a later phase. The later
+        // phase overlays them AFTER all RW mounts, so they aren't shadowed
+        // by a parent mount like `--bind ~/.claude ~/.claude`.
         let home_dir = std::env::var("HOME").ok().map(PathBuf::from);
+        let mut deferred_symlinks: Vec<(String, String)> = Vec::new();
+
         for path in &fs.readonly_bind {
             let expanded = expand_tilde(path);
+            let p = expanded.display().to_string();
+            cmd.args(["--ro-bind", &p, &p]);
+
+            // Collect symlink entries for deferred overlay
             let is_user_subdir = home_dir
                 .as_ref()
                 .is_some_and(|home| expanded.starts_with(home) && expanded != *home);
-            let has_symlinks = is_user_subdir
-                && expanded.is_dir()
-                && std::fs::read_dir(&expanded)
-                    .map(|e| e.flatten().any(|e| e.path().is_symlink()))
-                    .unwrap_or(false);
-
-            if has_symlinks {
-                // Bind each entry individually, resolving symlinks
+            if is_user_subdir && expanded.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(&expanded) {
                     for entry in entries.flatten() {
                         let entry_path = entry.path();
-                        let resolved = std::fs::canonicalize(&entry_path)
-                            .unwrap_or_else(|_| entry_path.clone());
-                        if resolved.exists() {
-                            let src = resolved.display().to_string();
-                            let dst = entry_path.display().to_string();
-                            cmd.args(["--ro-bind", &src, &dst]);
-                            if resolved != entry_path {
-                                debug!(src = %src, dst = %dst, "binding resolved symlink");
+                        if entry_path.is_symlink() {
+                            if let Ok(resolved) = std::fs::canonicalize(&entry_path) {
+                                if resolved.exists() {
+                                    let src = resolved.display().to_string();
+                                    let dst = entry_path.display().to_string();
+                                    debug!(src = %src, dst = %dst, "deferring resolved symlink");
+                                    deferred_symlinks.push((src, dst));
+                                }
                             }
                         }
                     }
                 }
-            } else {
-                let p = expanded.display().to_string();
-                cmd.args(["--ro-bind", &p, &p]);
             }
         }
 
-        // Read-write bind mounts from profile (expand ~ to $HOME)
+        // ── Phase 2: Read-write bind mounts ─────────────────────────────
+        // Profile readwrite_bind paths
         for path in &fs.readwrite_bind {
             let expanded = expand_tilde(path);
             if expanded.exists() {
@@ -197,7 +199,7 @@ impl BwrapSandbox {
             }
         }
 
-        // Extra read-write paths from CLI flags
+        // Extra read-write paths from CLI flags and plugin policy
         for path in &self.extra_rw_paths {
             let p = path.display().to_string();
             cmd.args(["--bind", &p, &p]);
@@ -207,8 +209,18 @@ impl BwrapSandbox {
         let proj = self.project_dir.display().to_string();
         cmd.args(["--bind", &proj, &proj]);
 
+        // ── Phase 3: Symlink overlays (AFTER parent RW mounts) ──────────
+        // These override individual entries within RW-mounted parent dirs.
+        // e.g. ~/.claude is mounted RW in phase 2, but ~/.claude/bin/preflight
+        // is a symlink to an external path. The overlay binds the resolved
+        // target on top of the symlink destination.
+        for (src, dst) in &deferred_symlinks {
+            cmd.args(["--ro-bind", src, dst]);
+        }
+
+        // ── Phase 4: Deny paths + tmpfs ─────────────────────────────────
         // Denied paths get replaced with empty tmpfs — must come AFTER
-        // readonly binds so the tmpfs shadows the bind mount
+        // all binds so the tmpfs shadows everything
         for path in &fs.deny {
             let expanded = expand_tilde(path);
             if expanded.exists() {
