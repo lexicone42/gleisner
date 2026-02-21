@@ -67,7 +67,7 @@ pub async fn run_fs_monitor(
     // Run the blocking event loop in a dedicated thread.
     // The watcher must be moved into the thread to keep it alive.
     tokio::task::spawn_blocking(move || {
-        monitor_loop(rx, &publisher, &cancel, &ignore_patterns);
+        monitor_loop(&rx, &publisher, &cancel, &ignore_patterns);
         // Dropping `watcher` here stops the inotify watches.
         drop(watcher);
     })
@@ -79,7 +79,7 @@ pub async fn run_fs_monitor(
 
 /// The blocking event read loop.
 fn monitor_loop(
-    rx: mpsc::Receiver<Result<notify::Event, notify::Error>>,
+    rx: &mpsc::Receiver<Result<notify::Event, notify::Error>>,
     publisher: &EventPublisher,
     cancel: &CancellationToken,
     ignore_patterns: &[String],
@@ -118,15 +118,11 @@ fn process_event(event: &notify::Event, publisher: &EventPublisher, ignore_patte
         }
 
         match &event.kind {
-            // File content was written and closed — this is our primary signal.
+            // File content was written and closed, or file was created — hash the content.
             NotifyEventKind::Access(notify::event::AccessKind::Close(
                 notify::event::AccessMode::Write,
-            )) => {
-                publish_file_write(path, publisher);
-            }
-
-            // File was created — hash the new content.
-            NotifyEventKind::Create(notify::event::CreateKind::File) => {
+            ))
+            | NotifyEventKind::Create(notify::event::CreateKind::File) => {
                 publish_file_write(path, publisher);
             }
 
@@ -224,10 +220,10 @@ fn walk_and_hash(current: &Path, ignore_patterns: &[String], snapshot: &mut File
 /// This is the reconciliation step: any file that changed between
 /// snapshots but wasn't seen by inotify gets a synthetic event.
 /// The `seen_paths` set contains paths already reported by the monitor.
-pub fn reconcile_snapshots(
+pub fn reconcile_snapshots<S: ::std::hash::BuildHasher>(
     before: &FileSnapshot,
     after: &FileSnapshot,
-    seen_paths: &std::collections::HashSet<PathBuf>,
+    seen_paths: &std::collections::HashSet<PathBuf, S>,
     publisher: &EventPublisher,
 ) -> ReconciliationStats {
     let mut stats = ReconciliationStats::default();

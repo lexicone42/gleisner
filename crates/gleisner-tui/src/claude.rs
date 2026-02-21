@@ -227,6 +227,7 @@ struct SandboxHandles;
 /// When sandboxed, also runs the attestation pipeline:
 /// pre-session state capture → event bus + monitors → post-session
 /// reconciliation → in-toto statement assembly → signing → bundle write.
+#[allow(clippy::too_many_lines)]
 async fn run_query(
     config: &QueryConfig,
     tx: &mpsc::Sender<DriverMessage>,
@@ -292,6 +293,7 @@ async fn run_query(
 
     // ── Set up attestation pipeline (sandboxed sessions only) ───
     #[cfg(target_os = "linux")]
+    #[allow(clippy::option_if_let_else)]
     let mut attest_state = if let Some(ref sandbox_cfg) = config.sandbox {
         match setup_attestation(
             &sandbox_cfg.project_dir,
@@ -662,6 +664,7 @@ fn start_attestation_monitors(state: &mut AttestationState, child_pid: u32) {
 /// bus, awaits recorder output, assembles the in-toto statement, signs
 /// it with a local key, and writes the attestation bundle to disk.
 #[cfg(target_os = "linux")]
+#[allow(clippy::too_many_lines, clippy::similar_names)]
 async fn finalize_attestation(
     state: AttestationState,
     exit_code: i32,

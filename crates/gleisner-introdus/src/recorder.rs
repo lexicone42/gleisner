@@ -91,16 +91,14 @@ pub async fn run(mut rx: broadcast::Receiver<AuditEvent>) -> RecorderOutput {
         .keys()
         .filter(|p| {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if let Some(base_end) = name.find(".tmp.") {
+            name.find(".tmp.").is_some_and(|base_end| {
                 let base_name = &name[..base_end];
                 let base_path = p.with_file_name(base_name);
                 // If the base file exists as a subject, the temp file is
                 // definitionally an atomic-write artifact — drop it.
                 // The base file's final digest is the meaningful output.
                 subjects_map.contains_key(&base_path)
-            } else {
-                false
-            }
+            })
         })
         .cloned()
         .collect();

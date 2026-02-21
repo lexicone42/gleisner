@@ -31,6 +31,7 @@ pub enum Role {
 }
 
 /// Security dashboard counters, fed by the stream events.
+#[allow(clippy::struct_excessive_bools)] // dashboard counters, not configuration flags
 #[derive(Debug, Default, Clone)]
 pub struct SecurityState {
     /// Number of file reads observed (Read tool calls).

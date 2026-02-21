@@ -196,13 +196,13 @@ pub async fn execute(args: LearnArgs) -> Result<()> {
         ));
     }
 
-    emit_profile(&learner, &args.output, args.quiet, malformed_count)
+    emit_profile(&learner, args.output.as_ref(), args.quiet, malformed_count)
 }
 
 /// Emit profile and summary from the learner's current state.
 fn emit_profile(
     learner: &ProfileLearner,
-    output: &Option<PathBuf>,
+    output: Option<&PathBuf>,
     quiet: bool,
     malformed_count: u64,
 ) -> Result<()> {
@@ -239,6 +239,7 @@ fn emit_profile(
 /// Opens the kernel audit log, seeks to end, and polls for new lines.
 /// Each Landlock denial is parsed, fed to the learner, and printed to
 /// stderr. On Ctrl+C, emits the final profile.
+#[allow(clippy::too_many_lines)]
 async fn watch_loop(args: LearnArgs) -> Result<()> {
     let kernel_log_path = args
         .kernel_audit_log
@@ -296,11 +297,9 @@ async fn watch_loop(args: LearnArgs) -> Result<()> {
     loop {
         // Debounced file output: if we have pending changes and enough time has passed
         let timeout = if output.is_some() && new_entries > 0 {
-            if let Some(lw) = last_write {
+            last_write.map_or(debounce, |lw: Instant| {
                 debounce.saturating_sub(lw.elapsed())
-            } else {
-                debounce
-            }
+            })
         } else {
             Duration::from_secs(3600) // effectively infinite
         };
@@ -348,7 +347,7 @@ async fn watch_loop(args: LearnArgs) -> Result<()> {
             () = tokio::time::sleep(timeout) => {
                 // Debounce timer fired — write intermediate profile
                 if let Some(ref out_path) = output {
-                    if matches!(emit_profile(&learner, &output, true, 0), Ok(()))
+                    if matches!(emit_profile(&learner, output.as_ref(), true, 0), Ok(()))
                         && !quiet {
                             eprintln!("  [updated] {}", out_path.display());
                         }
@@ -373,7 +372,7 @@ async fn watch_loop(args: LearnArgs) -> Result<()> {
         eprintln!("Summary: {total_denials} denial(s), {new_entries} new profile entry/entries");
     }
 
-    emit_profile(&learner, &output, quiet, 0)
+    emit_profile(&learner, output.as_ref(), quiet, 0)
 }
 
 #[cfg(target_os = "linux")]

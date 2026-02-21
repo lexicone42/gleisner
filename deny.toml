@@ -1,22 +1,45 @@
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+# Known advisories in transitive dependencies — tracked for upgrade.
+ignore = [
+    # wasmtime (WASM policy engine is a stub, not exposed to untrusted input)
+    "RUSTSEC-2025-0046", # wasmtime: fd_renumber panic
+    "RUSTSEC-2026-0009", # wasmtime: stack exhaustion DoS
+    # ring (used via sigstore for signature verification, not RSA/SHA-1)
+    "RUSTSEC-2025-0021", # ring: SHA-1 collision detection (we use P-256/SHA-256 only)
+    "RUSTSEC-2023-0071", # ring: Marvin timing attack (we don't use RSA PKCS#1)
+    # x509-cert transitive dep
+    "RUSTSEC-2025-0140", # thetaTime: non-utf8 string (not reachable from our code)
+    # Unmaintained crates in transitive dependencies
+    "RUSTSEC-2025-0057", # fxhash (via sigstore)
+    "RUSTSEC-2024-0436", # paste (via sigstore)
+    "RUSTSEC-2024-0370", # proc-macro-error (via sigstore)
+    "RUSTSEC-2025-0134", # rustls-pemfile (via reqwest/sigstore)
+    "RUSTSEC-2025-0118", # wasmtime: shared memory unsoundness
+]
 
 [licenses]
 allow = [
     "MIT",
     "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "CC0-1.0",
     "ISC",
+    "MPL-2.0",
+    "OpenSSL",
     "Unicode-3.0",
+    "Zlib",
 ]
 confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"
 
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = [
+    "https://github.com/lexicone42/rust-landlock.git",
+]

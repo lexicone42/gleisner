@@ -403,7 +403,7 @@ fn diff_timing(before: &serde_json::Value, after: &serde_json::Value) -> Option<
 mod tests {
     use super::*;
 
-    fn make_bundle(payload: serde_json::Value) -> String {
+    fn make_bundle(payload: &serde_json::Value) -> String {
         let bundle = serde_json::json!({
             "payload": payload.to_string(),
             "signature": "",
@@ -447,14 +447,14 @@ mod tests {
 
     #[test]
     fn identical_bundles_produce_empty_diff() {
-        let json = make_bundle(base_payload());
+        let json = make_bundle(&base_payload());
         let diff = diff_bundles(&json, &json).unwrap();
         assert!(diff.is_empty());
     }
 
     #[test]
     fn added_subject_detected() {
-        let before = make_bundle(base_payload());
+        let before = make_bundle(&base_payload());
         let mut after_payload = base_payload();
         after_payload["subject"]
             .as_array_mut()
@@ -463,7 +463,7 @@ mod tests {
                 "name": "src/new.rs",
                 "digest": { "sha256": "ccc333" }
             }));
-        let after = make_bundle(after_payload);
+        let after = make_bundle(&after_payload);
 
         let diff = diff_bundles(&before, &after).unwrap();
         assert_eq!(diff.subjects_added.len(), 1);
@@ -473,10 +473,10 @@ mod tests {
 
     #[test]
     fn removed_subject_detected() {
-        let before = make_bundle(base_payload());
+        let before = make_bundle(&base_payload());
         let mut after_payload = base_payload();
         after_payload["subject"].as_array_mut().unwrap().pop();
-        let after = make_bundle(after_payload);
+        let after = make_bundle(&after_payload);
 
         let diff = diff_bundles(&before, &after).unwrap();
         assert!(diff.subjects_added.is_empty());
@@ -486,10 +486,10 @@ mod tests {
 
     #[test]
     fn changed_subject_detected() {
-        let before = make_bundle(base_payload());
+        let before = make_bundle(&base_payload());
         let mut after_payload = base_payload();
         after_payload["subject"][0]["digest"]["sha256"] = serde_json::json!("xxx999");
-        let after = make_bundle(after_payload);
+        let after = make_bundle(&after_payload);
 
         let diff = diff_bundles(&before, &after).unwrap();
         assert_eq!(diff.subjects_changed.len(), 1);
@@ -500,13 +500,13 @@ mod tests {
 
     #[test]
     fn profile_change_detected() {
-        let before = make_bundle(base_payload());
+        let before = make_bundle(&base_payload());
         let mut after_payload = base_payload();
         after_payload["predicate"]["invocation"]["environment"]["profile"] =
             serde_json::json!("developer");
         after_payload["predicate"]["gleisner:sandboxProfile"]["name"] =
             serde_json::json!("developer");
-        let after = make_bundle(after_payload);
+        let after = make_bundle(&after_payload);
 
         let diff = diff_bundles(&before, &after).unwrap();
         let profile_change = diff
@@ -520,13 +520,13 @@ mod tests {
 
     #[test]
     fn timing_diff_with_duration() {
-        let before = make_bundle(base_payload());
+        let before = make_bundle(&base_payload());
         let mut after_payload = base_payload();
         after_payload["predicate"]["metadata"]["buildStartedOn"] =
             serde_json::json!("2025-01-02T00:00:00Z");
         after_payload["predicate"]["metadata"]["buildFinishedOn"] =
             serde_json::json!("2025-01-02T00:10:00Z");
-        let after = make_bundle(after_payload);
+        let after = make_bundle(&after_payload);
 
         let diff = diff_bundles(&before, &after).unwrap();
         let timing = diff.timing.as_ref().expect("timing should differ");
@@ -536,7 +536,7 @@ mod tests {
 
     #[test]
     fn material_added() {
-        let before = make_bundle(base_payload());
+        let before = make_bundle(&base_payload());
         let mut after_payload = base_payload();
         after_payload["predicate"]["materials"]
             .as_array_mut()
@@ -544,7 +544,7 @@ mod tests {
             .push(serde_json::json!({
                 "uri": "file:///new-dep.lock"
             }));
-        let after = make_bundle(after_payload);
+        let after = make_bundle(&after_payload);
 
         let diff = diff_bundles(&before, &after).unwrap();
         assert_eq!(diff.materials_added.len(), 1);
@@ -553,7 +553,7 @@ mod tests {
 
     #[test]
     fn format_diff_empty() {
-        let json = make_bundle(base_payload());
+        let json = make_bundle(&base_payload());
         let diff = diff_bundles(&json, &json).unwrap();
         let output = format_diff(&diff);
         assert_eq!(output, "No differences.\n");
@@ -561,12 +561,12 @@ mod tests {
 
     #[test]
     fn format_diff_shows_changes() {
-        let before = make_bundle(base_payload());
+        let before = make_bundle(&base_payload());
         let mut after_payload = base_payload();
         after_payload["subject"][0]["digest"]["sha256"] = serde_json::json!("xxx999");
         after_payload["predicate"]["invocation"]["environment"]["profile"] =
             serde_json::json!("developer");
-        let after = make_bundle(after_payload);
+        let after = make_bundle(&after_payload);
 
         let diff = diff_bundles(&before, &after).unwrap();
         let output = format_diff(&diff);

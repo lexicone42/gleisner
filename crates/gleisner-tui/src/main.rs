@@ -130,7 +130,11 @@ async fn main() -> color_eyre::Result<()> {
     result
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    clippy::unused_async
+)]
 async fn run(
     mut terminal: DefaultTerminal,
     profile: &gleisner_polis::profile::Profile,
@@ -490,6 +494,7 @@ enum CosignResult {
 ///
 /// Returns a `CosignState` if the flow was started, or `None` if there was an
 /// error (already reported to the user via app messages).
+#[allow(clippy::too_many_lines)]
 fn start_cosign(
     app: &mut App,
     path_arg: Option<&str>,

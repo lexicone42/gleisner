@@ -81,6 +81,7 @@ impl BuiltinPolicy {
 }
 
 impl PolicyEngine for BuiltinPolicy {
+    #[allow(clippy::too_many_lines)]
     fn evaluate(&self, input: &PolicyInput) -> Result<Vec<PolicyResult>, VerificationError> {
         let mut results = Vec::new();
 

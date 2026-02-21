@@ -875,7 +875,7 @@ mod tests {
             #[test]
             fn valid_records_produce_events(
                 ts_secs in 1_000_000_000u64..2_000_000_000u64,
-                serial in 1u32..999999u32,
+                serial in 1u32..999_999u32,
                 path in "/[a-zA-Z0-9/_.-]{1,100}",
                 blocker in prop::sample::select(vec![
                     "fs.read_file", "fs.write_file", "fs.make_reg",
@@ -949,17 +949,19 @@ mod tests {
                 line_count in 0usize..=10,
                 ts_base in 1_700_000_000u64..1_700_001_000u64,
             ) {
+                use std::fmt::Write;
                 let dir = tempfile::tempdir().unwrap();
                 let path = dir.path().join("test.log");
 
                 let mut content = String::new();
                 for i in 0..line_count {
-                    content.push_str(&format!(
-                        "type=UNKNOWN[1423] msg=audit({}.000:{}): domain=test blockers=fs.read_file path=\"/test/{}\"\n",
+                    writeln!(
+                        content,
+                        "type=UNKNOWN[1423] msg=audit({}.000:{}): domain=test blockers=fs.read_file path=\"/test/{}\"",
                         ts_base + i as u64,
                         i + 1,
                         i
-                    ));
+                    ).unwrap();
                 }
                 std::fs::write(&path, &content).unwrap();
 

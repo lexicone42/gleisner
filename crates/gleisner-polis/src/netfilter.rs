@@ -825,13 +825,11 @@ mod tests {
             return;
         }
 
-        let ns = match NamespaceHandle::create() {
-            Ok(ns) => ns,
-            Err(_) => return, // no user namespace support (CI, containers)
+        let Ok(ns) = NamespaceHandle::create() else {
+            return; // no user namespace support (CI, containers)
         };
-        let _tap = match TapHandle::start(ns.pid()) {
-            Ok(tap) => tap,
-            Err(_) => return, // pasta failed (IPv6 disabled, etc.)
+        let Ok(_tap) = TapHandle::start(ns.pid()) else {
+            return; // pasta failed (IPv6 disabled, etc.)
         };
 
         // Verify we can run a command inside the namespace that sees a tap0 device
@@ -884,13 +882,11 @@ mod tests {
             return;
         }
 
-        let ns = match NamespaceHandle::create() {
-            Ok(ns) => ns,
-            Err(_) => return, // no user namespace support (CI, containers)
+        let Ok(ns) = NamespaceHandle::create() else {
+            return; // no user namespace support (CI, containers)
         };
-        let _tap = match TapHandle::start(ns.pid()) {
-            Ok(tap) => tap,
-            Err(_) => return, // pasta failed (IPv6 disabled, etc.)
+        let Ok(_tap) = TapHandle::start(ns.pid()) else {
+            return; // pasta failed (IPv6 disabled, etc.)
         };
 
         // Apply firewall

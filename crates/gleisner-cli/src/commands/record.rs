@@ -132,7 +132,7 @@ mod linux_impl {
     ///
     /// Returns an error if profile resolution, sandbox creation, attestation
     /// assembly, or signing fails.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::similar_names)]
     pub(super) async fn execute_impl(args: RecordArgs) -> Result<()> {
         let project_dir = args
             .wrap

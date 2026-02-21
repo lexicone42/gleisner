@@ -1564,9 +1564,8 @@ mod tests {
                 let class = classify_single_path(&path, &home, &project);
                 match class {
                     PathClass::HomeRelative(rel) => {
-                        let components: Vec<_> = rel.components().collect();
                         prop_assert_eq!(
-                            components.len(),
+                            rel.components().count(),
                             2,
                             "umbrella path {:?} should have 2 components, got {:?}",
                             path,

@@ -360,6 +360,8 @@ mod tests {
                     + usage.cache_read_input_tokens
                     + usage.cache_creation_input_tokens;
                 assert_eq!(total, 45750);
+                #[allow(clippy::cast_precision_loss)]
+                // display percentage, precision loss acceptable
                 let pct = total as f64 / usage.context_window as f64 * 100.0;
                 assert!((pct - 22.875).abs() < 0.01);
             }
@@ -392,7 +394,7 @@ mod tests {
     /// Test parsing a real captured event from `claude -p --output-format stream-json`.
     #[test]
     fn parse_real_init_event() {
-        let line = r#"{"type":"system","subtype":"init","cwd":"/datar/workspace","session_id":"6a9afc8c-442b-4bc2-b053-d93ec1f99f16","tools":["Read","Bash","Glob"],"mcp_servers":[{"name":"plugin:serena:serena","status":"connected"}],"model":"claude-opus-4-6","claude_code_version":"2.1.42"}"#;
+        let line = r#"{"type":"system","subtype":"init","cwd":"/workspace/project","session_id":"6a9afc8c-442b-4bc2-b053-d93ec1f99f16","tools":["Read","Bash","Glob"],"mcp_servers":[{"name":"plugin:serena:serena","status":"connected"}],"model":"claude-opus-4-6","claude_code_version":"2.1.42"}"#;
         let event = parse_event(line).expect("should parse real init event");
         match event {
             StreamEvent::System(sys) => {
