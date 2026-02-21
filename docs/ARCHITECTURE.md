@@ -22,7 +22,8 @@ Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligen
 6. [Sandbox Architecture](#sandbox-architecture)
 7. [Verification Pipeline](#verification-pipeline)
 8. [Event System](#event-system)
-9. [Key Design Decisions](#key-design-decisions)
+9. [TUI Architecture](#tui-architecture)
+10. [Key Design Decisions](#key-design-decisions)
 
 ---
 
@@ -32,25 +33,26 @@ Gleisner addresses a specific problem: when an AI coding agent (Claude Code) mod
 
 The system provides three capabilities:
 
-1. **Sandboxing** (`gleisner wrap`) -- Run Claude Code inside a bubblewrap/Landlock sandbox with filesystem, network, process, and resource isolation. Credentials are hidden, network is restricted to the Anthropic API, and every file access is monitored.
+1. **Sandboxing** (`gleisner wrap` or `gleisner-tui --sandbox`) -- Run Claude Code inside a bubblewrap/Landlock sandbox with filesystem, network, process, and resource isolation. Credentials are hidden, network is restricted to the Anthropic API, and every file access is monitored.
 
-2. **Attestation** (`gleisner record`) -- Everything above, plus cryptographic attestation. The session produces a signed in-toto v1 statement with SLSA-compatible provenance that records materials (inputs), subjects (outputs), timing, environment metadata, and sandbox configuration. Attestations chain together via parent payload digests.
+2. **Attestation** (`gleisner record` or `gleisner-tui --sandbox`) -- Everything above, plus cryptographic attestation. The session produces a signed in-toto v1 statement with SLSA-compatible provenance that records materials (inputs), subjects (outputs), timing, environment metadata, and sandbox configuration. Attestations chain together via parent payload digests.
 
 3. **Verification** (`gleisner verify`) -- Verify signature integrity (ECDSA P-256 or Sigstore), check digest consistency of output files and audit logs, walk the attestation chain, and evaluate configurable policies (JSON rules or WASM/OPA).
 
-Supporting capabilities include SBOM generation (`gleisner sbom`) from Cargo.lock files and attestation inspection (`gleisner inspect`).
+Supporting capabilities include SBOM generation (`gleisner sbom`), attestation inspection (`gleisner inspect`), attestation diffing (`gleisner diff`), and an interactive TUI (`gleisner-tui`) with a live security dashboard and inline slash commands for verification, inspection, and Sigstore signing.
 
 ---
 
 ## Workspace Structure
 
-The project is a Cargo workspace with six crates. All version numbers and lint configuration are centralized in the root `Cargo.toml` via workspace inheritance.
+The project is a Cargo workspace with eight crates. All version numbers and lint configuration are centralized in the root `Cargo.toml` via workspace inheritance.
 
 ### Crate Map
 
 | Crate | Role | Key Types |
 |-------|------|-----------|
 | `gleisner-cli` | Binary entry point. CLI parsing, command dispatch, pipeline orchestration. | `RecordArgs`, `WrapArgs`, `VerifyArgs` |
+| `gleisner-tui` | Interactive TUI. Ratatui-based security-aware REPL with live dashboard, slash commands, attestation recording, and Sigstore signing. | `App`, `QueryConfig`, `SandboxConfig` |
 | `gleisner-polis` | Sandbox enforcement. Bubblewrap command construction, Landlock LSM, cgroup v2 resource limits, inotify filesystem monitoring with snapshot reconciliation, `/proc` process monitoring, network filtering. | `BwrapSandbox`, `Profile`, `CgroupScope`, `NetworkFilter`, `NamespaceHandle`, `TapHandle` |
 | `gleisner-sandbox-init` | Landlock trampoline. Applies Landlock restrictions inside bwrap from a JSON policy file, then exec's the inner command. | `LandlockPolicy` (via gleisner-polis) |
 | `gleisner-introdus` | Attestation creation. In-toto statement assembly, ECDSA P-256 signing, chain discovery, git state capture, Claude Code context capture, session recording. | `InTotoStatement`, `GleisnerProvenance`, `AttestationBundle`, `LocalSigner`, `ChainLink` |
@@ -63,7 +65,9 @@ The project is a Cargo workspace with six crates. All version numbers and lint c
 ```mermaid
 graph TD
     CLI[gleisner-cli]
+    TUI[gleisner-tui]
     POLIS[gleisner-polis]
+    SINIT[gleisner-sandbox-init]
     INTRODUS[gleisner-introdus]
     LACERTA[gleisner-lacerta]
     SCAPES[gleisner-scapes]
@@ -75,13 +79,23 @@ graph TD
     CLI --> SCAPES
     CLI --> BRIDGER
 
+    TUI --> POLIS
+    TUI --> INTRODUS
+    TUI --> LACERTA
+    TUI --> SCAPES
+    TUI --> BRIDGER
+
+    SINIT --> POLIS
+
     POLIS --> SCAPES
     INTRODUS --> SCAPES
     LACERTA --> INTRODUS
 
     style SCAPES fill:#e8f5e9,stroke:#2e7d32
     style CLI fill:#e3f2fd,stroke:#1565c0
+    style TUI fill:#e3f2fd,stroke:#1565c0
     style POLIS fill:#fff3e0,stroke:#ef6c00
+    style SINIT fill:#fff3e0,stroke:#ef6c00
     style INTRODUS fill:#fce4ec,stroke:#c62828
     style LACERTA fill:#f3e5f5,stroke:#6a1b9a
     style BRIDGER fill:#f1f8e9,stroke:#558b2f
@@ -92,7 +106,8 @@ Key observations:
 - **`gleisner-scapes`** is the foundation -- it has no internal dependencies and provides the event vocabulary that `polis` and `introdus` both consume.
 - **`gleisner-bridger`** is fully independent -- no internal crate dependencies at all. It only needs `serde`, `toml`, and `sha2`.
 - **`gleisner-lacerta`** depends on `gleisner-introdus` (for `AttestationBundle` and chain types) but not on `polis` or `scapes`.
-- **`gleisner-cli`** is the only crate that depends on everything -- it is the orchestration layer.
+- **`gleisner-cli`** and **`gleisner-tui`** are the two entry points -- both depend on all library crates and orchestrate the full pipeline.
+- **`gleisner-sandbox-init`** depends only on `gleisner-polis` (for `LandlockPolicy` and `apply_landlock`) -- it is a minimal trampoline binary.
 
 ---
 
@@ -130,7 +145,7 @@ sequenceDiagram
     Note over Sandbox: If network filtering needed:
     CLI->>Sandbox: NetworkFilter::resolve(policy, domains)
     CLI->>Sandbox: NamespaceHandle::create()
-    CLI->>Sandbox: SlirpHandle::start(ns.pid())
+    CLI->>Sandbox: TapHandle::start(ns_holder_pid)
     Sandbox-->>CLI: child process handle
 
     CLI->>Monitor: spawn inotify monitor (publisher, cancel)
@@ -436,7 +451,7 @@ Bubblewrap creates unprivileged Linux containers using user namespaces. The `Bwr
 
 - **Filesystem isolation**: System paths (`/usr`, `/lib`, `/etc`, `/bin`) are bind-mounted read-only. The project directory is read-write. Sensitive paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, etc.) are shadowed with empty tmpfs mounts. Argument order matters: deny tmpfs overlays must come after readonly binds to properly shadow them.
 - **PID namespace**: `--unshare-pid` gives the sandbox its own PID namespace. The sandboxed process sees itself as PID 1.
-- **Privilege escalation prevention**: `--new-session` creates a new session, preventing `TIOCSTI` terminal injection.
+- **Privilege escalation prevention**: `PR_SET_NO_NEW_PRIVS` is applied by Landlock inside `sandbox-init`, preventing SUID/SGID escalation. Note: `--new-session` is deliberately NOT used because it calls `setsid()`, which disconnects the controlling terminal and breaks interactive use (no Ctrl+C, no stdin).
 - **Orphan prevention**: `--die-with-parent` ensures the sandbox is killed if the parent gleisner process dies.
 
 ### Layer 2: Network Filtering
@@ -521,10 +536,11 @@ max_file_descriptors = 1024
 max_disk_write_mb = 10240
 ```
 
-The three bundled profiles (named after polises in *Diaspora*):
+The four bundled profiles (named after polises in *Diaspora*):
 - **konishi** -- Default balanced. Anthropic API only, credentials hidden, PID isolated.
-- **carter-zimmerman** -- Exploratory. Broader network access for projects needing external APIs.
-- **ashton-laval** -- Strict. Minimal permissions, tighter resource limits.
+- **carter-zimmerman** -- Exploratory. Broader network access (npm, PyPI, GitHub, crates.io) for projects needing external APIs.
+- **ashton-laval** -- Strict. Minimal permissions, tighter resource limits (2GB memory, 128 PIDs, 50% CPU), DNS disabled.
+- **developer** -- Development-focused. Full Rust toolchain access (cargo, rustup, crates.io, GitHub), generous resource limits (16GB memory), blocks shell execution and Playwright MCP tools. Designed for gleisner-in-gleisner self-hosting.
 
 Profile resolution searches: direct TOML path, `~/.config/gleisner/profiles/`, `./profiles/`, `/usr/share/gleisner/profiles/`.
 
@@ -687,6 +703,153 @@ The recorder consumes events and classifies them:
 - Other event types (processes, network, env) are counted but not classified as materials/subjects.
 
 On channel close, the recorder hashes the completed audit log file and returns a `RecorderOutput` containing the classified materials, subjects, event count, audit log digest, and timing.
+
+---
+
+## TUI Architecture
+
+`gleisner-tui` provides an interactive terminal interface for Claude Code with built-in security telemetry and attestation. It is the recommended way to run sandboxed Claude Code sessions interactively.
+
+### Module Structure
+
+| Module | Purpose |
+|--------|---------|
+| `main.rs` | Entry point, CLI arg parsing (manual, not clap), event loop, debug logging, `/cosign` background thread |
+| `app.rs` | State machine: messages, input buffer, security counters, keystroke routing, slash command dispatch |
+| `claude.rs` | Subprocess driver: sandbox wrapping, attestation pipeline (setup → monitors → finalize), `QueryConfig` |
+| `ui.rs` | Ratatui rendering: conversation panel, security dashboard, input field, status bar, theming |
+| `stream.rs` | Stream-JSON event parsing: system/init, assistant, user, result, stream_event types |
+
+### CLI Arguments
+
+```
+gleisner-tui [OPTIONS]
+
+--profile <name>           Sandbox profile (default: "konishi")
+--sandbox                  Enable bwrap isolation + attestation (Linux only)
+--project-dir <path>       Project directory (default: cwd)
+--claude-bin <path>        Override Claude binary path
+--allow-network <domain>   Additional allowed domains (repeatable)
+--allow-path <path>        Additional R/W paths in sandbox (repeatable)
+--sigstore                 Enable Sigstore keyless signing (requires --features keyless)
+--sigstore-token <JWT>     Pre-supplied OIDC token for headless signing
+--debug                    Write logs to ~/.local/share/gleisner/tui-debug.log
+```
+
+Arguments are parsed manually (no clap) -- a deliberate design choice for minimal dependencies.
+
+### Slash Commands
+
+| Command | Description | Feature-Gated |
+|---------|-------------|---------------|
+| `/sbom` | Generate CycloneDX SBOM from Cargo.lock | No |
+| `/verify <path>` | Verify an attestation bundle's signature, digests, and policy | No |
+| `/inspect <path>` | Display attestation bundle summary (type, builder, timestamps, subjects) | No |
+| `/cosign [token-or-path]` | Sign the session attestation with Sigstore keyless OIDC | Yes (`keyless` feature) |
+| `/cosigncode <code>` | Submit browser auth code during in-progress OIDC flow | Yes |
+| `/help` | Show available commands | No |
+
+The `/cosign` command deserves special attention: it spawns a background thread with an isolated tokio runtime so the OIDC browser flow does not block the TUI event loop. A `TuiAuthCallback` bridges the Sigstore OIDC callback into the TUI message stream.
+
+### Attestation Pipeline
+
+When `--sandbox` is passed, the TUI automatically records an attestation for each session. The pipeline mirrors `gleisner record` but runs within the TUI process:
+
+```
+┌─── Setup (before subprocess) ────────────────────────────────────┐
+│ 1. Create .gleisner/ directory                                    │
+│ 2. Generate timestamped paths (attestation-*.json, audit-*.jsonl) │
+│ 3. Capture Claude Code context + git state + profile hash         │
+│ 4. Initialize EventBus, subscribe JSONL writer + recorder         │
+│ 5. Take pre-session filesystem snapshot                           │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+┌─── Monitors (while subprocess runs) ────────────────────────────┐
+│ • Filesystem monitor (inotify): watches project_dir              │
+│ • Process monitor (/proc scanner): polls child PID tree          │
+│ • Both publish AuditEvents to the EventBus                       │
+└──────────────────────────────────────────────────────────────────┘
+                              │
+┌─── Finalize (after subprocess exits) ───────────────────────────┐
+│ 1. Cancel monitors, await completion                             │
+│ 2. Post-session snapshot reconciliation                          │
+│ 3. Close channels, await recorder + writer                       │
+│ 4. Hash audit log, find parent attestation for chaining          │
+│ 5. Assemble in-toto statement (materials, subjects, predicates)  │
+│ 6. Sign: local ECDSA (default) or Sigstore keyless               │
+│ 7. Write attestation bundle + audit log                          │
+│ 8. Send DriverMessage::AttestationComplete to TUI                │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+All attestation code is gated behind `#[cfg(target_os = "linux")]` -- on non-Linux platforms, the TUI runs without sandbox support.
+
+### Security Dashboard
+
+The TUI renders a fixed-width (~28 column) telemetry sidebar:
+
+```
+┌─ Telemetry ──────────┐
+│ State                 │
+│  Profile  konishi     │
+│  Mode     bypassAll   │
+│  Sandbox  ⦿ bwrap     │
+│  Attest   ⦿ REC 42    │
+│  Cosign   ⦿ /cosign   │
+│  Exo      ○ ---       │
+│                       │
+│ Sensors               │
+│  Reads    12          │
+│  Writes   3           │
+│  Tools    47          │
+│  MCP      2           │
+│                       │
+│ Link                  │
+│  Turns    5           │
+│  Cost     $0.1234     │
+│  Ctx      ████░░ 62%  │
+└───────────────────────┘
+```
+
+Dashboard state indicators:
+- **Sandbox**: green `⦿ bwrap` when active, dimmed `○ off` when disabled
+- **Attest**: red `⦿ REC N` during recording (live event count), dimmed `○ N` after finalization
+- **Cosign**: amber `⦿ /cosign` when attestation is ready for signing, green `⦿ signed` after Sigstore signing completes
+- **Ctx**: Context window usage bar, color-coded: green (0-60%), amber (60-80%), red (80-100%)
+
+### Stream Processing
+
+The TUI spawns Claude Code in `--output-format stream-json` mode and parses NDJSON events:
+
+| Event Type | Content | TUI Action |
+|-----------|---------|------------|
+| `system` (init) | session_id, tools, model, plugins, permissionMode | Update dashboard state |
+| `assistant` (text) | Content blocks (text, tool_use, thinking) | Render in conversation panel |
+| `stream_event` | Content block deltas | Live-update streaming buffer with blinking cursor |
+| `user` (tool_result) | Tool execution results | Show formatted result with [ok]/[ERR] badges |
+| `result` | num_turns, total_cost_usd, modelUsage | Update session metrics in dashboard |
+
+### Keystroke Handling
+
+The TUI uses a vim-inspired modal input system:
+
+**Normal mode** (default): `j`/`k` scroll, `g`/`G` jump to top/bottom, `i` enters insert mode, `q` quits.
+
+**Insert mode**: Type prompts, `Enter` submits, `Esc` returns to normal mode (or interrupts streaming), `Ctrl+C` interrupts the active Claude session.
+
+### Theming
+
+The "magitek armor" color palette draws from the *Diaspora* aesthetic:
+
+| Color | Hex | Use |
+|-------|-----|-----|
+| Steel | `#828CB4` | Borders, default text |
+| Steel Dim | `#505F78` | Dimmed labels |
+| Conduit | `#50C882` | Active indicators, highlights |
+| Conduit Dim | `#328C5A` | Muted accents |
+| Amber | `#E6B450` | Warnings, emphasis |
+
+Message role badges (`[you]`, `[claude]`, `[suit]`, `[tool]`) use distinct background colors for visual parsing.
 
 ---
 

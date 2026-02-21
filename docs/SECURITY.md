@@ -12,7 +12,8 @@ scenarios, attack surface analysis, and residual risk assessment, see
 ## 1. Security Properties
 
 Gleisner provides three categories of security guarantee when Claude Code
-sessions are run via `gleisner wrap`:
+sessions are run via `gleisner wrap`, `gleisner record`, or
+`gleisner-tui --sandbox`:
 
 ### 1.1 Attestation Integrity
 
@@ -125,9 +126,9 @@ each enforced by a different Linux kernel subsystem:
 |-------|-----------|---------|
 | 1 | User namespaces | Unprivileged isolation -- sandboxed process has no real host privileges |
 | 2 | Bubblewrap (bwrap) | Mount namespace -- bind-mounts, tmpfs deny, `--die-with-parent` |
-| 3 | Landlock LSM | Fine-grained filesystem access control (independent of mount namespace) |
-| 4 | Seccomp BPF | Syscall filtering, `PR_SET_NO_NEW_PRIVS` |
-| 5 | Cgroups v2 | Memory, CPU, and PID limits |
+| 3 | Landlock LSM (V7) | Fine-grained filesystem and network access control (independent of mount namespace), IPC scope isolation, audit logging |
+| 4 | `PR_SET_NO_NEW_PRIVS` | Prevents privilege escalation via SUID/SGID binaries (applied by Landlock inside sandbox-init) |
+| 5 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits (cgroups with rlimit fallback) |
 | 6 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
 
 Compromising one layer does not automatically compromise the others. For
@@ -425,8 +426,9 @@ Practical steps for users setting up Gleisner in a new environment.
       Run `uname -r` to check.
 - [ ] **Verify cgroups v2.** Check that `/sys/fs/cgroup` is the unified
       hierarchy. Run `mount | grep cgroup2`.
-- [ ] **Use `gleisner wrap`, never bare `claude`.** Gleisner's protections are
-      opt-in. Running `claude` directly bypasses all sandboxing and attestation.
+- [ ] **Use `gleisner wrap` or `gleisner-tui --sandbox`, never bare `claude`.**
+      Gleisner's protections are opt-in. Running `claude` directly bypasses all
+      sandboxing and attestation.
 
 ### Key Management
 

@@ -10,14 +10,14 @@ Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligen
 
 ## Requirements
 
-- **Linux** (x86_64) -- Gleisner relies on Linux-specific kernel features (namespaces, Landlock LSM, cgroups v2, seccomp BPF)
+- **Linux** (x86_64) -- Gleisner relies on Linux-specific kernel features (user namespaces, Landlock LSM, cgroups v2)
 - **[bubblewrap](https://github.com/containers/bubblewrap)** (`bwrap`) -- unprivileged sandbox creation. Install via your package manager (e.g., `apt install bubblewrap`, `pacman -S bubblewrap`)
 - **Rust 1.85+** (edition 2024) -- install via [rustup](https://rustup.rs/)
 - **Claude Code** -- Anthropic's CLI coding assistant (`npm install -g @anthropic-ai/claude-code`)
 
 Optional:
-- **[pasta](https://passt.top/)** (from passt) -- TAP networking for domain-filtered network access inside the sandbox
-- **nftables** or **iptables** -- firewall rules for domain allowlisting
+- **[pasta](https://passt.top/)** (from passt) -- TAP networking for domain-filtered network access inside the sandbox. Required if your profile uses `allow_domains` with a deny-default network policy.
+- **nftables** or **iptables** -- firewall rules for domain allowlisting (nftables preferred; iptables as fallback)
 - **Sigstore** tools -- for keyless signing via Fulcio and transparency logging via Rekor (`cargo build --features keyless`)
 
 ## Architecture
@@ -27,28 +27,53 @@ Optional:
                  │ gleisner-cli │     │ gleisner-tui │
                  +──────┬───────+     +──────┬───────+
                         │                    │
-          ┌──────────┬──┴────────────────────┴──┐
-          ▼          ▼            ▼              ▼
-    +-----------+ +----------+ +-----------+ +----------+
-    │   polis   │ │ introdus │ │  lacerta  │ │ bridger  │
-    │ (sandbox) │ │ (attest) │ │ (verify)  │ │  (SBOM)  │
-    +-----------+ +----------+ +-----------+ +----------+
+          ┌──────────┬──┴────────────────────┴──┬──────────┐
+          ▼          ▼            ▼              ▼          ▼
+    +-----------+ +----------+ +-----------+ +----------+ +--------+
+    │   polis   │ │ introdus │ │  lacerta  │ │ bridger  │ │ scapes │
+    │ (sandbox) │ │ (attest) │ │ (verify)  │ │  (SBOM)  │ │(events)│
+    +-----------+ +----------+ +-----------+ +----------+ +--------+
           │
     +---------------+
     │ sandbox-init  │  Landlock trampoline (inside bwrap)
     +---------------+
 
-    polis ─────► bwrap/Landlock/cgroup sandbox, pasta networking
-    introdus ──► in-toto attestation bundles, ECDSA + Sigstore signing
-    lacerta ───► signature/digest verification, policy engine
+    polis ─────► bwrap + Landlock V7 sandbox, pasta networking, cgroup/rlimit resource limits
+    introdus ──► in-toto v1 attestation bundles, ECDSA P-256 + Sigstore signing, chain linking
+    lacerta ───► signature/digest verification, policy engine (JSON + WASM/OPA)
     bridger ───► Cargo.lock → CycloneDX 1.5 SBOM generation
+    scapes ────► event bus (tokio broadcast), JSONL audit writer, session recorder
 ```
+
+### Sandbox Layers
+
+Gleisner applies five independent isolation layers, each enforced by a different Linux kernel mechanism:
+
+| Layer | Mechanism | Purpose |
+|-------|-----------|---------|
+| 1 | User namespaces | Unprivileged isolation -- sandboxed process has no real host privileges |
+| 2 | Bubblewrap (bwrap) | Mount namespace -- bind-mounts, tmpfs deny, PID namespace, `--die-with-parent` |
+| 3 | Landlock LSM (V7) | Fine-grained filesystem and network access control, IPC scope isolation, kernel audit logging |
+| 4 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits |
+| 5 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
+
+Compromising one layer does not automatically compromise the others. For example, even if the mount namespace is bypassed, Landlock independently restricts filesystem access at the kernel level.
 
 ## Quick Start
 
 ```bash
 # Build
 cargo build --release
+
+# ── Interactive TUI (recommended) ──────────────────────────────────
+
+# TUI without sandbox (unsandboxed Claude Code with security dashboard)
+gleisner-tui --project-dir /path/to/project
+
+# TUI with sandbox and automatic attestation recording
+gleisner-tui --sandbox --profile developer --project-dir /path/to/project
+
+# ── CLI commands ───────────────────────────────────────────────────
 
 # Wrap a Claude Code session in a sandbox (no attestation)
 gleisner wrap -- claude
@@ -60,56 +85,76 @@ gleisner record -- claude
 gleisner record --no-chain -- claude
 
 # Inspect an attestation bundle
-gleisner inspect bundle.json
-gleisner inspect --detailed bundle.json
-gleisner inspect --json bundle.json
+gleisner inspect .gleisner/attestation-*.json
+gleisner inspect --detailed .gleisner/attestation-*.json
 
 # Verify signatures, digests, and policies
-gleisner verify bundle.json
-gleisner verify bundle.json --policy policy.json
-gleisner verify bundle.json --check-files --base-dir ./project
-gleisner verify --json bundle.json
-
-# Verify the full attestation chain from a bundle
-gleisner verify --chain bundle.json
+gleisner verify .gleisner/attestation-*.json
+gleisner verify .gleisner/attestation-*.json --policy policy.json
+gleisner verify --chain .gleisner/attestation-*.json
 
 # Compare two attestation bundles
-gleisner diff bundle-old.json bundle-new.json
+gleisner diff .gleisner/attestation-old.json .gleisner/attestation-new.json
 
 # Generate a sandbox profile from kernel audit observations
 gleisner learn --kernel-audit-log /var/log/gleisner/landlock-audit.log
-gleisner learn --kernel-audit-log audit.log --base-profile developer --output learned.toml
 
 # Generate a Software Bill of Materials
-gleisner sbom
-gleisner sbom --json
 gleisner sbom --json --output sbom.json
-gleisner sbom --project-dir /path/to/project
 ```
 
 ## TUI
 
-The TUI wraps Claude Code in an interactive terminal interface with live security telemetry:
+The TUI wraps Claude Code in an interactive terminal interface with a live security dashboard, attestation recording, and inline security tooling.
 
 ```bash
 # Interactive TUI (no sandbox)
-gleisner-tui --profile developer --project-dir /path/to/project
+gleisner-tui --profile konishi --project-dir /path/to/project
 
 # Sandboxed TUI with full attestation pipeline
 gleisner-tui --sandbox --profile developer --project-dir /path/to/project
+
+# With additional allowed domains and paths
+gleisner-tui --sandbox --profile konishi \
+  --allow-network registry.npmjs.org \
+  --allow-path /tmp/build-cache \
+  --project-dir /path/to/project
 ```
 
-Inside the TUI, slash commands provide security tooling inline:
+### Slash Commands
 
 | Command | Description |
 |---------|-------------|
 | `/sbom` | Generate and display SBOM summary |
 | `/verify <path>` | Verify an attestation bundle |
 | `/inspect <path>` | Display attestation details |
-| `/cosign` | Sign the session attestation with Sigstore (keyless OIDC) |
+| `/cosign [token]` | Sign the session attestation with Sigstore keyless OIDC (requires `--features keyless`) |
 | `/help` | Show available commands |
 
-When running with `--sandbox`, the TUI automatically records an attestation bundle (`.gleisner/attestation-{timestamp}.json`) and audit log (`.gleisner/audit-{timestamp}.jsonl`) for each session. The dashboard shows a **REC** indicator while recording, tool call counts, file operations, and cost tracking.
+### Security Dashboard
+
+When running, the TUI displays a telemetry sidebar showing:
+- **Sandbox status**: whether bwrap isolation is active
+- **Attestation recording**: live event count with a **REC** indicator
+- **Cosign status**: whether the session has been Sigstore-signed
+- **Tool call counters**: file reads, writes, and total tool invocations
+- **Session metrics**: agent turns, cumulative cost, and context window usage (color-coded bar)
+
+### Attestation Pipeline
+
+When `--sandbox` is passed, the TUI automatically:
+1. Creates a bubblewrap + Landlock sandbox for the Claude session
+2. Monitors filesystem changes (inotify) and child processes (`/proc`)
+3. Records all events to a JSONL audit log
+4. On session end, reconciles pre/post filesystem snapshots
+5. Assembles a signed in-toto v1 attestation bundle with chain linking
+6. Writes `.gleisner/attestation-{timestamp}.json` and `.gleisner/audit-{timestamp}.jsonl`
+
+The `/cosign` command can then apply Sigstore keyless signing to the bundle without leaving the TUI.
+
+### Keystrokes
+
+Vim-inspired modal input: `i` enters insert mode, `Esc` returns to normal mode. In normal mode, `j`/`k` scroll the conversation, `g`/`G` jump to top/bottom, `q` quits. `Enter` submits prompts in insert mode. `Ctrl+C` interrupts streaming.
 
 ## Demo Walkthrough
 
@@ -121,8 +166,8 @@ A complete pipeline demonstration, from sandbox to verified chain.
 gleisner record --profile developer -- claude -p "What is 2+2?"
 ```
 
-This wraps the Claude session in a bubblewrap sandbox with Landlock filesystem rules, cgroup resource limits, and network filtering. When the session ends, Gleisner:
-- Captures a pre/post filesystem snapshot
+This wraps the Claude session in a bubblewrap sandbox with Landlock V7 filesystem rules, cgroup resource limits, and network filtering. When the session ends, Gleisner:
+- Captures a pre/post filesystem snapshot for reconciliation
 - Monitors child processes via `/proc`
 - Collects Landlock denial events (if kernel audit is configured)
 - Signs the attestation with a local ECDSA P-256 key
@@ -141,7 +186,7 @@ Output files appear in `.gleisner/`:
 gleisner inspect .gleisner/attestation-2026-02-20T14-30-00Z.json
 ```
 
-Shows the statement type (in-toto v1.0.0), predicate type (SLSA Build v1.0), builder ID, session timing, subject/material counts, and sandbox profile used.
+Shows the statement type (in-toto v1.0.0), predicate type, builder ID, session timing, subject/material counts, and sandbox profile used.
 
 Use `--detailed` for full subject and material listings, or `--json` for machine-readable output.
 
@@ -187,13 +232,13 @@ Parses `Cargo.lock` and produces a CycloneDX 1.5 JSON document listing every dep
 
 ## Chain Verification
 
-Gleisner links attestation bundles into a verifiable chain. Each `record` session automatically discovers the most recent attestation in the project's `.gleisner/` directory and embeds a reference to it -- the SHA-256 digest of the parent's payload -- in the new attestation's provenance predicate under `gleisner:chain`.
+Gleisner links attestation bundles into a verifiable chain. Each `record` session (and each `gleisner-tui --sandbox` session) automatically discovers the most recent attestation in the project's `.gleisner/` directory and embeds a reference to it -- the SHA-256 digest of the parent's payload -- in the new attestation's provenance predicate under `gleisner:chain`.
 
 This creates a tamper-evident history: if any attestation in the chain is modified or deleted, the digest link breaks and verification fails.
 
 **How it works:**
 
-1. When `gleisner record` runs, it scans `.gleisner/` for existing `attestation-*.json` files and selects the one with the latest `buildFinishedOn` timestamp.
+1. When a session ends, Gleisner scans `.gleisner/` for existing `attestation-*.json` files and selects the one with the latest `buildFinishedOn` timestamp.
 2. It computes the SHA-256 digest of that parent bundle's `payload` field and stores it as `gleisner:chain.parentDigest` in the new attestation.
 3. When verifying with `--chain`, Gleisner walks the chain backwards from the given bundle, resolving each `parentDigest` to a file in the same directory, until it reaches a root (an attestation with no parent link) or a broken link.
 
@@ -213,19 +258,59 @@ Use `--no-chain` with `gleisner record` to start a new chain (e.g., after a majo
 | Crate | Description |
 |-------|-------------|
 | `gleisner-cli` | CLI binary: `wrap`, `record`, `verify`, `inspect`, `sbom`, `diff`, `learn` |
-| `gleisner-tui` | Interactive TUI with live security telemetry, slash commands, and attestation recording |
-| `gleisner-polis` | Sandbox enforcement: Landlock LSM v7, cgroup resource limits, inotify monitoring, profile learning |
-| `gleisner-introdus` | Attestation bundles: in-toto v1 statements, ECDSA P-256 signing, chain linking |
-| `gleisner-lacerta` | Verification: signature checking (local key + Sigstore), digest verification, policy engine |
+| `gleisner-tui` | Interactive TUI: security dashboard, slash commands (`/sbom`, `/verify`, `/inspect`, `/cosign`), automatic attestation recording |
+| `gleisner-polis` | Sandbox enforcement: bubblewrap, Landlock LSM V7 (filesystem + network + scope + audit), cgroup/rlimit resource limits, inotify monitoring, pasta networking, profile learning |
+| `gleisner-introdus` | Attestation bundles: in-toto v1 statements, ECDSA P-256 signing, Sigstore keyless signing, chain linking |
+| `gleisner-lacerta` | Verification: signature checking (local key + Sigstore), digest verification, policy engine (JSON + WASM/OPA) |
 | `gleisner-bridger` | SBOM generation: Cargo.lock parsing, CycloneDX 1.5 JSON output |
-| `gleisner-scapes` | Event bus, JSONL audit writer, monitoring infrastructure |
+| `gleisner-scapes` | Event bus (tokio broadcast), JSONL audit writer, session recorder |
 | `gleisner-sandbox-init` | Trampoline binary: applies Landlock rules inside bubblewrap before exec |
 
 ## Configuration
 
 ### Sandbox Profiles
 
-Profiles live in `~/.config/gleisner/profiles/` or `profiles/` in the project root. A profile defines Landlock filesystem rules and cgroup resource limits.
+Profiles are TOML files that define filesystem rules, network policy, process isolation, and resource limits. They live in `~/.config/gleisner/profiles/` or `profiles/` in the project root.
+
+Four profiles are bundled (named after polises in *Diaspora*):
+
+| Profile | Description |
+|---------|-------------|
+| **konishi** | Default balanced. Anthropic API only, credentials hidden, PID isolated, 4GB memory, 256 PIDs. |
+| **carter-zimmerman** | Exploratory. Broader network (npm, PyPI, GitHub, crates.io), 8GB memory, 512 PIDs. |
+| **ashton-laval** | Strict. Anthropic API only, DNS disabled, 2GB memory, 128 PIDs, 50% CPU cap. |
+| **developer** | Development-focused. Full Rust toolchain (cargo, rustup, crates.io, GitHub), 16GB memory. Designed for gleisner-in-gleisner self-hosting. |
+
+A profile defines five dimensions of isolation:
+
+```toml
+name = "konishi"
+description = "Default balanced profile"
+
+[filesystem]
+readonly_bind = ["/usr", "/lib", "/lib64", "/etc", "/bin", "/sbin"]
+readwrite_bind = []
+deny = ["~/.ssh", "~/.aws", "~/.gnupg", "~/.config/gcloud"]
+tmpfs = ["/tmp"]
+
+[network]
+default = "deny"
+allow_domains = ["api.anthropic.com", "sentry.io"]
+allow_ports = [443]
+allow_dns = true
+
+[process]
+pid_namespace = true
+no_new_privileges = true
+command_allowlist = []
+
+[resources]
+max_memory_mb = 4096
+max_cpu_percent = 100
+max_pids = 256
+max_file_descriptors = 1024
+max_disk_write_mb = 10240
+```
 
 ### Verification Policies
 
@@ -234,7 +319,7 @@ Policies can be JSON (built-in rules) or WASM (custom OPA/Rego):
 ```json
 {
   "require_sandbox": true,
-  "allowed_profiles": ["default", "strict"],
+  "allowed_profiles": ["konishi", "ashton-laval"],
   "max_session_duration_secs": 3600,
   "require_audit_log": true
 }
@@ -244,7 +329,7 @@ Policies can be JSON (built-in rules) or WASM (custom OPA/Rego):
 
 | Document | Description |
 |----------|-------------|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, data flows, crate responsibilities, and design decisions |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, data flows, crate responsibilities, TUI architecture, and design decisions |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security model, key management, policy engine, sandbox layers, and hardening checklist |
 | [docs/RUST_PATTERNS.md](docs/RUST_PATTERNS.md) | Rust patterns and idioms used in the codebase (learning guide) |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Threat model covering attack surfaces, trust boundaries, and mitigations |

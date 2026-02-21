@@ -12,10 +12,11 @@
 
 ### 1.1 What Is Gleisner?
 
-Gleisner is a Rust CLI toolkit that brings supply chain security to
+Gleisner is a Rust toolkit that brings supply chain security to
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code), Anthropic's AI
-coding assistant. When a developer runs `gleisner wrap claude ...`, Gleisner
-interposes between the developer and Claude Code to provide:
+coding assistant. When a developer runs `gleisner wrap claude ...` (CLI) or
+`gleisner-tui --sandbox` (interactive TUI), Gleisner interposes between the
+developer and Claude Code to provide:
 
 - **Sandboxing** (`gleisner-polis`) -- hermetic execution via bubblewrap and
   Landlock LSM, constraining the filesystem, network, and process capabilities
@@ -65,8 +66,9 @@ Gleisner's attestation pipeline targets:
 > For the full system architecture, crate map, data flow diagrams, and
 > implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Gleisner consists of six crates orchestrated by `gleisner-cli`: sandbox
-enforcement (`gleisner-polis`), attestation creation (`gleisner-introdus`),
+Gleisner consists of eight crates with two entry points (`gleisner-cli` and
+`gleisner-tui`): sandbox enforcement (`gleisner-polis`), Landlock trampoline
+(`gleisner-sandbox-init`), attestation creation (`gleisner-introdus`),
 verification (`gleisner-lacerta`), audit logging (`gleisner-scapes`), and SBOM
 generation (`gleisner-bridger`).
 
@@ -443,9 +445,10 @@ Claude Code operation.
   Post-session verification can detect unexpected changes.
 - `gleisner-polis` sandbox enforcement: the sandbox is applied externally by
   the `gleisner wrap` command at the process level (namespaces, Landlock,
-  seccomp). Claude Code cannot disable these from within the sandbox -- there
-  is no `--disable-sandbox` flag, and environment variables like
-  `GLEISNER_BYPASS` have no effect on the already-applied kernel enforcement.
+  Landlock, `PR_SET_NO_NEW_PRIVS`). Claude Code cannot disable these from
+  within the sandbox -- there is no `--disable-sandbox` flag, and environment
+  variables like `GLEISNER_BYPASS` have no effect on the already-applied
+  kernel enforcement.
 - `gleisner-lacerta` policy evaluation: OPA/Rego policies can require that
   `CLAUDE.md` hashes match expected values before accepting an attestation.
 
@@ -487,7 +490,7 @@ services on the developer's machine.
   - `no_new_privileges: true` -- prevents SUID/SGID escalation
   - `command_allowlist` -- restricts which binaries can be executed (when
     configured)
-  - `seccomp_profile` -- filters dangerous syscalls
+  - `no_new_privileges: true` -- prevents SUID/SGID privilege escalation
 - `gleisner-polis` network policy (`NetworkPolicy`):
   - `default: deny` -- no outbound connections unless explicitly allowed
   - `allow_domains` -- whitelist of permitted destinations
@@ -497,7 +500,7 @@ services on the developer's machine.
     resource exhaustion
   - `max_disk_write_mb` -- limits disk write to prevent filling the disk
 
-**Residual Risk:** Low -- the bubblewrap + Landlock + seccomp stack provides
+**Residual Risk:** Low -- the bubblewrap + Landlock + namespace stack provides
 defense in depth. Residual risk exists if the profile is misconfigured (overly
 permissive `readwrite_bind` or `allow_domains`) or if a kernel vulnerability
 allows sandbox escape.
@@ -874,7 +877,7 @@ mitigation.
 | **LACERTA-001** Prompt injection / credential exfil | Filesystem deny, network allowlist | CLAUDE.md hash in provenance | Command logging | -- | Policy checks on attestation |
 | **LACERTA-002** Malicious dependency introduction | Sandbox limits blast radius | Materials list in provenance | Bash command log | Trust-annotated SBOM, dependency diff | Policy requiring SBOM review |
 | **LACERTA-003** CLAUDE.md disables security | External enforcement (immune) | CLAUDE.md hash in attestation | Session metadata logged | -- | Policy requiring CLAUDE.md hash match |
-| **LACERTA-004** Bash escape from project scope | Namespaces, Landlock, seccomp, cgroups | Sandbox profile in provenance | All commands logged | -- | Policy requiring sandbox profile |
+| **LACERTA-004** Bash escape from project scope | Namespaces, Landlock, cgroups, rlimits | Sandbox profile in provenance | All commands logged | -- | Policy requiring sandbox profile |
 | **LACERTA-005** DNS/HTTP side-channel exfil | DNS policy, network allowlist | -- | Network activity logged | -- | -- |
 | **LACERTA-006** TOCTOU on sandbox boundary | Atomic namespace creation, no-new-privs | Profile digest in attestation | -- | -- | Digest verification |
 | **LACERTA-007** Attestation forgery/tampering | -- | Sigstore signing, timestamps, audit log digest | Audit log as ground truth | -- | Signature verification, digest checks, OPA policy |
@@ -888,7 +891,7 @@ mitigation.
 For the most critical threats (credential exfiltration, sandbox escape), Gleisner
 provides multiple independent layers:
 
-1. **Prevention** (polis): filesystem deny, network allowlist, seccomp
+1. **Prevention** (polis): filesystem deny, network allowlist, Landlock
 2. **Detection** (scapes): real-time audit logging of all actions
 3. **Evidence** (introdus): cryptographic attestation binding session to outcomes
 4. **Verification** (lacerta): post-hoc policy evaluation against attestation
@@ -905,7 +908,7 @@ undetected.
 
 | Assumption | Rationale |
 |---|---|
-| The Linux kernel is not compromised | Gleisner relies on kernel namespace isolation, Landlock, seccomp, and cgroups. A kernel exploit bypasses all of these. |
+| The Linux kernel is not compromised | Gleisner relies on kernel namespace isolation, Landlock, and cgroups. A kernel exploit bypasses all of these. |
 | bubblewrap is correctly implemented | Gleisner delegates sandbox creation to bubblewrap. A vulnerability in bubblewrap's namespace setup would undermine isolation. |
 | The Anthropic Messages API returns model outputs, not attacker-controlled payloads | Gleisner does not intercept or validate API responses. A compromised API could instruct Claude Code to take arbitrary actions. |
 | The developer runs `gleisner wrap` (not bare `claude`) | Gleisner's protections are opt-in. If the developer runs Claude Code directly, no sandboxing or attestation occurs. |
@@ -928,7 +931,8 @@ undetected.
 
 - **Malicious developer running without Gleisner.** Gleisner is not a
   mandatory enforcement layer. A developer who runs `claude` directly
-  bypasses all protections.
+  (instead of via `gleisner wrap` or `gleisner-tui --sandbox`) bypasses all
+  protections.
 
 - **Side-channel attacks on the Anthropic API connection.** Gleisner does not
   perform TLS interception on the connection between Claude Code and
@@ -1038,7 +1042,6 @@ than filesystem-based ECDSA keys but cannot use Sigstore keyless mode.
 | **OPA/Rego** | Open Policy Agent and its policy language, used for attestation verification |
 | **Rekor** | Sigstore's transparency log for code signing events |
 | **SBOM** | Software Bill of Materials -- an inventory of software components |
-| **seccomp BPF** | Linux kernel feature for system call filtering |
 | **Sigstore** | An open-source project for signing, verifying, and protecting software |
 | **SLSA** | Supply-chain Levels for Software Artifacts -- a security framework by Google |
 | **pasta** | Part of the passt project. Configures TAP-based network access inside user namespaces, then exits (no long-running daemon) |
