@@ -1,7 +1,7 @@
 # Lacerta -- Threat Model for Gleisner
 
-**Document version:** 0.2.0
-**Date:** 2026-02-14
+**Document version:** 0.3.0
+**Date:** 2026-02-21
 **Status:** Living document -- updated as the project evolves
 **Authors:** Gleisner maintainers
 **Classification:** Public
@@ -14,27 +14,30 @@
 
 Gleisner is a Rust toolkit that brings supply chain security to
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code), Anthropic's AI
-coding assistant. When a developer runs `gleisner wrap claude ...` (CLI) or
-`gleisner-tui --sandbox` (interactive TUI), Gleisner interposes between the
-developer and Claude Code to provide:
+coding assistant. The primary interface is `gleisner-tui --sandbox`, an
+interactive TUI with a security dashboard and automatic attestation recording.
+The CLI (`gleisner record`, `gleisner wrap`, etc.) provides the same
+capabilities for scripting and CI. Gleisner interposes between the developer
+and Claude Code to provide:
 
 - **Sandboxing** (`gleisner-polis`) -- hermetic execution via bubblewrap and
-  Landlock LSM, constraining the filesystem, network, and process capabilities
-  available to a Claude Code session.
+  Landlock LSM V7, constraining the filesystem, network, process capabilities,
+  and MCP tool access available to a Claude Code session.
 - **Attestation** (`gleisner-introdus`) -- cryptographically signed in-toto v1
   attestation statements with SLSA v1.0-compatible provenance predicates that
-  record every material (input) and subject (output) of a session.
-- **SBOM generation** (`gleisner-bridger`) -- CycloneDX 1.5 SBOMs with trust
-  annotations distinguishing dependencies introduced by Claude Code from
-  pre-existing ones.
+  record every material (input) and subject (output) of a session, linked into
+  a verifiable chain via SHA-256 parent digests.
+- **Verification** (`gleisner-lacerta`) -- signature verification (ECDSA P-256
+  or Sigstore keyless), digest integrity checks, attestation chain walking,
+  and policy evaluation (JSON rules or WASM/OPA).
 - **Audit logging** (`gleisner-scapes`) -- timestamped, sequenced JSONL event
   streams covering every observable action inside the sandbox.
-- **Verification** (`gleisner-lacerta`) -- signature verification, digest
-  integrity checks, attestation chain verification, and OPA/Rego policy
-  evaluation (via Wasmtime) against attestation bundles.
-- **Attestation chain** (`gleisner-introdus/chain`) -- links successive
-  attestation bundles via SHA-256 parent digests, enabling continuity
-  verification and gap detection across sessions.
+- **SBOM generation** (`gleisner-bridger`) -- CycloneDX 1.5 SBOMs from
+  Cargo.lock with per-dependency provenance.
+- **Profile learning** (`gleisner learn`) -- generates sandbox profiles from
+  kernel audit log observations (Landlock V7 denial events).
+- **Attestation comparison** (`gleisner diff`) -- semantic diffing of two
+  attestation bundles (subjects, materials, environment, timing).
 
 ### 1.2 Purpose of This Document
 
@@ -66,11 +69,12 @@ Gleisner's attestation pipeline targets:
 > For the full system architecture, crate map, data flow diagrams, and
 > implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Gleisner consists of eight crates with two entry points (`gleisner-cli` and
-`gleisner-tui`): sandbox enforcement (`gleisner-polis`), Landlock trampoline
-(`gleisner-sandbox-init`), attestation creation (`gleisner-introdus`),
-verification (`gleisner-lacerta`), audit logging (`gleisner-scapes`), and SBOM
-generation (`gleisner-bridger`).
+Gleisner consists of eight crates. Two are user-facing entry points
+(`gleisner-cli` and `gleisner-tui`); one is an internal trampoline
+(`gleisner-sandbox-init`). The library crates are: sandbox enforcement
+(`gleisner-polis`), attestation creation (`gleisner-introdus`), verification
+(`gleisner-lacerta`), audit logging (`gleisner-scapes`), and SBOM generation
+(`gleisner-bridger`).
 
 The critical trust boundary is the `gleisner-polis` sandbox. Everything inside
 it is untrusted -- Claude Code may execute arbitrary commands, read arbitrary
@@ -92,6 +96,7 @@ actions to the project scope defined by the profile.
 | **Audit trail** | JSONL event logs and attestation bundles | High -- forensic evidence, compliance artifacts |
 | **CLAUDE.md** | Project-level instructions for Claude Code | Medium -- if tampered, alters Claude Code's behavior |
 | **Gleisner configuration** | Sandbox profiles, policy files, signing keys | High -- if tampered, weakens or disables protections |
+| **MCP plugin infrastructure** | Plugin servers, tool configurations, `disallowed_tools` lists, `mcp_network_domains` | High -- if compromised, provides additional tool capabilities and network access beyond the base sandbox |
 
 ---
 
@@ -149,6 +154,7 @@ represents a transition between principals with different trust levels.
 | **TB-7** | Policy evaluation | OPA/Rego policies (potentially user-supplied) execute in Wasmtime sandbox |
 | **TB-8** | Sigstore infrastructure | External trust roots: Fulcio CA, Rekor transparency log |
 | **TB-9** | OPA policy bundles | User- or org-supplied policy bundles may be malicious or overly permissive |
+| **TB-10** | MCP plugin servers | External MCP servers run tools with network access and filesystem capabilities; compromised servers can exfiltrate data or modify files within their allowed scope |
 
 ---
 
@@ -336,6 +342,37 @@ Each `gleisner record` session links to the previous attestation via a
   for `attestation-*.json` files. An attacker who can inject files into this
   directory can poison chain discovery.
 
+### 6.9 MCP Plugin Attack Surface
+
+Claude Code uses the Model Context Protocol (MCP) to connect to external tool
+servers (e.g., language servers, code search, browser automation). Gleisner
+profiles control plugin behavior via the `[plugins]` section:
+
+- **`disallowed_tools`** -- blocks specific MCP tools by name. The `developer`
+  profile blocks Playwright (browser automation), Serena shell execution, and
+  Greptile (code review service) to reduce escape vectors.
+- **`mcp_network_domains`** -- grants sandbox network access to additional
+  domains required by MCP servers (e.g., `context7.com`, `api.greptile.com`).
+- **`add_dirs`** -- grants sandbox filesystem access to additional directories
+  needed by plugins.
+- **`skip_permissions`** -- bypasses Claude Code's built-in permission prompts
+  inside the sandbox (where the sandbox itself provides the security boundary).
+
+Attack surface includes:
+- **Compromised MCP server** -- a malicious or compromised MCP server can
+  execute arbitrary actions within the tool's allowed scope. If a tool has
+  shell execution capabilities and is not blocked via `disallowed_tools`, it
+  provides an alternative to Claude Code's Bash tool.
+- **MCP network domain abuse** -- domains added to `mcp_network_domains` are
+  allowlisted in the sandbox firewall. A compromised domain becomes an
+  exfiltration channel.
+- **Plugin directory writes** -- directories added via `add_dirs` become
+  writable inside the sandbox. A compromised plugin could use these as staging
+  areas for data exfiltration or persistence.
+- **Tool name enumeration** -- `disallowed_tools` uses exact tool name
+  matching. If an MCP server adds new tools not in the blocklist, they are
+  automatically available inside the sandbox.
+
 ---
 
 ## 7. Threat Scenarios
@@ -445,7 +482,7 @@ Claude Code operation.
   Post-session verification can detect unexpected changes.
 - `gleisner-polis` sandbox enforcement: the sandbox is applied externally by
   the `gleisner wrap` command at the process level (namespaces, Landlock,
-  Landlock, `PR_SET_NO_NEW_PRIVS`). Claude Code cannot disable these from
+  `PR_SET_NO_NEW_PRIVS`). Claude Code cannot disable these from
   within the sandbox -- there is no `--disable-sandbox` flag, and environment
   variables like `GLEISNER_BYPASS` have no effect on the already-applied
   kernel enforcement.
@@ -487,10 +524,9 @@ services on the developer's machine.
 - `gleisner-polis` process policy (`ProcessPolicy`):
   - `pid_namespace: true` -- the sandboxed process cannot see or signal other
     processes on the host
-  - `no_new_privileges: true` -- prevents SUID/SGID escalation
+  - `no_new_privileges: true` -- prevents SUID/SGID privilege escalation
   - `command_allowlist` -- restricts which binaries can be executed (when
     configured)
-  - `no_new_privileges: true` -- prevents SUID/SGID privilege escalation
 - `gleisner-polis` network policy (`NetworkPolicy`):
   - `default: deny` -- no outbound connections unless explicitly allowed
   - `allow_domains` -- whitelist of permitted destinations
@@ -591,7 +627,7 @@ granting Claude Code unrestricted access.
 
 **Residual Risk:** Low -- bubblewrap's design makes TOCTOU exploitation
 difficult. Symlink attacks against bind mounts are mitigated by bubblewrap's
-`--die-with-parent` and `--new-session` flags. The primary residual risk is a
+`--die-with-parent` flag and Landlock's filesystem restrictions. The primary residual risk is a
 vulnerability in bubblewrap or the Linux kernel's namespace implementation.
 
 ---
@@ -867,6 +903,53 @@ signing requirements via policy.
 
 ---
 
+### LACERTA-012: MCP Plugin Compromise Enables Sandbox Escape
+
+**Description:** Claude Code connects to external MCP servers that provide
+tools beyond the built-in set (e.g., language servers, code search, browser
+automation). A compromised or malicious MCP server could:
+
+1. **Tool-based escape:** If a plugin provides shell execution capabilities
+   (e.g., Serena's `execute_shell_command`) and is not blocked via
+   `disallowed_tools`, it provides an alternative code execution path that
+   bypasses Claude Code's own permission model.
+2. **Network exfiltration:** Domains added to `mcp_network_domains` are
+   allowlisted in the sandbox firewall. A compromised MCP domain becomes an
+   exfiltration channel for project source code or credentials.
+3. **Directory abuse:** Directories added via `add_dirs` (e.g.,
+   `~/.claude/exo-self`) are writable inside the sandbox and could be used as
+   staging areas for data exfiltration or persistence across sessions.
+
+**Likelihood:** Medium -- MCP servers are third-party code that runs with
+network access. The attack surface grows with each connected server.
+
+**Impact:** High -- a compromised plugin can execute arbitrary actions within
+the scope allowed by the profile's `[plugins]` section. If `disallowed_tools`
+is misconfigured, the plugin may have full shell access.
+
+**Gleisner Mitigation:**
+- `gleisner-polis` profile (`[plugins]` section): `disallowed_tools` blocks
+  specific MCP tools by exact name. The `developer` profile blocks Playwright
+  browser automation (network escape), Serena shell execution, and Greptile
+  code review tools.
+- `gleisner-polis` network filtering: `mcp_network_domains` are subject to the
+  same nftables/iptables firewall rules as `allow_domains`. Only specified
+  domains are reachable.
+- `gleisner-polis` filesystem policy: `add_dirs` grants access to specific
+  directories only, not the entire home directory. Credential directories
+  remain denied.
+- `gleisner-scapes` audit log: all tool invocations (including MCP tools) are
+  logged, enabling post-hoc detection of compromised plugin behavior.
+
+**Residual Risk:** Medium -- `disallowed_tools` uses exact name matching. If
+an MCP server adds new tools or renames existing ones, the blocklist may not
+cover them. The `ANTHROPIC_API_KEY` environment variable is accessible to all
+tools inside the sandbox. Organizations should regularly audit their profile's
+`disallowed_tools` list against the actual tools provided by connected MCP
+servers.
+
+---
+
 ## 8. Mitigations Matrix
 
 This matrix maps each threat scenario to the Gleisner components that provide
@@ -885,6 +968,7 @@ mitigation.
 | **LACERTA-009** Attestation chain manipulation | `.gleisner/` read-only in sandbox | Chain digest linking, payload canonicalization, cycle detection, duplicate digest handling | -- | -- | Chain verification (`--chain`), unsigned link detection, `require_parent_attestation` policy |
 | **LACERTA-010** Network filter bypass | pasta + nftables/iptables, IP pinning | -- | Network activity logged | -- | -- |
 | **LACERTA-011** Unsigned attestation acceptance | -- | `--no-sign` warning | -- | -- | Policy: `require_signature`, verification warnings, chain unsigned link detection |
+| **LACERTA-012** MCP plugin compromise | `disallowed_tools`, `mcp_network_domains`, `add_dirs` | -- | All tool invocations logged | -- | -- |
 
 ### 8.1 Defense in Depth Layers
 
@@ -953,6 +1037,13 @@ undetected.
   (memory, CPU, disk) within the sandbox, degrading the developer's machine.
   Resource limits (`ResourceLimits`) bound this but do not eliminate it.
 
+- **Compromised MCP plugin servers.** MCP servers connected to Claude Code
+  operate within the sandbox but may have their own network access (via
+  `mcp_network_domains`) and filesystem access (via `add_dirs`). A
+  compromised server can exfiltrate data within its allowed scope.
+  `disallowed_tools` provides a blocklist but cannot prevent a server from
+  adding new tools not on the list.
+
 ---
 
 ## 10. Future Work
@@ -962,7 +1053,7 @@ in approximate priority order.
 
 ### 10.1 Network Traffic Inspection (Planned)
 
-The current pasta-based network filtering (Phase E) restricts
+The current pasta-based network filtering restricts
 connections at the IP/port level but does not inspect request content. A
 future version could add a transparent HTTP proxy within the namespace that
 logs outbound request bodies before they reach the TLS layer. This would
@@ -1003,12 +1094,13 @@ Sigstore attestations (e.g., npm provenance, Python wheel attestations,
 crate provenance). This would extend the trust chain from Gleisner's own
 attestation down to the individual dependencies.
 
-### 10.6 Session Replay and Diff (Planned)
+### 10.6 Session Replay (Planned)
 
-Build tooling to replay a `gleisner-scapes` audit log and produce a
-human-readable diff of all changes made during the session, annotated with
-the Claude Code tool invocation that caused each change. This would make
-code review of AI-generated changes significantly more tractable.
+`gleisner diff` already compares two attestation bundles (subjects, materials,
+environment, timing). The remaining piece is session replay: replaying a
+`gleisner-scapes` JSONL audit log to produce a human-readable timeline of all
+changes, annotated with the Claude Code tool invocation that caused each
+change.
 
 ### 10.7 Multi-Machine Attestation (Planned)
 
@@ -1038,6 +1130,7 @@ than filesystem-based ECDSA keys but cannot use Sigstore keyless mode.
 | **Fulcio** | Sigstore's certificate authority for code signing |
 | **in-toto** | A framework for securing the integrity of software supply chains |
 | **Landlock** | A Linux security module for unprivileged filesystem access control |
+| **MCP** | Model Context Protocol -- standard for connecting AI assistants to external tool servers |
 | **nftables** | Linux kernel subsystem for packet filtering and NAT, successor to iptables |
 | **OPA/Rego** | Open Policy Agent and its policy language, used for attestation verification |
 | **Rekor** | Sigstore's transparency log for code signing events |
@@ -1062,3 +1155,4 @@ than filesystem-based ECDSA keys but cannot use Sigstore keyless mode.
 | LACERTA-009 | Attestation chain manipulation | Low | High |
 | LACERTA-010 | Network filter bypass | Medium | High |
 | LACERTA-011 | Unsigned attestation bundle acceptance | Medium | High |
+| LACERTA-012 | MCP plugin compromise | Medium | High |

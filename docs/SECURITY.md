@@ -1,7 +1,7 @@
 # Gleisner -- Security Guide
 
-**Document version:** 0.1.0
-**Date:** 2026-02-14
+**Document version:** 0.2.0
+**Date:** 2026-02-21
 **Status:** Living document
 **Companion:** This document covers practical security guidance. For threat
 scenarios, attack surface analysis, and residual risk assessment, see
@@ -119,17 +119,16 @@ is recorded but not required (to support air-gapped verification).
 > rationale, see
 > [ARCHITECTURE.md § Sandbox Architecture](ARCHITECTURE.md#sandbox-architecture).
 
-Gleisner implements defense in depth through six independent isolation layers,
+Gleisner implements defense in depth through five independent isolation layers,
 each enforced by a different Linux kernel subsystem:
 
 | Layer | Mechanism | Purpose |
 |-------|-----------|---------|
 | 1 | User namespaces | Unprivileged isolation -- sandboxed process has no real host privileges |
-| 2 | Bubblewrap (bwrap) | Mount namespace -- bind-mounts, tmpfs deny, `--die-with-parent` |
-| 3 | Landlock LSM (V7) | Fine-grained filesystem and network access control (independent of mount namespace), IPC scope isolation, audit logging |
-| 4 | `PR_SET_NO_NEW_PRIVS` | Prevents privilege escalation via SUID/SGID binaries (applied by Landlock inside sandbox-init) |
-| 5 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits (cgroups with rlimit fallback) |
-| 6 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
+| 2 | Bubblewrap (bwrap) | Mount namespace -- bind-mounts, tmpfs deny, PID namespace, `--die-with-parent` |
+| 3 | Landlock LSM (V7) | Filesystem and network access control, IPC scope isolation, `PR_SET_NO_NEW_PRIVS`, kernel audit logging |
+| 4 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits (cgroups with rlimit fallback) |
+| 5 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
 
 Compromising one layer does not automatically compromise the others. For
 example, even if bubblewrap's mount namespace is bypassed, Landlock
@@ -221,7 +220,7 @@ Create a JSON file with the rules you want to enforce. All fields are optional
 ```json
 {
   "require_sandbox": true,
-  "allowed_profiles": ["strict", "default"],
+  "allowed_profiles": ["konishi", "ashton-laval"],
   "max_session_duration_secs": 3600,
   "require_audit_log": true,
   "allowed_builders": ["gleisner-cli/0.1.0"],
@@ -250,7 +249,9 @@ gleisner verify --policy policy.json attestation.json
 
 For complex policy logic, compile OPA/Rego policies to WASM and pass the
 `.wasm` file to the verifier. Gleisner uses **Wasmtime 27** as the WASM
-runtime, providing sandboxed policy execution.
+runtime, providing sandboxed policy execution. Module loading is implemented;
+the full OPA ABI evaluation layer is in progress. The built-in JSON engine
+covers immediate policy needs.
 
 ```bash
 # Compile a Rego policy to WASM (requires OPA CLI):
@@ -444,7 +445,7 @@ Practical steps for users setting up Gleisner in a new environment.
 
 ### Sandbox Profiles
 
-- [ ] **Start with the `strict` profile** and relax only as needed.
+- [ ] **Start with the `ashton-laval` profile** and relax only as needed.
 - [ ] **Review the `allow_domains` list.** Every allowed domain is a potential
       exfiltration channel. Minimize to what is actually required (typically
       `api.anthropic.com` plus package registries).

@@ -519,7 +519,7 @@ tmpfs = ["/tmp"]
 
 [network]
 default = "deny"
-allow_domains = ["api.anthropic.com", "sentry.io"]
+allow_domains = ["api.anthropic.com", "sentry.io", "statsig.anthropic.com"]
 allow_ports = [443]
 allow_dns = true
 
@@ -534,10 +534,18 @@ max_cpu_percent = 100
 max_pids = 256
 max_file_descriptors = 1024
 max_disk_write_mb = 10240
+
+[plugins]
+skip_permissions = true
+add_dirs = ["~/.claude/exo-self"]
+disallowed_tools = []
+mcp_network_domains = []
 ```
 
+The `[plugins]` section controls Claude Code's MCP tool access inside the sandbox. `disallowed_tools` blocks specific MCP tools (e.g., browser automation, shell-escape vectors). `add_dirs` grants sandbox access to additional directories Claude Code needs for plugins.
+
 The four bundled profiles (named after polises in *Diaspora*):
-- **konishi** -- Default balanced. Anthropic API only, credentials hidden, PID isolated.
+- **konishi** -- Default balanced. Anthropic API + telemetry endpoints (sentry.io, statsig.anthropic.com), credentials hidden, PID isolated.
 - **carter-zimmerman** -- Exploratory. Broader network access (npm, PyPI, GitHub, crates.io) for projects needing external APIs.
 - **ashton-laval** -- Strict. Minimal permissions, tighter resource limits (2GB memory, 128 PIDs, 50% CPU), DNS disabled.
 - **developer** -- Development-focused. Full Rust toolchain access (cargo, rustup, crates.io, GitHub), generous resource limits (16GB memory), blocks shell execution and Playwright MCP tools. Designed for gleisner-in-gleisner self-hosting.

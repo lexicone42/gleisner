@@ -583,15 +583,22 @@ From `netfilter.rs`:
 impl Drop for NamespaceHandle {
     fn drop(&mut self) {
         debug!(holder_pid = self.holder_pid, "destroying network namespace");
-        let _ = self.holder.kill();
+        if let Err(e) = self.holder.kill() {
+            warn!(
+                holder_pid = self.holder_pid,
+                error = %e,
+                "failed to kill namespace holder — namespace may leak"
+            );
+        }
         let _ = self.holder.wait();
     }
 }
 ```
 
-Notice the `let _ =` pattern -- `kill()` and `wait()` return `Result`, but in
-a destructor you cannot propagate errors. The `let _ =` explicitly discards the
-result, which also satisfies the `#[must_use]` lint.
+Notice the two error-handling approaches. `kill()` logs a warning on failure
+because a leaked namespace holder is a real problem worth surfacing. `wait()`
+uses `let _ =` to discard its result -- in a destructor you cannot propagate
+errors, and `let _ =` explicitly satisfies the `#[must_use]` lint.
 
 Note: `TapHandle` (pasta) does not need a `Drop` implementation because pasta
 configures the namespace and exits -- there is no long-running child process.
@@ -634,9 +641,11 @@ From the workspace `Cargo.toml`:
 
 ```toml
 [workspace.lints.rust]
-unsafe_code = "forbid"          # no unsafe anywhere
-missing_docs = "warn"           # encourage documentation
-unreachable_pub = "warn"        # don't pub what doesn't need to be pub
+unsafe_code = "forbid"              # no unsafe anywhere
+missing_docs = "warn"               # encourage documentation
+unreachable_pub = "warn"            # don't pub what doesn't need to be pub
+unused_qualifications = "warn"      # remove redundant path qualifiers
+unsafe_op_in_unsafe_fn = "deny"     # require unsafe blocks inside unsafe fn
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
@@ -646,12 +655,19 @@ nursery = { level = "warn", priority = -1 }
 # Pedantic overrides -- allow specific lints that are too noisy
 module_name_repetitions = "allow"   # e.g., AttestationError in attestation module
 must_use_candidate = "allow"        # too many false positives
+missing_errors_doc = "allow"        # not every Result fn needs error docs
 
 # Enforce modern patterns
 manual_let_else = "warn"            # use let-else instead of match
 uninlined_format_args = "warn"      # use {x} not {}, x
 semicolon_if_nothing_returned = "warn"
 cloned_instead_of_copied = "warn"   # use .copied() for Copy types
+redundant_clone = "warn"            # remove unnecessary .clone()
+needless_pass_by_value = "warn"     # pass by reference when possible
+flat_map_option = "warn"            # use .flatten() instead of .filter_map(|x| x)
+from_iter_instead_of_collect = "warn"
+implicit_clone = "warn"             # prefer explicit .clone() or .to_owned()
+inefficient_to_string = "warn"      # use write! instead of format! for Display
 ```
 
 Some specific lints and what they teach:
@@ -664,6 +680,8 @@ Some specific lints and what they teach:
 | `needless_pass_by_value` | `fn f(s: String)` when `&str` suffices | Pass by reference when you don't need ownership |
 | `redundant_clone` | `.clone()` on a value that is not used again | Remove the clone |
 | `flat_map_option` | `.filter_map(|x| x)` | Use `.flatten()` |
+| `implicit_clone` | `x.to_owned()` where `.clone()` is clearer | Prefer explicit `.clone()` |
+| `inefficient_to_string` | `format!("{x}")` on Display types | Use `write!` or `x.to_string()` directly |
 
 The `#[expect(...)]` attribute (Rust 2024) is used in the codebase to acknowledge
 specific lint violations with a reason:
