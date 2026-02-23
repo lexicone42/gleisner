@@ -90,6 +90,8 @@ pub enum TuiCommand {
     Cosign(Option<String>),
     /// Submit the OIDC authorization code for an in-progress cosign flow.
     CosignCode(String),
+    /// Learn from the last session's audit log and generate a widened profile.
+    Learn,
     /// Show available TUI commands.
     Help,
 }
@@ -140,6 +142,8 @@ pub struct App {
     /// Accumulates text from streaming deltas for live display.
     /// Cleared when the full assistant event arrives.
     pub streaming_buffer: String,
+    /// Path to the audit log from the most recent sandboxed session.
+    pub last_audit_log: Option<std::path::PathBuf>,
 }
 
 impl App {
@@ -163,6 +167,7 @@ impl App {
             model: None,
             claude_version: None,
             streaming_buffer: String::new(),
+            last_audit_log: None,
         }
     }
 
@@ -221,6 +226,7 @@ impl App {
                     );
                     return None;
                 }
+                "learn" => Some(TuiCommand::Learn),
                 "help" => Some(TuiCommand::Help),
                 _ => None,
             };

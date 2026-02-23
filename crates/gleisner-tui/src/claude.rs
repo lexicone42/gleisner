@@ -176,6 +176,8 @@ pub enum DriverMessage {
         path: PathBuf,
         /// Number of audit events recorded.
         event_count: u64,
+        /// Path to the JSONL audit log for this session.
+        audit_log_path: PathBuf,
     },
 }
 
@@ -396,6 +398,7 @@ async fn run_query(
                     .send(DriverMessage::AttestationComplete {
                         path: result.path,
                         event_count: result.event_count,
+                        audit_log_path: result.audit_log_path,
                     })
                     .await;
             }
@@ -523,6 +526,7 @@ struct AttestationState {
 struct AttestationResult {
     path: PathBuf,
     event_count: u64,
+    audit_log_path: PathBuf,
 }
 
 /// Set up the attestation pipeline before spawning the subprocess.
@@ -859,6 +863,7 @@ async fn finalize_attestation(
     Ok(AttestationResult {
         path: state.output_path,
         event_count,
+        audit_log_path: state.audit_log_path,
     })
 }
 

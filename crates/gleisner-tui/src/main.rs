@@ -115,8 +115,8 @@ async fn main() -> color_eyre::Result<()> {
     let terminal = ratatui::init();
     let result = run(
         terminal,
-        &profile,
-        sandbox.as_ref(),
+        profile,
+        sandbox,
         claude_bin.as_deref(),
         debug_mode,
         &project_dir,
@@ -137,8 +137,8 @@ async fn main() -> color_eyre::Result<()> {
 )]
 async fn run(
     mut terminal: DefaultTerminal,
-    profile: &gleisner_polis::profile::Profile,
-    sandbox: Option<&SandboxConfig>,
+    mut profile: gleisner_polis::profile::Profile,
+    mut sandbox: Option<SandboxConfig>,
     claude_bin: Option<&str>,
     debug_mode: bool,
     project_dir: &std::path::Path,
@@ -194,10 +194,10 @@ async fn run(
                         match action {
                             UserAction::Prompt(prompt) => {
                                 info!(prompt_len = prompt.len(), session = ?app.session_id, "submitting prompt");
-                                let mut config = QueryConfig::from_profile(profile);
+                                let mut config = QueryConfig::from_profile(&profile);
                                 config.prompt = prompt;
                                 config.resume_session.clone_from(&app.session_id);
-                                config.sandbox = sandbox.cloned();
+                                config.sandbox.clone_from(&sandbox);
                                 config.use_sigstore = use_sigstore;
                                 config.sigstore_token = sigstore_token.map(String::from);
                                 if let Some(bin) = claude_bin {
@@ -241,6 +241,14 @@ async fn run(
                                     );
                                 }
                             }
+                            UserAction::Command(TuiCommand::Learn) => {
+                                handle_learn_command(
+                                    &mut app,
+                                    &mut profile,
+                                    &mut sandbox,
+                                    project_dir,
+                                );
+                            }
                             UserAction::Command(cmd) => {
                                 handle_command(&mut app, cmd, project_dir);
                             }
@@ -271,10 +279,15 @@ async fn run(
                         }
                         app.handle_stream_event(*event);
                     }
-                    DriverMessage::AttestationComplete { path, event_count } => {
+                    DriverMessage::AttestationComplete {
+                        path,
+                        event_count,
+                        audit_log_path,
+                    } => {
                         info!(path = %path.display(), events = event_count, "attestation complete");
                         app.security.recording = false;
                         app.security.pending_cosign = true;
+                        app.last_audit_log = Some(audit_log_path);
                         app.push_message(
                             Role::System,
                             format!(
@@ -446,8 +459,8 @@ fn handle_command(app: &mut App, cmd: TuiCommand, project_dir: &std::path::Path)
                 }
             }
         }
-        TuiCommand::Cosign(_) | TuiCommand::CosignCode(_) => {
-            // Handled in the event loop — needs access to cosign state.
+        TuiCommand::Cosign(_) | TuiCommand::CosignCode(_) | TuiCommand::Learn => {
+            // Handled in the event loop — needs access to mutable profile/sandbox/cosign state.
         }
         TuiCommand::Help => {
             let help = "\
@@ -458,10 +471,171 @@ Available commands:
   /cosign            Cosign attestation with Sigstore (starts OIDC flow)
   /cosign <token>    Cosign with a pre-obtained OIDC JWT (eyJ...)
   /cosigncode <code> Submit auth code from browser for in-progress cosign
+  /learn             Learn from last session's audit log, widen profile
   /help              Show this help message";
             app.push_message(Role::System, help);
         }
     }
+}
+
+/// Execute the `/learn` command: ingest the last session's audit log,
+/// generate a widened profile, write it to XDG config, and reload.
+#[allow(clippy::too_many_lines)]
+fn handle_learn_command(
+    app: &mut App,
+    profile: &mut gleisner_polis::profile::Profile,
+    sandbox: &mut Option<SandboxConfig>,
+    project_dir: &std::path::Path,
+) {
+    use gleisner_polis::{LearnerConfig, ProfileLearner, format_profile_toml, format_summary};
+    use std::fmt::Write as _;
+
+    let Some(audit_log_path) = app.last_audit_log.clone() else {
+        app.push_message(
+            Role::System,
+            "[error] No audit log available. Run a sandboxed session first.",
+        );
+        return;
+    };
+
+    info!(path = %audit_log_path.display(), "running /learn command");
+
+    // Derive learned profile name
+    let learned_name = if profile.name.ends_with("-learned") {
+        profile.name.clone()
+    } else {
+        format!("{}-learned", profile.name)
+    };
+
+    let home_dir = std::env::var("HOME").map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from);
+
+    let config = LearnerConfig {
+        project_dir: project_dir.to_owned(),
+        home_dir,
+        name: learned_name.clone(),
+        base_profile: Some(profile.clone()),
+    };
+
+    let mut learner = ProfileLearner::new(config);
+
+    // Read and ingest audit events
+    let mut reader = match gleisner_scapes::audit::open_audit_log_reader(&audit_log_path) {
+        Ok(r) => r,
+        Err(e) => {
+            app.push_message(Role::System, format!("[error] Cannot open audit log: {e}"));
+            return;
+        }
+    };
+
+    loop {
+        match reader.next_event() {
+            Ok(Some(event)) => learner.observe(&event),
+            Ok(None) => break,
+            Err(e) => {
+                app.push_message(
+                    Role::System,
+                    format!(
+                        "[error] Failed reading audit event at line {}: {e}",
+                        reader.line_number()
+                    ),
+                );
+                return;
+            }
+        }
+    }
+
+    app.push_message(
+        Role::System,
+        format!(
+            "Learning from {} events in {}",
+            reader.line_number(),
+            audit_log_path.display()
+        ),
+    );
+
+    // Generate profile and summary
+    let (learned_profile, summary) = learner.generate_profile();
+    app.push_message(Role::System, format_summary(&summary));
+
+    // Compute and display diff
+    let old_toml = format_profile_toml(profile).unwrap_or_default();
+    let new_toml = format_profile_toml(&learned_profile).unwrap_or_default();
+    let diff = compute_profile_diff(&old_toml, &new_toml);
+    if diff.is_empty() {
+        app.push_message(Role::System, "No profile changes needed.");
+    } else {
+        let mut diff_msg = String::from("Profile changes:\n");
+        for line in &diff {
+            let _ = writeln!(diff_msg, "  {line}");
+        }
+        app.push_message(Role::System, diff_msg);
+    }
+
+    // Write to XDG config dir
+    let config_dir = std::env::var("HOME").map_or_else(
+        |_| PathBuf::from("/tmp"),
+        |h| PathBuf::from(h).join(".config/gleisner/profiles"),
+    );
+
+    if let Err(e) = std::fs::create_dir_all(&config_dir) {
+        app.push_message(
+            Role::System,
+            format!("[error] Cannot create config directory: {e}"),
+        );
+        return;
+    }
+
+    let profile_path = config_dir.join(format!("{learned_name}.toml"));
+    match format_profile_toml(&learned_profile) {
+        Ok(toml_str) => {
+            if let Err(e) = std::fs::write(&profile_path, &toml_str) {
+                app.push_message(Role::System, format!("[error] Cannot write profile: {e}"));
+                return;
+            }
+        }
+        Err(e) => {
+            app.push_message(
+                Role::System,
+                format!("[error] Cannot serialize profile: {e}"),
+            );
+            return;
+        }
+    }
+
+    app.push_message(Role::System, format!("Written: {}", profile_path.display()));
+
+    // Reload: update active profile and sandbox config
+    *profile = learned_profile.clone();
+    if let Some(sb) = sandbox {
+        sb.profile = learned_profile;
+    }
+    app.security.profile.clone_from(&learned_name);
+
+    app.push_message(
+        Role::System,
+        format!("Profile reloaded: {learned_name} (active for next query)"),
+    );
+}
+
+/// Compute line-level diff between two TOML strings.
+///
+/// Returns `+ line` entries for lines present in `new_toml` but not
+/// in `old_toml`, skipping comments and blank lines.
+fn compute_profile_diff(old_toml: &str, new_toml: &str) -> Vec<String> {
+    use std::collections::BTreeSet;
+
+    let filter_line = |line: &str| -> bool {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('#')
+    };
+
+    let old_lines: BTreeSet<&str> = old_toml.lines().filter(|l| filter_line(l)).collect();
+    let new_lines: BTreeSet<&str> = new_toml.lines().filter(|l| filter_line(l)).collect();
+
+    new_lines
+        .difference(&old_lines)
+        .map(|line| format!("+ {line}"))
+        .collect()
 }
 
 /// State for an in-progress background cosign operation.
