@@ -90,6 +90,8 @@ pub enum TuiCommand {
     Cosign(Option<String>),
     /// Submit the OIDC authorization code for an in-progress cosign flow.
     CosignCode(String),
+    /// End the current session (clears session ID, ready for /learn).
+    End,
     /// Learn from the last session's audit log and generate a widened profile.
     Learn,
     /// Show available TUI commands.
@@ -226,6 +228,7 @@ impl App {
                     );
                     return None;
                 }
+                "end" => Some(TuiCommand::End),
                 "learn" => Some(TuiCommand::Learn),
                 "help" => Some(TuiCommand::Help),
                 _ => None,

@@ -244,6 +244,30 @@ async fn run(
                                     );
                                 }
                             }
+                            UserAction::Command(TuiCommand::End) => {
+                                if app.session_state == SessionState::Streaming {
+                                    app.push_message(
+                                        Role::System,
+                                        "[error] Cannot /end while streaming. Use Ctrl-C to interrupt first.",
+                                    );
+                                } else if attestation_pending {
+                                    app.push_message(
+                                        Role::System,
+                                        "Attestation still finalizing — please wait for it to complete, then /end.",
+                                    );
+                                } else {
+                                    let log_count = app.audit_logs.len();
+                                    app.session_id = None;
+                                    app.push_message(
+                                        Role::System,
+                                        format!(
+                                            "Session ended. {log_count} audit log(s) available for /learn.\n\
+                                             Next prompt will start a fresh Claude session."
+                                        ),
+                                    );
+                                    info!(audit_logs = log_count, "user ended session via /end");
+                                }
+                            }
                             UserAction::Command(TuiCommand::Learn) => {
                                 handle_learn_command(
                                     &mut app,
@@ -468,7 +492,7 @@ fn handle_command(app: &mut App, cmd: TuiCommand, project_dir: &std::path::Path)
                 }
             }
         }
-        TuiCommand::Cosign(_) | TuiCommand::CosignCode(_) | TuiCommand::Learn => {
+        TuiCommand::Cosign(_) | TuiCommand::CosignCode(_) | TuiCommand::End | TuiCommand::Learn => {
             // Handled in the event loop — needs access to mutable profile/sandbox/cosign state.
         }
         TuiCommand::Help => {
@@ -480,7 +504,8 @@ Available commands:
   /cosign            Cosign attestation with Sigstore (starts OIDC flow)
   /cosign <token>    Cosign with a pre-obtained OIDC JWT (eyJ...)
   /cosigncode <code> Submit auth code from browser for in-progress cosign
-  /learn             Learn from last session's audit log, widen profile
+  /end               End current session (keeps audit logs for /learn)
+  /learn             Learn from session audit logs, widen profile
   /help              Show this help message";
             app.push_message(Role::System, help);
         }
