@@ -291,7 +291,7 @@ async fn run(
                         info!(path = %path.display(), events = event_count, "attestation complete");
                         app.security.recording = false;
                         app.security.pending_cosign = true;
-                        app.last_audit_log = Some(audit_log_path);
+                        app.audit_logs.push(audit_log_path);
                         attestation_pending = false;
                         app.push_message(
                             Role::System,
@@ -487,7 +487,7 @@ Available commands:
     }
 }
 
-/// Execute the `/learn` command: ingest the last session's audit log,
+/// Execute the `/learn` command: ingest all audit logs from this session,
 /// generate a widened profile, write it to XDG config, and reload.
 #[allow(clippy::too_many_lines)]
 fn handle_learn_command(
@@ -499,15 +499,20 @@ fn handle_learn_command(
     use gleisner_polis::{LearnerConfig, ProfileLearner, format_profile_toml, format_summary};
     use std::fmt::Write as _;
 
-    let Some(audit_log_path) = app.last_audit_log.clone() else {
+    if app.audit_logs.is_empty() {
         app.push_message(
             Role::System,
-            "[error] No audit log available. Run a sandboxed session first.",
+            "[error] No audit logs available. Run a sandboxed session first.",
         );
         return;
-    };
+    }
 
-    info!(path = %audit_log_path.display(), "running /learn command");
+    let audit_log_paths = app.audit_logs.clone();
+
+    info!(
+        count = audit_log_paths.len(),
+        "running /learn command across session audit logs"
+    );
 
     // Derive learned profile name
     let learned_name = if profile.name.ends_with("-learned") {
@@ -527,38 +532,48 @@ fn handle_learn_command(
 
     let mut learner = ProfileLearner::new(config);
 
-    // Read and ingest audit events
-    let mut reader = match gleisner_scapes::audit::open_audit_log_reader(&audit_log_path) {
-        Ok(r) => r,
-        Err(e) => {
-            app.push_message(Role::System, format!("[error] Cannot open audit log: {e}"));
-            return;
-        }
-    };
-
-    loop {
-        match reader.next_event() {
-            Ok(Some(event)) => learner.observe(&event),
-            Ok(None) => break,
+    // Read and ingest audit events from ALL session audit logs
+    let mut total_events: u64 = 0;
+    for audit_log_path in &audit_log_paths {
+        let mut reader = match gleisner_scapes::audit::open_audit_log_reader(audit_log_path) {
+            Ok(r) => r,
             Err(e) => {
                 app.push_message(
                     Role::System,
                     format!(
-                        "[error] Failed reading audit event at line {}: {e}",
-                        reader.line_number()
+                        "[warn] Cannot open {}: {e} (skipping)",
+                        audit_log_path.display()
                     ),
                 );
-                return;
+                continue;
+            }
+        };
+
+        loop {
+            match reader.next_event() {
+                Ok(Some(event)) => learner.observe(&event),
+                Ok(None) => break,
+                Err(e) => {
+                    app.push_message(
+                        Role::System,
+                        format!(
+                            "[warn] Parse error in {} at line {}: {e} (skipping rest)",
+                            audit_log_path.display(),
+                            reader.line_number()
+                        ),
+                    );
+                    break;
+                }
             }
         }
+        total_events += reader.line_number();
     }
 
     app.push_message(
         Role::System,
         format!(
-            "Learning from {} events in {}",
-            reader.line_number(),
-            audit_log_path.display()
+            "Learning from {total_events} events across {} audit log(s)",
+            audit_log_paths.len()
         ),
     );
 

@@ -142,8 +142,8 @@ pub struct App {
     /// Accumulates text from streaming deltas for live display.
     /// Cleared when the full assistant event arrives.
     pub streaming_buffer: String,
-    /// Path to the audit log from the most recent sandboxed session.
-    pub last_audit_log: Option<std::path::PathBuf>,
+    /// Audit logs from all turns in this session (accumulated).
+    pub audit_logs: Vec<std::path::PathBuf>,
 }
 
 impl App {
@@ -167,7 +167,7 @@ impl App {
             model: None,
             claude_version: None,
             streaming_buffer: String::new(),
-            last_audit_log: None,
+            audit_logs: Vec::new(),
         }
     }
 
