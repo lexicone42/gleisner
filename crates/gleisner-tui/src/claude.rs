@@ -705,7 +705,48 @@ async fn finalize_attestation(
         );
     }
 
-    // ── 3. Close channels and await consumers ───────────────────
+    // ── 3. Collect kernel denial events ────────────────────────
+    // Landlock denials from the kernel audit log (if audisp is configured)
+    // and nftables firewall denials from dmesg. These are post-hoc:
+    // the denial events are written to kernel logs during the session
+    // and we harvest them now, before closing the event bus.
+    let session_end = chrono::Utc::now();
+    let session_start = session_end - chrono::Duration::minutes(30);
+
+    // Landlock denials (from audisp audit log, if available)
+    let landlock_log = PathBuf::from("/var/log/gleisner/landlock-audit.log");
+    if landlock_log.exists() {
+        let audit_config = gleisner_polis::KernelAuditConfig {
+            session_start,
+            session_end,
+            audit_log_path: landlock_log,
+        };
+        let landlock_count =
+            gleisner_polis::collect_and_publish_denials(&audit_config, &state.publisher);
+        if landlock_count > 0 {
+            info!(count = landlock_count, "collected Landlock denial events");
+        }
+    }
+
+    // Firewall denials (from dmesg — nftables/iptables log rules)
+    match gleisner_polis::capture_firewall_denials_from_dmesg() {
+        Ok(fw_events) if !fw_events.is_empty() => {
+            let fw_count = fw_events.len();
+            for event in fw_events {
+                state.publisher.publish(event);
+            }
+            info!(
+                count = fw_count,
+                "collected firewall denial events from dmesg"
+            );
+        }
+        Ok(_) => {}
+        Err(e) => {
+            warn!(error = %e, "could not capture firewall denials from dmesg");
+        }
+    }
+
+    // ── 4. Close channels and await consumers ───────────────────
     // Drop publisher and bus to close the broadcast channel,
     // which causes recorder and writer tasks to complete.
     drop(state.publisher);
@@ -732,7 +773,7 @@ async fn finalize_attestation(
         "session recording complete"
     );
 
-    // ── 4. Find parent attestation for chaining ─────────────────
+    // ── 5. Find parent attestation for chaining ─────────────────
     let chain_metadata =
         match gleisner_introdus::chain::find_latest_attestation(&state.gleisner_dir) {
             Ok(Some(link)) => {
@@ -756,7 +797,7 @@ async fn finalize_attestation(
             }
         };
 
-    // ── 5. Assemble in-toto statement ───────────────────────────
+    // ── 6. Assemble in-toto statement ───────────────────────────
     let mut materials = recorder_output.materials;
     if let Some(ref gs) = state.git_state {
         materials.push(gs.to_material());
@@ -820,7 +861,7 @@ async fn finalize_attestation(
         },
     };
 
-    // ── 6. Sign and write ───────────────────────────────────────
+    // ── 7. Sign and write ───────────────────────────────────────
     let bundle = if state.use_sigstore {
         #[cfg(feature = "keyless")]
         {
