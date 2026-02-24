@@ -142,8 +142,8 @@ impl BwrapSandbox {
     /// Mount ordering matters: later mounts shadow earlier ones. The order is:
     /// 1. Read-only binds (system paths)
     /// 2. Read-write binds (profile + extra + project)
-    /// 3. Symlink-resolved overlays (must come AFTER parent RW mounts so
-    ///    they shadow the parent rather than being shadowed by it)
+    /// 3. Symlink target binds (resolved targets at their own paths, so
+    ///    symlinks inside RW-mounted parents resolve naturally)
     /// 4. Deny paths (tmpfs overlays shadow everything)
     fn apply_filesystem_policy(&self, cmd: &mut Command) {
         let fs = &self.profile.filesystem;
@@ -155,18 +155,18 @@ impl BwrapSandbox {
         // ── Phase 1: Read-only bind mounts ──────────────────────────────
         // For user-managed directories under $HOME that contain symlinks
         // (e.g. ~/.claude/bin/), we still bind the directory normally here
-        // but collect the resolved symlinks for a later phase. The later
-        // phase overlays them AFTER all RW mounts, so they aren't shadowed
-        // by a parent mount like `--bind ~/.claude ~/.claude`.
+        // but collect the resolved symlink targets for a later phase.
+        // The later phase binds each target at its own real path, so that
+        // symlinks inside any parent RW mount resolve naturally.
         let home_dir = std::env::var("HOME").ok().map(PathBuf::from);
-        let mut deferred_symlinks: Vec<(String, String)> = Vec::new();
+        let mut deferred_symlink_targets: Vec<String> = Vec::new();
 
         for path in &fs.readonly_bind {
             let expanded = expand_tilde(path);
             let p = expanded.display().to_string();
             cmd.args(["--ro-bind", &p, &p]);
 
-            // Collect symlink entries for deferred overlay
+            // Collect resolved symlink targets for deferred binding
             let is_user_subdir = home_dir
                 .as_ref()
                 .is_some_and(|home| expanded.starts_with(home) && expanded != *home);
@@ -178,9 +178,12 @@ impl BwrapSandbox {
                             if let Ok(resolved) = std::fs::canonicalize(&entry_path) {
                                 if resolved.exists() {
                                     let src = resolved.display().to_string();
-                                    let dst = entry_path.display().to_string();
-                                    debug!(src = %src, dst = %dst, "deferring resolved symlink");
-                                    deferred_symlinks.push((src, dst));
+                                    debug!(
+                                        src = %src,
+                                        symlink = %entry_path.display(),
+                                        "deferring symlink target bind"
+                                    );
+                                    deferred_symlink_targets.push(src);
                                 }
                             }
                         }
@@ -209,13 +212,16 @@ impl BwrapSandbox {
         let proj = self.project_dir.display().to_string();
         cmd.args(["--bind", &proj, &proj]);
 
-        // ── Phase 3: Symlink overlays (AFTER parent RW mounts) ──────────
-        // These override individual entries within RW-mounted parent dirs.
-        // e.g. ~/.claude is mounted RW in phase 2, but ~/.claude/bin/preflight
-        // is a symlink to an external path. The overlay binds the resolved
-        // target on top of the symlink destination.
-        for (src, dst) in &deferred_symlinks {
-            cmd.args(["--ro-bind", src, dst]);
+        // ── Phase 3: Symlink target binds ───────────────────────────────
+        // When a parent directory (e.g. ~/.claude) is RW-mounted in phase 2,
+        // it shadows the RO bind of a subdirectory (e.g. ~/.claude/bin) from
+        // phase 1. Symlinks inside that subdirectory become real symlinks
+        // again, pointing to paths outside the sandbox. Rather than trying
+        // to bind over the symlink (which bwrap can't do — it can't create
+        // a mount point on a symlink), we bind each target at its own real
+        // path so the symlink resolves naturally inside the sandbox.
+        for src in &deferred_symlink_targets {
+            cmd.args(["--ro-bind", src, src]);
         }
 
         // ── Phase 4: Deny paths + tmpfs ─────────────────────────────────
