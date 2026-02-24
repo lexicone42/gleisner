@@ -384,6 +384,11 @@ async fn run_query(
     let exit_code = status.code().unwrap_or(1);
     info!(?status, lines = line_count, "subprocess finished");
 
+    // Send Exited BEFORE attestation finalization so the TUI goes
+    // Idle immediately. Attestation can take seconds (snapshot hashing,
+    // signing) and the user shouldn't have to wait for it.
+    let _ = tx.send(DriverMessage::Exited(status.code())).await;
+
     // ── Finalize attestation pipeline ───────────────────────────
     #[cfg(target_os = "linux")]
     if let Some(state) = attest_state {
@@ -407,8 +412,6 @@ async fn run_query(
             }
         }
     }
-
-    let _ = tx.send(DriverMessage::Exited(status.code())).await;
 
     // _handles dropped here — kills TAP provider and namespace holder
 

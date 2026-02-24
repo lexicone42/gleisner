@@ -179,6 +179,8 @@ async fn run(
 
     // Active query handle — holds the message receiver and abort handle.
     let mut query: Option<QueryHandle> = None;
+    // True while we're waiting for AttestationComplete after Exited.
+    let mut attestation_pending = false;
     // Background cosign state — active while waiting for /cosigncode.
     let mut cosign: Option<CosignState> = None;
 
@@ -205,6 +207,7 @@ async fn run(
                                 }
                                 if config.sandbox.is_some() {
                                     app.security.recording = true;
+                                    attestation_pending = true;
                                 }
                                 query = Some(spawn_query(config, 256));
                             }
@@ -260,6 +263,7 @@ async fn run(
                                 app.session_state = SessionState::Idle;
                                 app.streaming_buffer.clear();
                                 app.security.recording = false;
+                                attestation_pending = false;
                                 app.push_message(Role::System, "[interrupted]");
                             }
                         }
@@ -288,6 +292,7 @@ async fn run(
                         app.security.recording = false;
                         app.security.pending_cosign = true;
                         app.last_audit_log = Some(audit_log_path);
+                        attestation_pending = false;
                         app.push_message(
                             Role::System,
                             format!(
@@ -374,8 +379,12 @@ async fn run(
             }
         }
 
-        // Clean up the handle if the session is done
-        if app.session_state == SessionState::Idle && query.is_some() {
+        // Clean up the handle if the session is done AND attestation
+        // has completed. We must keep the query handle alive while
+        // attestation is finalizing, because dropping it aborts the
+        // background task (which is still doing snapshot reconciliation,
+        // signing, and bundle writing).
+        if app.session_state == SessionState::Idle && !attestation_pending && query.is_some() {
             if let Some(ref mut handle) = query {
                 if handle.rx.try_recv().is_err() {
                     query = None;
