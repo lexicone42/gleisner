@@ -692,6 +692,9 @@ fn compute_profile_diff(old_toml: &str, new_toml: &str) -> Vec<String> {
 /// The OIDC auth flow runs on a separate thread (with its own tokio runtime)
 /// so `prompt_for_code()` can block without freezing the TUI event loop.
 /// The TUI displays the auth URL and accepts the code via `/cosigncode`.
+///
+/// The two-phase flow (start → code submission) avoids requiring a callback
+/// server, making it work in sandboxed or headless environments.
 struct CosignState {
     /// Send the authorization code to the background OIDC flow.
     code_tx: std::sync::mpsc::Sender<String>,
