@@ -421,6 +421,30 @@ async fn run(
         }
     }
 
+    // Abort any in-flight query task. Dropping a JoinHandle only detaches
+    // the task — it doesn't cancel it. Without an explicit abort, the
+    // run_query future (and its attestation pipeline) keeps the tokio
+    // runtime alive, blocking process exit.
+    if let Some(handle) = query.take() {
+        handle.task.abort();
+    }
+
+    // Clean up the cosign background thread. Dropping `code_tx` unblocks
+    // `prompt_for_code()` (which is waiting on `code_rx.recv()`), causing
+    // the thread to exit. We park briefly to let it finish, but don't
+    // block forever — the sigstore runtime may have lingering HTTP tasks.
+    if let Some(mut cs) = cosign.take() {
+        drop(cs.code_tx);
+        drop(cs.result_rx);
+        if let Some(handle) = cs.thread_handle.take() {
+            // Give the thread a moment to clean up, but don't hang.
+            std::thread::spawn(move || {
+                let _ = handle.join();
+            });
+            std::thread::sleep(Duration::from_millis(200));
+        }
+    }
+
     Ok(())
 }
 
@@ -700,6 +724,8 @@ struct CosignState {
     code_tx: std::sync::mpsc::Sender<String>,
     /// Receive the signing result from the background thread.
     result_rx: std::sync::mpsc::Receiver<CosignResult>,
+    /// Handle for the background signing thread so we can join on exit.
+    thread_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 /// Result of a background cosign operation.
@@ -799,7 +825,7 @@ fn start_cosign(
 
         // Spawn the OIDC + signing flow on a separate thread with its own runtime.
         // This lets prompt_for_code() block without freezing the TUI.
-        std::thread::spawn(move || {
+        let thread_handle = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -898,7 +924,11 @@ fn start_cosign(
             });
         });
 
-        return Some(CosignState { code_tx, result_rx });
+        Some(CosignState {
+            code_tx,
+            result_rx,
+            thread_handle: Some(thread_handle),
+        })
     }
 
     #[cfg(not(feature = "keyless"))]
@@ -943,12 +973,9 @@ impl sigstore_oidc::AuthCallback for TuiAuthCallback {
     fn prompt_for_code(&self) -> std::io::Result<String> {
         // Block this thread until the TUI sends the code via /cosigncode.
         // This runs on a separate thread so it doesn't freeze the TUI.
-        self.code_rx.recv().map_err(|_| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "cosign cancelled — no code received",
-            )
-        })
+        self.code_rx
+            .recv()
+            .map_err(|_| std::io::Error::other("cosign cancelled — no code received"))
     }
 
     fn waiting_for_redirect(&self) {}
