@@ -1,0 +1,25 @@
+[package]
+name = "gleisner-forge"
+version = "0.1.0"
+description = "Incremental Nickel package evaluator with content-addressed store and environment composition"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nickel-lang-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+regex.workspace = true
+petgraph.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

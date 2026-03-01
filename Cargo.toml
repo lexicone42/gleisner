@@ -89,6 +89,11 @@ predicates = "3"
 tempfile = "3"
 proptest = "1"
 
+# Nickel evaluation
+nickel-lang-core = "0.16"
+regex = "1"
+petgraph = "0.7"
+
 # Internal crates
 gleisner-polis = { path = "crates/gleisner-polis" }
 gleisner-introdus = { path = "crates/gleisner-introdus" }
@@ -96,6 +101,7 @@ gleisner-bridger = { path = "crates/gleisner-bridger" }
 gleisner-scapes = { path = "crates/gleisner-scapes" }
 gleisner-lacerta = { path = "crates/gleisner-lacerta" }
 gleisner-tui = { path = "crates/gleisner-tui" }
+gleisner-forge = { path = "crates/gleisner-forge" }
 
 # ──────────────────────────────────────────────────────────────
 # Workspace lint inheritance: ALL lint config goes here.
