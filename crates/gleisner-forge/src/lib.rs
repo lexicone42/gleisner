@@ -2,12 +2,10 @@
 //!
 //! `gleisner-forge` evaluates [minimal.dev](https://minimal.dev) package
 //! declarations one at a time in dependency order, substituting already-evaluated
-//! dependencies as flat JSON via Nickel's `custom_transform` API. Results are
-//! stored in a content-addressed store keyed by `sha256(canonical_json(result))`.
+//! dependencies via Nickel's `custom_transform` API (gominimal fork).
 //!
-//! The composed environment (merged `Attrs` and `Needs` across packages) maps
-//! directly to gleisner's `FilesystemPolicy` and `NetworkPolicy` for sandbox
-//! configuration.
+//! Results are stored in a content-addressed store keyed by
+//! `sha256(canonical_json(result))`.
 //!
 //! # Architecture
 //!
@@ -25,5 +23,4 @@ pub mod compose;
 pub mod dag;
 pub mod error;
 pub mod eval;
-pub mod orchestrate;
 pub mod store;

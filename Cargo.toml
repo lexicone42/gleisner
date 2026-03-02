@@ -90,7 +90,8 @@ tempfile = "3"
 proptest = "1"
 
 # Nickel evaluation
-nickel-lang-core = "0.16"
+nickel-lang-core = "0.17"
+indexmap = "2"
 regex = "1"
 petgraph = "0.7"
 
