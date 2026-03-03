@@ -60,19 +60,40 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
     };
 
     // ── 1. Create namespaces ──────────────────────────────────────
-    // Always isolate: user, mount, IPC (shared memory/semaphores), UTS (hostname).
-    let mut clone_flags = CloneFlags::CLONE_NEWUSER
+    // User, mount, IPC (shared memory/semaphores), UTS (hostname).
+    // CLONE_NEWTIME is included to isolate CLOCK_MONOTONIC/CLOCK_BOOTTIME
+    // — must be combined with CLONE_NEWUSER in the same unshare() call
+    // because time namespace creation requires owning a user namespace.
+    //
+    // The nix crate doesn't expose CLONE_NEWTIME in CloneFlags yet,
+    // so we combine it via raw bits.
+    let mut flags = CloneFlags::CLONE_NEWUSER
         | CloneFlags::CLONE_NEWNS
         | CloneFlags::CLONE_NEWIPC
         | CloneFlags::CLONE_NEWUTS;
     if spec.process.pid_namespace {
-        clone_flags |= CloneFlags::CLONE_NEWPID;
+        flags |= CloneFlags::CLONE_NEWPID;
     }
     if !spec.use_external_netns && matches!(spec.network.default, PolicyDefault::Deny) {
-        clone_flags |= CloneFlags::CLONE_NEWNET;
+        flags |= CloneFlags::CLONE_NEWNET;
     }
 
-    unshare(clone_flags).map_err(|e| format!("unshare failed: {e}"))?;
+    // Add CLONE_NEWTIME via raw bits (not in nix::sched::CloneFlags).
+    // SAFETY: unshare() is a simple kernel call. We pass the combined flags
+    // including CLONE_NEWTIME (0x80) which nix doesn't expose yet.
+    let raw_flags = flags.bits() | nix::libc::CLONE_NEWTIME;
+    let unshare_result = unsafe { nix::libc::unshare(raw_flags) };
+    let has_timens = if unshare_result == 0 {
+        true
+    } else {
+        // Time namespace not available (kernel < 5.6) — retry without it.
+        unshare(flags).map_err(|e| format!("unshare failed: {e}"))?;
+        false
+    };
+
+    if !has_timens {
+        eprintln!("gleisner-sandbox-init: time namespace not available (continuing)");
+    }
 
     // Set a distinctive hostname inside the UTS namespace.
     // Visible in shell prompts and logs — makes it obvious you're sandboxed.
@@ -89,6 +110,24 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
         "gleisner-sandbox-init: uid/gid mapped ({} -> {})",
         spec.uid, spec.uid
     );
+
+    // ── 2b. Time namespace offset ────────────────────────────────
+    // Must be written after UID mapping (procfs requires valid UID),
+    // but before any child process enters the time namespace.
+    // Zeroes CLOCK_MONOTONIC so the sandbox starts at ~0, preventing:
+    // - Timing side-channels (probing host activity via clock deltas)
+    // - Non-deterministic builds (monotonic timestamps in outputs)
+    // - Uptime fingerprinting (host uptime leaking into sandbox)
+    if has_timens {
+        if let Ok(ts) = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC) {
+            let offset = format!("monotonic -{} -{}\n", ts.tv_sec(), ts.tv_nsec());
+            if fs::write("/proc/self/timens_offsets", &offset).is_ok() {
+                eprintln!("gleisner-sandbox-init: time namespace isolated (monotonic zeroed)");
+            } else {
+                eprintln!("gleisner-sandbox-init: time namespace offset write failed (continuing)");
+            }
+        }
+    }
 
     // ── 3. Set up filesystem (bind mounts + pivot_root) ──────────
     setup_filesystem(&spec)?;
@@ -303,16 +342,33 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
     }
 
     // ── Provide /proc and /dev ───────────────────────────────────
+    // Try mounting a new procfs first (works when we own the PID namespace).
+    // If that fails (EPERM — PID namespace takes effect only after fork()),
+    // fall back to bind-mounting the host's /proc.
     let new_proc = new_root.join("proc");
     fs::create_dir_all(&new_proc).ok();
-    mount(
+    let proc_mounted = mount(
         Some("proc"),
         &new_proc,
         Some("proc"),
         MsFlags::empty(),
         None::<&str>,
     )
-    .map_err(|e| format!("mount /proc: {e}"))?;
+    .is_ok();
+    if !proc_mounted {
+        // Bind-mount host /proc — still gives us /proc/self etc.
+        // Use a direct bind without the hardening remount (nosuid/nodev
+        // on procfs causes EPERM in user namespaces).
+        let proc_source = Path::new("/proc");
+        mount(
+            Some(proc_source),
+            &new_proc,
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REC,
+            None::<&str>,
+        )
+        .map_err(|e| format!("bind /proc: {e}"))?;
+    }
 
     setup_minimal_dev(&new_root)?;
 
