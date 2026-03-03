@@ -58,6 +58,20 @@ pub struct ForgeArgs {
     #[arg(long)]
     pub target_config: Option<PathBuf>,
 
+    /// Verify proof artifacts for packages declaring `verified_properties`.
+    /// Requires a Lean 4 binary (auto-detected or via --lean-bin).
+    #[arg(long)]
+    pub verify: bool,
+
+    /// Path to the Lean 4 binary for proof verification.
+    /// If not specified, auto-detected from PATH or ~/.elan/bin/.
+    #[arg(long)]
+    pub lean_bin: Option<PathBuf>,
+
+    /// Fail the pipeline if any proof verification fails (used with --verify).
+    #[arg(long)]
+    pub strict_verify: bool,
+
     /// Also run Claude Code inside a sandbox derived from the composed environment.
     #[arg(long)]
     pub run: bool,
@@ -135,6 +149,71 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         );
     }
 
+    // 1b. Verify proof artifacts (optional)
+    #[allow(unused_assignments)]
+    let mut verification_results = vec![];
+    if args.verify {
+        use gleisner_forge::attest::extract_package_metadata;
+        use gleisner_forge::verify::{VerifyConfig, detect_lean, verify_packages};
+
+        let lean_bin = args.lean_bin.clone().or_else(detect_lean);
+        if lean_bin.is_none() {
+            eprintln!(
+                "forge: --verify requested but no Lean binary found (install elan or pass --lean-bin)"
+            );
+            if args.strict_verify {
+                return Err(eyre!(
+                    "strict verify mode: Lean binary required but not found"
+                ));
+            }
+        }
+
+        let verify_config = VerifyConfig {
+            lean_bin,
+            strict: args.strict_verify,
+            timeout_secs: 300,
+        };
+
+        let metadata: Vec<_> = output
+            .package_results
+            .iter()
+            .map(|(name, json)| extract_package_metadata(name, json))
+            .collect();
+
+        let with_proofs: Vec<_> = metadata
+            .iter()
+            .filter(|m| !m.verified_properties.is_empty())
+            .collect();
+
+        if with_proofs.is_empty() {
+            eprintln!("forge: no packages declare verified_properties, skipping verification");
+        } else {
+            eprintln!(
+                "forge: verifying {} packages with proof artifacts",
+                with_proofs.len()
+            );
+            verification_results = verify_packages(&metadata, &verify_config);
+
+            for vr in &verification_results {
+                let verified = vr.verified_count();
+                let failed = vr.failed_count();
+                let total = vr.results.len();
+                eprintln!(
+                    "forge: {} — {}/{} verified, {} failed",
+                    vr.package_name, verified, total, failed
+                );
+
+                if failed > 0 && args.strict_verify {
+                    return Err(eyre!(
+                        "strict verify: package '{}' has {} failed proof(s)",
+                        vr.package_name,
+                        failed
+                    ));
+                }
+            }
+        }
+    }
+
     // 2. Convert to sandbox policy
     let report = compose_to_policy(&output.environment);
 
@@ -182,8 +261,19 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         },
     });
 
-    let attestation =
+    let mut attestation =
         extract_attestation_with_results(&output, &composed_json, &output.package_results);
+
+    // Apply verification results to attestation metadata
+    if !verification_results.is_empty() {
+        gleisner_forge::verify::apply_verification_results(
+            &mut attestation.package_metadata,
+            &verification_results,
+        );
+        // Recompute verification summary with updated results
+        attestation.verification =
+            gleisner_forge::attest::compute_verification_summary(&attestation.package_metadata);
+    }
 
     let full_json = serde_json::json!({
         "forge": composed_json,

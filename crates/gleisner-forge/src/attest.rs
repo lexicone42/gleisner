@@ -380,7 +380,7 @@ fn parse_verified_property(value: &serde_json::Value) -> Option<VerifiedProperty
 }
 
 /// Compute a [`VerificationSummary`] from collected package metadata.
-fn compute_verification_summary(metadata: &[PackageMetadata]) -> Option<VerificationSummary> {
+pub fn compute_verification_summary(metadata: &[PackageMetadata]) -> Option<VerificationSummary> {
     let mut summary = VerificationSummary::default();
     let mut has_any = false;
 
