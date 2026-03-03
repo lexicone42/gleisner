@@ -39,7 +39,6 @@ pub mod attest;
 pub mod bridge;
 pub mod compose;
 pub mod dag;
-pub mod deploy;
 pub mod error;
 pub mod eval;
 pub mod negotiate;
