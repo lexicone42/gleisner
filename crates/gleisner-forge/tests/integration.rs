@@ -7,7 +7,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use gleisner_forge::attest::{extract_attestation, extract_sources_from_package};
+use gleisner_forge::attest::{
+    extract_attestation_with_results, extract_package_metadata, extract_sources_from_package,
+};
 use gleisner_forge::bridge::compose_to_policy;
 use gleisner_forge::compose::ComposedEnvironment;
 use gleisner_forge::dag::PackageGraph;
@@ -59,7 +61,7 @@ fn full_pipeline_claude_code_like() {
             ),
             (
                 "claude-code",
-                &r#"let base = import "../base/build.ncl" in
+                r#"let base = import "../base/build.ncl" in
 let bash = import "../bash/build.ncl" in
 let glibc = import "../glibc/build.ncl" in
 let ripgrep = import "../ripgrep/build.ncl" in
@@ -86,8 +88,7 @@ let ripgrep = import "../ripgrep/build.ncl" in
   outputs = {
     claude = { glob = "usr/bin/claude" },
   },
-}"#
-                .to_string(),
+}"#,
             ),
         ],
     );
@@ -96,7 +97,7 @@ let ripgrep = import "../ripgrep/build.ncl" in
     let config = ForgeConfig {
         pkgs_dir: pkgs,
         stdlib_dir: tmp.path().join("std"), // Empty — no minimal.ncl needed for plain records
-        store_dir: store_dir,
+        store_dir,
         filter: vec![],
     };
 
@@ -149,7 +150,8 @@ let ripgrep = import "../ripgrep/build.ncl" in
             "network": report.network,
         },
     });
-    let attestation = extract_attestation(&output, &composed_json);
+    let attestation =
+        extract_attestation_with_results(&output, &composed_json, &output.package_results);
 
     // Materials: one per package in the composed env
     assert_eq!(attestation.materials.len(), 5);
@@ -166,6 +168,58 @@ let ripgrep = import "../ripgrep/build.ncl" in
     assert!(!attestation.subjects[0].sha256.is_empty());
 
     assert!(attestation.builder_id.starts_with("gleisner-forge/"));
+
+    // --- Verify package metadata extraction ---
+    // All 5 packages should have metadata (even without source_provenance)
+    assert_eq!(attestation.package_metadata.len(), 5);
+    let cc_meta = attestation
+        .package_metadata
+        .iter()
+        .find(|m| m.name == "claude-code")
+        .expect("claude-code metadata");
+    // claude-code has build_deps with a Source tarball
+    assert!(
+        cc_meta
+            .source_urls
+            .iter()
+            .any(|s| s.uri.contains("claude-code-dist"))
+    );
+    // Fallback PURL since no source_provenance declared
+    assert_eq!(cc_meta.purl, "pkg:generic/minimal.dev/claude-code");
+}
+
+/// Test package metadata extraction with real-ish attrs
+#[test]
+fn package_metadata_with_provenance() {
+    let json = serde_json::json!({
+        "name": "cosign",
+        "attrs": {
+            "upstream_version": "3.0.4",
+            "repology_project": "cosign",
+            "source_provenance": {
+                "category": "GithubRepo",
+                "owner": "sigstore",
+                "repo": "cosign",
+            },
+        },
+        "build_deps": [
+            { "file": "build.sh" },
+            {
+                "url": "gs://minimal-staging-archives/sigstore/cosign/v3.0.4.tar.gz",
+                "sha256": "8096c07e9a3ae21fa600c19cc8ff8c6f15b027184858d0bc0edde5f74589a01a",
+            },
+        ],
+    });
+
+    let meta = extract_package_metadata("cosign", &json);
+    assert_eq!(meta.upstream_version.as_deref(), Some("3.0.4"));
+    assert_eq!(meta.repology_project.as_deref(), Some("cosign"));
+    assert_eq!(meta.purl, "pkg:github/sigstore/cosign@3.0.4");
+    assert_eq!(meta.source_urls.len(), 2); // tarball + pkg://
+    assert_eq!(
+        meta.source_urls[0].sha256,
+        "8096c07e9a3ae21fa600c19cc8ff8c6f15b027184858d0bc0edde5f74589a01a"
+    );
 }
 
 /// Test `extract_sources_from_package` with a claude-code-shaped JSON.

@@ -28,6 +28,11 @@ pub struct ForgeOutput {
     pub elapsed: std::time::Duration,
     /// Path to the content-addressed store.
     pub store_dir: PathBuf,
+    /// Per-package evaluation results (for metadata extraction/attestation).
+    ///
+    /// Keys are package names, values are the full evaluated JSON.
+    /// Only includes successfully evaluated packages.
+    pub package_results: HashMap<String, serde_json::Value>,
 }
 
 /// Configuration for a forge evaluation run.
@@ -86,6 +91,7 @@ pub fn evaluate_packages(config: &ForgeConfig) -> Result<ForgeOutput, ForgeError
 
     // 4. Evaluate in topological order
     let mut json_cache: HashMap<String, serde_json::Value> = HashMap::new();
+    let mut package_results: HashMap<String, serde_json::Value> = HashMap::new();
     let mut composed = ComposedEnvironment::new();
     let mut evaluated = 0usize;
     let mut failed = 0usize;
@@ -122,6 +128,7 @@ pub fn evaluate_packages(config: &ForgeConfig) -> Result<ForgeOutput, ForgeError
                     "package evaluated"
                 );
                 composed.merge_package(&node.name, &result.json);
+                package_results.insert(node.name.clone(), result.json.clone());
                 json_cache.insert(node.name.clone(), flatten_for_injection(&result.json));
                 evaluated += 1;
             }
@@ -157,5 +164,6 @@ pub fn evaluate_packages(config: &ForgeConfig) -> Result<ForgeOutput, ForgeError
         failed_packages,
         elapsed,
         store_dir: config.store_dir.clone(),
+        package_results,
     })
 }
