@@ -5,6 +5,7 @@ Incremental Nickel package evaluator for [minimal.dev](https://minimal.dev) buil
 **Related documents:**
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- overall gleisner architecture
 - [SECURITY.md](SECURITY.md) -- attestation and verification design
+- [VERIFIED-PROPERTIES-SUMMARY.md](../VERIFIED-PROPERTIES-SUMMARY.md) -- proof verification end-to-end walkthrough
 
 ---
 
@@ -14,9 +15,10 @@ Incremental Nickel package evaluator for [minimal.dev](https://minimal.dev) buil
 2. [How It Works](#how-it-works)
 3. [The minimal.dev Integration](#the-minimaldev-integration)
 4. [Content-Addressed Evaluation](#content-addressed-evaluation)
-5. [Performance](#performance)
-6. [Crate Structure](#crate-structure)
-7. [Usage](#usage)
+5. [Proof Verification](#proof-verification)
+6. [Performance](#performance)
+7. [Crate Structure](#crate-structure)
+8. [Usage](#usage)
 
 ---
 
@@ -148,6 +150,45 @@ Build execution           <-- build system runs commands
 Build artifacts           <-- content-addressed in Nix store
 ```
 
+## Proof Verification
+
+Packages can declare `verified_properties` in their `attrs`, linking to formal proofs checked by an external proof kernel. When `gleisner forge --verify` is passed, the forge:
+
+1. Identifies packages with `verified_properties` in their evaluated output
+2. Clones proof repositories from `proof_uri` fields
+3. Runs `lake build` (Lean 4 C++ kernel) to type-check all proofs
+4. Optionally runs `lean4export` + `nanoda_bin` (independent Rust kernel) for dual-kernel verification
+5. Records per-property results in the attestation output
+
+### Dual-Kernel Verification
+
+When both `lean4export` and `nanoda_bin` are available, the forge performs independent verification with two kernel implementations:
+
+- **Lean C++ kernel** (`lake build`) -- the reference type checker
+- **nanoda Rust kernel** (`lean4export` → NDJSON → `nanoda_bin`) -- an independent re-implementation
+
+Properties verified by both kernels are reported as `DualVerified`. Agreement between two independent implementations is a stronger trust signal than single-kernel verification.
+
+### Verification Results
+
+Results flow into the attestation as `VerifiedProperty` structs with:
+
+| Field | Description |
+|---|---|
+| `property` | Property name (e.g., `zlib_roundtrip`) |
+| `proof_system` | Proof system used (e.g., `lean4`) |
+| `kernel_version` | Kernel version string |
+| `specification_hash` | SHA-256 of the specification |
+| `proof_hash` | SHA-256 of the proof artifact |
+| `verified_by_forge` | `true` (verified), `false` (failed), or `null` (unchecked) |
+| `dual_verified` | `true` if both kernels independently verified |
+
+A `VerificationSummary` reports aggregate counts: total, verified, failed, unchecked, and dual-verified.
+
+### Graceful Degradation
+
+If the Lean binary is not available, verification is skipped with a warning. If nanoda fails (e.g., unsupported axioms), the pipeline falls back to single-kernel `Verified` status. If `--strict-verify` is passed, any failure is a hard error.
+
 ## Performance
 
 Upstream nickel-lang-core 0.17 (no fork dependency):
@@ -172,47 +213,62 @@ crates/gleisner-forge/
 |   +-- dag.rs          -- PackageGraph, topological sort from import analysis
 |   +-- store.rs        -- Content-addressed JSON store (SHA-256)
 |   +-- compose.rs      -- ComposedEnvironment from merged package results
+|   +-- orchestrate.rs  -- ForgeConfig, evaluate_packages (top-level entry point)
+|   +-- bridge.rs       -- BridgeReport, compose_to_policy (forge→sandbox translation)
+|   +-- attest.rs       -- ForgeAttestation, package metadata extraction, verification summary
+|   +-- verify.rs       -- Lean 4 proof verification, dual-kernel (lean4export + nanoda)
+|   +-- negotiate.rs    -- Capability negotiation between package needs and profile rules
+|   +-- deploy.rs       -- Deployment helpers (store layout, output paths)
 |   +-- error.rs        -- ForgeError type
-+-- examples/
-|   +-- eval_minimal.rs -- Full 226-package benchmark runner
++-- tests/
+|   +-- integration.rs  -- Integration tests for orchestration pipeline
 +-- Cargo.toml
 ```
 
 ## Usage
 
-### Full Package Evaluation
+### CLI (`gleisner forge`)
+
+The primary interface for forge evaluation:
 
 ```bash
-cargo run -p gleisner-forge --example eval_minimal --release -- \
-    /path/to/minimal-pkgs \
-    /path/to/minimal-std
-```
+# Evaluate all packages, write composed environment
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/
 
-### Single Package (via environment variable)
+# Evaluate with proof verification
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify
 
-```bash
-FORGE_PKG=gcc cargo run -p gleisner-forge --example eval_minimal --release -- \
-    /path/to/minimal-pkgs \
-    /path/to/minimal-std
+# Dual-kernel verification (Lean C++ + nanoda Rust)
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify \
+  --lean4export-bin ~/.elan/bin/lean4export \
+  --nanoda-bin ~/.cargo/bin/nanoda_bin
+
+# Dry run (JSON to stdout, no files written)
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify --dry-run
+
+# Evaluate and run Claude Code in a composed sandbox
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --run
+
+# Evaluate specific packages only
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --packages gcc,zlib
 ```
 
 ### Programmatic
 
 ```rust
-use gleisner_forge::eval::{EvalContext, eval_package};
-use gleisner_forge::dag::PackageGraph;
-use gleisner_forge::store::Store;
+use gleisner_forge::orchestrate::{ForgeConfig, evaluate_packages};
+use gleisner_forge::bridge::compose_to_policy;
 
-let graph = PackageGraph::from_directory(&pkgs_dir)?;
-let order = graph.topological_order()?;
-let store = Store::new(&store_dir)?;
-let mut ctx = EvalContext::new(&[stdlib_dir.as_path()])?;
-ctx.register_packages_dir(&pkgs_dir)?;
+let config = ForgeConfig {
+    pkgs_dir: "packages/".into(),
+    stdlib_dir: "stdlib/".into(),
+    store_dir: ".gleisner/forge-store".into(),
+    filter: vec![],
+};
 
-for node in &order {
-    let dep_results = /* collect pre-evaluated deps */;
-    let result = eval_package(&node.build_file, &dep_results, &store, &ctx)?;
-    // result.json -- the fully evaluated package
-    // result.store_ref.hash -- content-addressed key
-}
+let output = evaluate_packages(&config)?;
+let report = compose_to_policy(&output.environment);
+// report.filesystem -- sandbox bind-mount rules
+// report.network -- DNS/internet policy
+// report.credential_paths -- paths excluded from mounts
 ```

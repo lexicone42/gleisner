@@ -141,6 +141,14 @@ gleisner learn --kernel-audit-log /var/log/gleisner/landlock-audit.log
 
 # Generate a Software Bill of Materials
 gleisner sbom --json --output sbom.json
+
+# Evaluate minimal.dev packages and verify proofs
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify --dry-run
+
+# Forge with dual-kernel verification (Lean C++ + nanoda Rust)
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify \
+  --lean4export-bin ~/.elan/bin/lean4export \
+  --nanoda-bin ~/.cargo/bin/nanoda_bin
 ```
 
 ## Sandbox Layers
@@ -249,27 +257,28 @@ All rules are opt-in. Absent fields are skipped, not failed.
 ## Architecture
 
 ```
-                 +--────────────+     +──────────────+
+                 +──────────────+     +──────────────+
                  | gleisner-cli |     | gleisner-tui |
                  +──────┬───────+     +──────┬───────+
                         |                    |
-          +----------+--+--------------------+--+----------+
-          v          v            v              v          v
-    +-----------+ +----------+ +-----------+ +----------+ +--------+
-    |   polis   | | introdus | |  lacerta  | | bridger  | | scapes |
-    | (sandbox) | | (attest) | | (verify)  | |  (SBOM)  | |(events)|
-    +-----------+ +----------+ +-----------+ +----------+ +--------+
-          |
-    +---------------+
-    | sandbox-init  |  Container runtime (namespaces, mounts, Landlock)
-    +---------------+
+     +--------+---------+--------------------+--+----------+
+     v        v         v            v          v          v
+  +-------+ +-------+ +----------+ +--------+ +--------+ +--------+
+  | polis | | forge | | introdus | | lacerta| | bridger| | scapes |
+  |(sbox) | |(pkgs) | | (attest) | |(verify)| | (SBOM) | |(events)|
+  +-------+ +-------+ +----------+ +--------+ +--------+ +--------+
+     |
+  +---------------+
+  | sandbox-init  |  Container runtime (namespaces, mounts, Landlock)
+  +---------------+
 ```
 
 | Crate | Role |
 |-------|------|
-| `gleisner-cli` | CLI: `wrap`, `record`, `verify`, `inspect`, `diff`, `sbom`, `learn` |
+| `gleisner-cli` | CLI: `wrap`, `record`, `verify`, `inspect`, `diff`, `sbom`, `learn`, `forge` |
 | `gleisner-tui` | Interactive TUI with security dashboard, slash commands, attestation recording |
 | `gleisner-polis` | Sandbox: namespaces, Landlock V7, cgroups/rlimits, inotify, pasta networking, profile learning |
+| `gleisner-forge` | Forge: Nickel package evaluator for minimal.dev, proof verification (Lean 4 + nanoda dual-kernel), attestation metadata |
 | `gleisner-introdus` | Attestation: in-toto v1 statements, ECDSA P-256 + Sigstore signing, chain linking |
 | `gleisner-lacerta` | Verification: signature checking, digest verification, policy engine (JSON + WASM/OPA) |
 | `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.5 JSON |
@@ -283,6 +292,7 @@ All rules are opt-in. Absent fields are skipped, not failed.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System architecture, data flows, crate responsibilities, design decisions |
 | [docs/SECURITY.md](docs/SECURITY.md) | Cryptographic design, key management, policy engine, hardening checklist |
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Threat actors, attack surfaces, LACERTA scenarios, mitigations matrix |
+| [docs/FORGE.md](docs/FORGE.md) | Forge: Nickel package evaluation, proof verification, minimal.dev integration |
 | [docs/RUST_PATTERNS.md](docs/RUST_PATTERNS.md) | Rust patterns and idioms in the codebase (learning guide) |
 
 ## Contributing

@@ -5,6 +5,8 @@ Supply chain security for Claude Code sessions. Sandbox every action, attest eve
 Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligence housed in constrained physical bodies. The metaphor is precise: Claude Code is a software intelligence; Gleisner gives it a constrained body (sandbox) and an unforgeable record of everything it did (attestation chain).
 
 **Related documents:**
+- [FORGE.md](FORGE.md) -- Nickel package evaluation, proof verification,
+  minimal.dev integration
 - [SECURITY.md](SECURITY.md) -- cryptographic design, key management, policy
   engine usage, supply chain hardening, security checklist
 - [THREAT_MODEL.md](THREAT_MODEL.md) -- threat actors, attack surface analysis,
@@ -58,6 +60,7 @@ The project is a Cargo workspace with eight crates. All version numbers and lint
 | `gleisner-introdus` | Attestation creation. In-toto statement assembly, ECDSA P-256 signing, chain discovery, git state capture, Claude Code context capture, session recording. | `InTotoStatement`, `GleisnerProvenance`, `AttestationBundle`, `LocalSigner`, `ChainLink` |
 | `gleisner-lacerta` | Verification. Signature verification (local key + Sigstore), digest checking, policy evaluation (builtin JSON + WASM/OPA), chain walking. | `Verifier`, `VerificationReport`, `BuiltinPolicy`, `WasmPolicy` |
 | `gleisner-scapes` | Event infrastructure. Audit event types, broadcast channel event bus, JSONL audit log writer. | `EventBus`, `EventPublisher`, `AuditEvent`, `EventKind`, `JsonlWriter` |
+| `gleisner-forge` | Nickel package evaluation for minimal.dev. Content-addressed evaluation, topological dependency ordering, sandbox policy composition, Lean 4 proof verification (single and dual-kernel via nanoda), attestation metadata extraction. | `ForgeConfig`, `EvalContext`, `ComposedEnvironment`, `VerifyConfig`, `PackageVerification` |
 | `gleisner-bridger` | SBOM generation. Cargo.lock parsing, CycloneDX 1.5 JSON output. | `Sbom`, `Component` |
 
 ### Dependency Graph
@@ -68,12 +71,14 @@ graph TD
     TUI[gleisner-tui]
     POLIS[gleisner-polis]
     SINIT[gleisner-sandbox-init]
+    FORGE[gleisner-forge]
     INTRODUS[gleisner-introdus]
     LACERTA[gleisner-lacerta]
     SCAPES[gleisner-scapes]
     BRIDGER[gleisner-bridger]
 
     CLI --> POLIS
+    CLI --> FORGE
     CLI --> INTRODUS
     CLI --> LACERTA
     CLI --> SCAPES
@@ -96,6 +101,7 @@ graph TD
     style TUI fill:#e3f2fd,stroke:#1565c0
     style POLIS fill:#fff3e0,stroke:#ef6c00
     style SINIT fill:#fff3e0,stroke:#ef6c00
+    style FORGE fill:#e0f7fa,stroke:#00838f
     style INTRODUS fill:#fce4ec,stroke:#c62828
     style LACERTA fill:#f3e5f5,stroke:#6a1b9a
     style BRIDGER fill:#f1f8e9,stroke:#558b2f

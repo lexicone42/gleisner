@@ -21,6 +21,11 @@ idioms -- not textbook exercises. They solve real problems.
 8. [Drop Guards for Resource Cleanup](#8-drop-guards-for-resource-cleanup)
 9. [Clippy Pedantic as a Teaching Tool](#9-clippy-pedantic-as-a-teaching-tool)
 10. [The Builder-ish Config Pattern](#10-the-builder-ish-config-pattern)
+11. [Content-Addressed Stores](#11-content-addressed-stores)
+12. [Graceful Degradation Chains](#12-graceful-degradation-chains)
+13. [Fork-Before-Exec for Namespace Entry](#13-fork-before-exec-for-namespace-entry)
+14. [Extending Bitflags with Raw Bits](#14-extending-bitflags-with-raw-bits)
+15. [cfg-Gated Platform Abstraction](#15-cfg-gated-platform-abstraction)
 
 ---
 
@@ -777,6 +782,406 @@ setting specific fields. This is the "open by default, restrictive by
 configuration" pattern.
 
 **Rust docs:** [Default trait](https://doc.rust-lang.org/std/default/trait.Default.html), [Struct update syntax](https://doc.rust-lang.org/book/ch05-01-defining-structs.html#creating-instances-from-other-instances-with-struct-update-syntax)
+
+---
+
+## 11. Content-Addressed Stores
+
+**What it is:** Storing data by the hash of its content, so identical data always
+maps to the same location and lookups are O(1).
+
+**Why it matters:** Gleisner-forge evaluates 226 Nickel packages and stores each
+result as canonical JSON. The hash of the content is the directory name in the
+store -- identical evaluations produce the same hash, making `put` idempotent.
+This is the same idea behind Nix's `/nix/store` and Git's object database.
+
+From `store.rs`:
+
+### BTreeMap key normalization
+
+```rust
+/// Recursively sort all object keys in a JSON value.
+fn sort_json_keys(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let sorted: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), sort_json_keys(v)))
+                .collect::<std::collections::BTreeMap<_, _>>()
+                .into_iter()
+                .collect();
+            serde_json::Value::Object(sorted)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(sort_json_keys).collect())
+        }
+        other => other.clone(),
+    }
+}
+```
+
+The problem: `serde_json::Map` preserves insertion order. `{"a":1,"b":2}` and
+`{"b":2,"a":1}` are logically identical but serialize to different strings and
+produce different hashes.
+
+The solution: collect into a `BTreeMap` (which sorts by key), then convert back
+to a `serde_json::Map`. The two-step `.collect::<BTreeMap<_,_>>().into_iter().collect()`
+is the canonical Rust idiom for "sort a map's keys through the stdlib." Applied
+recursively, it normalizes all nested objects too.
+
+### Idempotent put
+
+```rust
+pub fn put(&self, json: &serde_json::Value) -> Result<StoreRef, StoreError> {
+    let hash = Self::content_hash(json);
+    let entry_dir = self.root.join(&hash);
+    let result_path = entry_dir.join("result.json");
+
+    if result_path.exists() {
+        tracing::debug!(hash = %hash, "store hit — already exists");
+        return Ok(StoreRef { hash });
+    }
+
+    // ... create directory and write file
+    Ok(StoreRef { hash })
+}
+```
+
+The existence check uses the filesystem as the database. No locks, no indices --
+if the path exists, the content is already there. This works because the hash
+is deterministic: same content always produces the same path.
+
+The test that validates the key insight:
+
+```rust
+#[test]
+fn different_key_order_same_hash() {
+    let j1: serde_json::Value = serde_json::from_str(r#"{"a": 1, "b": 2}"#).unwrap();
+    let j2: serde_json::Value = serde_json::from_str(r#"{"b": 2, "a": 1}"#).unwrap();
+    assert_eq!(Store::content_hash(&j1), Store::content_hash(&j2));
+}
+```
+
+**Rust docs:** [BTreeMap](https://doc.rust-lang.org/std/collections/struct.BTreeMap.html), [sha2 crate](https://docs.rs/sha2)
+
+---
+
+## 12. Graceful Degradation Chains
+
+**What it is:** Trying multiple strategies in order and using the first one that
+works, rather than hard-failing on the first attempt.
+
+**Why it matters:** Linux systems are diverse. Different init systems (systemd,
+OpenRC, none), different kernel versions (5.6+ for time namespaces, 6.3+ for
+Landlock V3), different cgroup delegation setups. Code that hard-codes one path
+fails on most systems. Graceful degradation tries the best option first and
+falls back to progressively simpler alternatives.
+
+### Candidate list pattern
+
+From `resource.rs`, discovering a writable cgroup base:
+
+```rust
+fn discover_cgroup_base() -> Result<PathBuf, SandboxError> {
+    let uid = nix::unistd::getuid();
+    let username = nix::unistd::User::from_uid(uid)
+        .ok()
+        .flatten()
+        .map(|u| u.name);
+
+    let mut candidates: Vec<PathBuf> = Vec::new();
+
+    if let Some(ref name) = username {
+        // 1. Gleisner-dedicated
+        candidates.push(PathBuf::from(CGROUP_ROOT).join(format!("gleisner.{name}")));
+        // 2. OpenRC/elogind
+        candidates.push(PathBuf::from(CGROUP_ROOT).join(format!("openrc.user.{name}")));
+    }
+    // 3. systemd user slice
+    candidates.push(
+        PathBuf::from(CGROUP_ROOT)
+            .join("user.slice")
+            .join(format!("user-{uid}.slice")),
+    );
+    // 4. Direct root
+    candidates.push(PathBuf::from(CGROUP_ROOT));
+
+    for candidate in &candidates {
+        if candidate.is_dir() && is_writable(candidate) {
+            return Ok(candidate.clone());
+        }
+    }
+
+    Err(SandboxError::CgroupError { /* ... */ })
+}
+```
+
+The structure: build a `Vec<candidates>` in priority order, iterate them, return
+the first that passes a predicate. The error message at the bottom lists all
+tried paths -- essential for debugging.
+
+### The writability probe
+
+```rust
+fn is_writable(path: &std::path::Path) -> bool {
+    let probe = path.join(".gleisner-probe");
+    if std::fs::create_dir(&probe).is_ok() {
+        let _ = std::fs::remove_dir(&probe);
+        true
+    } else {
+        false
+    }
+}
+```
+
+Checking `is_writable` without parsing permission bits or `/proc/self/mountinfo`.
+The probe creates a temporary directory and immediately removes it -- if the
+kernel allows it, the path is writable. This is more reliable than stat-based
+checks because cgroup delegation rules are complex and not reflected in mode bits.
+
+### Chained `is_ok() ||`
+
+From `runtime.rs`, mounting `/proc` in the forked child:
+
+```rust
+let proc_remounted = mount(Some("proc"), "/proc", Some("proc"),
+    MsFlags::empty(), Some("hidepid=2")).is_ok()
+    || mount(Some("proc"), "/proc", Some("proc"),
+        MsFlags::empty(), None::<&str>).is_ok();
+```
+
+Try `hidepid=2` first (hides other users' processes). If the kernel rejects it
+(`EPERM` due to PID namespace mismatch), fall back to plain procfs. The `||`
+short-circuits: if the first mount succeeds, the second is never attempted.
+
+**Rust docs:** [Iterator::find](https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.find), [Short-circuit evaluation](https://doc.rust-lang.org/reference/expressions/operator-expr.html#lazy-boolean-operators)
+
+---
+
+## 13. Fork-Before-Exec for Namespace Entry
+
+**What it is:** Using `fork()` + the Unix `exec()` method instead of
+`Command::new().spawn()` when the child must enter a different Linux namespace
+than the parent.
+
+**Why it matters:** `unshare(CLONE_NEWPID | CLONE_NEWTIME)` does not move the
+calling process into the new namespace. It creates the namespace and arranges for
+*children* to enter it. This is a fundamental Linux API constraint -- you must
+fork to observe the effect. The parent stays behind, waits, and propagates the
+child's exit status.
+
+From `runtime.rs`:
+
+```rust
+fn fork_and_exec(inner_command: &[String]) -> Result<(), String> {
+    use nix::sys::wait::{WaitStatus, waitpid};
+    use nix::unistd::{ForkResult, fork};
+
+    // SAFETY: fork() is safe here because we're single-threaded at this point.
+    match unsafe { fork() } {
+        Ok(ForkResult::Child) => {
+            // Child: now in the new time/PID namespace.
+            // Remount /proc, close inherited FDs, sanitize env, then exec.
+            let program = &inner_command[0];
+            let mut cmd = Command::new(program);
+            cmd.args(&inner_command[1..]);
+            cmd.env_clear();
+            // ... selective env passthrough ...
+            let err = cmd.exec();
+            // exec() only returns on error (see below)
+            eprintln!("gleisner-sandbox-init: failed to exec: {err}");
+            std::process::exit(127);
+        }
+        Ok(ForkResult::Parent { child }) => {
+            loop {
+                match waitpid(child, None) {
+                    Ok(WaitStatus::Exited(_, code)) => {
+                        std::process::exit(code);
+                    }
+                    Ok(WaitStatus::Signaled(_, sig, _)) => {
+                        // POSIX convention: 128 + signal number
+                        std::process::exit(128 + sig as i32);
+                    }
+                    Ok(_) => continue, // stopped/continued — keep waiting
+                    Err(e) => return Err(format!("waitpid failed: {e}")),
+                }
+            }
+        }
+        Err(e) => Err(format!("fork failed: {e}")),
+    }
+}
+```
+
+Key details:
+
+- **`cmd.exec()`** uses `std::os::unix::process::CommandExt::exec()`, which calls
+  `execve()` and replaces the current process image. Unlike `cmd.spawn()`, it does
+  *not* create a grandchild. It only returns if the call fails.
+- **`128 + sig`** is the POSIX convention for signal death. Shells use this: if a
+  process is killed by SIGTERM (15), the exit code is 143.
+- **`waitpid` loop** handles `Stopped` and `Continued` status (from job control
+  signals like SIGTSTP) by continuing the loop, only exiting on terminal states.
+- The `unsafe { fork() }` block is safe because the process is single-threaded
+  at this point -- no tokio runtime, no thread pools. Fork in a multi-threaded
+  process is undefined behavior in POSIX (mutexes in the child may be permanently
+  locked).
+
+### FD hygiene after fork
+
+```rust
+fn close_inherited_fds() {
+    let fds_to_close: Vec<i32> = if let Ok(entries) = fs::read_dir("/proc/self/fd") {
+        entries
+            .flatten()
+            .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+            .filter(|&fd| fd > 2)
+            .collect()
+    } else {
+        (3..1024).collect() // fallback: brute-force range
+    };
+    for fd in fds_to_close {
+        unsafe { nix::libc::close(fd); }
+    }
+}
+```
+
+Enumerate open FDs via `/proc/self/fd` (fast, accurate) with a brute-force
+fallback for systems where `/proc` is not yet mounted. The `.flatten()` silently
+skips entries that fail to read (e.g., the directory FD itself may change
+during iteration). Only FDs > 2 are closed -- stdin/stdout/stderr must survive.
+
+**Rust docs:** [CommandExt::exec](https://doc.rust-lang.org/std/os/unix/process/trait.CommandExt.html#tymethod.exec), [nix::unistd::fork](https://docs.rs/nix/latest/nix/unistd/fn.fork.html)
+
+---
+
+## 14. Extending Bitflags with Raw Bits
+
+**What it is:** Using `.bits()` to extract the raw integer from a typed bitflags
+enum, OR-ing in a constant that the library does not yet expose, and passing the
+raw value to a libc function directly.
+
+**Why it matters:** Crate ecosystems lag kernel features. The `nix` crate's
+`CloneFlags` may not include `CLONE_NEWTIME` (added in Linux 5.6) even though
+the kernel supports it. Rather than forking or vendoring the crate, you can
+escape the type system for exactly one constant and stay typed for everything
+else.
+
+From `runtime.rs`:
+
+```rust
+let mut flags = CloneFlags::CLONE_NEWUSER
+    | CloneFlags::CLONE_NEWNS
+    | CloneFlags::CLONE_NEWIPC
+    | CloneFlags::CLONE_NEWUTS;
+if spec.process.pid_namespace {
+    flags |= CloneFlags::CLONE_NEWPID;
+}
+
+// Add CLONE_NEWTIME via raw bits (not in nix::sched::CloneFlags).
+let raw_flags = flags.bits() | nix::libc::CLONE_NEWTIME;
+let unshare_result = unsafe { nix::libc::unshare(raw_flags) };
+let has_timens = if unshare_result == 0 {
+    true
+} else {
+    // Time namespace not available (kernel < 5.6) — retry without it.
+    unshare(flags).map_err(|e| format!("unshare failed: {e}"))?;
+    false
+};
+```
+
+The approach:
+
+1. **Stay typed** for all flags the library knows: `CloneFlags::CLONE_NEWUSER |
+   CloneFlags::CLONE_NEWNS | ...`. The compiler ensures valid combinations.
+2. **Escape to raw** only for the missing constant: `.bits() | CLONE_NEWTIME`.
+   The `bits()` method is provided by the `bitflags!` macro on all bitflag types.
+3. **Call libc directly** for the raw-bits path: `unsafe { libc::unshare(raw_flags) }`.
+4. **Feature-detect** the result: if the kernel rejects the flag, retry without
+   it. This means the code works on kernels both before and after 5.6.
+
+This is the correct escalation pattern for extending typed wrappers: don't fork
+the library, don't suppress types entirely -- drop to raw bits at the narrowest
+possible point and document why.
+
+**Rust docs:** [bitflags crate](https://docs.rs/bitflags), [nix::libc](https://docs.rs/nix/latest/nix/libc/)
+
+---
+
+## 15. cfg-Gated Platform Abstraction
+
+**What it is:** Using `#[cfg(target_os = "linux")]` to conditionally compile
+entire modules, keeping the crate compilable on all platforms while restricting
+Linux-specific functionality to Linux.
+
+**Why it matters:** Gleisner's sandbox uses Linux-only APIs (namespaces, Landlock,
+cgroups, nftables). But profile resolution, the learner, filesystem monitoring,
+and utilities are portable. Gating modules at the `mod` declaration level means
+`cargo check` works on macOS (for IDE support, CI matrix testing) while the
+Linux-only code is simply absent from the build.
+
+From `gleisner-polis/src/lib.rs`:
+
+```rust
+// ── Portable (always compiled) ──────────────────────────────────────
+pub mod error;
+pub mod fs_monitor;
+pub mod learner;
+pub mod monitor;
+pub mod policy;
+pub mod profile;
+mod util;
+
+// ── Linux-only ──────────────────────────────────────────────────────
+#[cfg(target_os = "linux")]
+pub mod audit_log;
+#[cfg(target_os = "linux")]
+mod landlock;
+#[cfg(target_os = "linux")]
+mod namespace;
+#[cfg(target_os = "linux")]
+pub mod netfilter;
+#[cfg(target_os = "linux")]
+pub mod resource;
+#[cfg(target_os = "linux")]
+mod sandbox;
+
+// ── Portable re-exports ─────────────────────────────────────────────
+pub use profile::{Profile, resolve_profile};
+pub use util::{build_claude_inner_command, expand_tilde, resolve_claude_bin};
+
+// ── Linux-only re-exports ───────────────────────────────────────────
+#[cfg(target_os = "linux")]
+pub use netfilter::{NamespaceHandle, NetworkFilter, TapHandle};
+#[cfg(target_os = "linux")]
+pub use resource::CgroupScope;
+```
+
+The same pattern extends to CLI commands. From `forge.rs`:
+
+```rust
+#[cfg(target_os = "linux")]
+pub async fn execute(args: ForgeArgs) -> Result<()> {
+    // ... full implementation ...
+}
+
+#[cfg(not(target_os = "linux"))]
+pub async fn execute(_args: ForgeArgs) -> Result<()> {
+    color_eyre::eyre::bail!("gleisner forge requires Linux")
+}
+```
+
+Key details:
+
+- **Module-level gating** (`#[cfg] mod name;`) prevents the compiler from even
+  *parsing* the module on non-Linux platforms. This means Linux-only imports
+  (like `nix::sched::CloneFlags`) do not cause compile errors on macOS.
+- **Re-export gating** ensures downstream crates that use `gleisner_polis::CgroupScope`
+  get a clear compile error rather than a confusing "module not found."
+- **Stub functions** with `#[cfg(not(target_os = "linux"))]` provide a helpful
+  runtime error message. The `_args` underscore prefix avoids "unused variable"
+  warnings while making it clear the parameter is intentionally ignored.
+
+**Rust docs:** [Conditional compilation](https://doc.rust-lang.org/reference/conditional-compilation.html), [cfg attribute](https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg-attribute)
 
 ---
 

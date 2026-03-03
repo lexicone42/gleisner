@@ -54,6 +54,20 @@ in the attestation's `gleisner:auditLogDigest` field, cryptographically binding
 the audit trail to the signed statement. Post-hoc verification confirms that the
 log has not been truncated or modified.
 
+### 1.4 Proof Verification (Optional)
+
+When packages declare `verified_properties`, `gleisner-forge` can invoke
+external proof kernels to verify mathematical correctness guarantees:
+
+- **Lean 4 C++ kernel** (`lake build`) -- the reference type checker
+- **nanoda Rust kernel** (`lean4export` + `nanoda_bin`) -- independent
+  re-implementation for dual-kernel verification
+
+Verification results are embedded in the attestation's `package_metadata` as
+`VerifiedProperty` structs, enabling policies that require proof coverage for
+specific package categories (e.g., cryptographic libraries). See
+[FORGE.md](FORGE.md#proof-verification) for details.
+
 ---
 
 ## 2. Cryptographic Design
@@ -347,14 +361,22 @@ supply chain attacks that exploit version ranges.
 
 All dependency versions are centralized in the workspace `Cargo.toml` under
 `[workspace.dependencies]`. Individual crate `Cargo.toml` files use
-`dep.workspace = true` only. This prevents version drift across the five
-internal crates and ensures a single point of audit for version updates.
+`dep.workspace = true` only. This prevents version drift across the nine
+workspace crates (`gleisner-cli`, `gleisner-tui`, `gleisner-polis`,
+`gleisner-forge`, `gleisner-introdus`, `gleisner-lacerta`, `gleisner-bridger`,
+`gleisner-scapes`, `gleisner-sandbox-init`) and ensures a single point of audit
+for version updates.
 
 ### 7.4 `unsafe_code = "forbid"`
 
 The workspace lint configuration sets `unsafe_code = "forbid"`, meaning no
-`unsafe` block can appear in any Gleisner crate. This eliminates memory
+`unsafe` block can appear in any Gleisner library crate. This eliminates memory
 corruption vulnerabilities in Gleisner's own code.
+
+**Exception:** `gleisner-sandbox-init` uses `nix` crate syscall wrappers
+(namespace creation, mount operations, pivot_root) which involve unsafe
+internally. The crate itself does not contain `unsafe` blocks — the unsafety
+is encapsulated by `nix`.
 
 Note: this lint applies only to Gleisner's source. Dependencies such as
 `aws-lc-rs`, `nix`, `wasmtime`, and `landlock` use `unsafe` internally
