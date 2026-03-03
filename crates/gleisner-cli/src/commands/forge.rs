@@ -62,6 +62,7 @@ pub struct ForgeArgs {
 #[cfg(target_os = "linux")]
 #[allow(clippy::unused_async)]
 pub async fn execute(args: ForgeArgs) -> Result<()> {
+    use gleisner_forge::attest::extract_attestation;
     use gleisner_forge::bridge::compose_to_policy;
     use gleisner_forge::orchestrate::{ForgeConfig, evaluate_packages};
 
@@ -168,8 +169,21 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         },
     });
 
-    std::fs::write(&output_path, serde_json::to_string_pretty(&composed_json)?)?;
-    eprintln!("forge: wrote {}", output_path.display());
+    // 4b. Extract attestation data (materials + subjects)
+    let attestation = extract_attestation(&output, &composed_json);
+
+    let full_json = serde_json::json!({
+        "forge": composed_json,
+        "attestation": attestation,
+    });
+
+    std::fs::write(&output_path, serde_json::to_string_pretty(&full_json)?)?;
+    eprintln!(
+        "forge: wrote {} ({} materials, {} subjects)",
+        output_path.display(),
+        attestation.materials.len(),
+        attestation.subjects.len(),
+    );
 
     // 5. Optionally run Claude Code in the composed sandbox
     if args.run {

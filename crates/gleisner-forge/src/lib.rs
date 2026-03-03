@@ -35,6 +35,7 @@
 //! println!("{} packages, {} dirs", output.evaluated, output.environment.dir_mappings.len());
 //! ```
 
+pub mod attest;
 pub mod bridge;
 pub mod compose;
 pub mod dag;
