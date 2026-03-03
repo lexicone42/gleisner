@@ -661,7 +661,7 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
     // ── Sandbox indicator ──
     let sandbox_span = if sec.sandbox_active {
         Span::styled(
-            "\u{25CF} bwrap",
+            "\u{25CF} sandbox",
             Style::default().fg(CONDUIT).add_modifier(Modifier::BOLD),
         )
     } else {

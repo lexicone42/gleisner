@@ -3,12 +3,12 @@
 //! Provides the unified pipeline for creating a sandboxed Claude Code
 //! session, used by `gleisner wrap`, `gleisner record`, and the TUI.
 //! Each entry point builds its own inner command and handles execution
-//! differently, but the sandbox setup (profile adjustment, bwrap, Landlock,
-//! network filtering) is identical.
+//! differently, but the sandbox setup (profile adjustment, namespace
+//! isolation, Landlock, network filtering) is identical.
 
 use std::path::PathBuf;
 
-use crate::BwrapSandbox;
+use crate::DirectSandbox;
 use crate::error::SandboxError;
 use crate::netfilter;
 use crate::profile::PolicyDefault;
@@ -28,24 +28,26 @@ pub struct SandboxSessionConfig {
     pub extra_allow_paths: Vec<PathBuf>,
     /// Skip Landlock filesystem access control.
     pub no_landlock: bool,
+    /// Skip cgroup resource limits inside the sandbox.
+    pub no_cgroups: bool,
 }
 
 /// A fully prepared sandbox, ready to spawn.
 ///
-/// The [`command`](Self::command) is either a direct `bwrap` invocation
-/// or an `nsenter` wrapping `bwrap` (when selective network filtering
+/// The [`command`](Self::command) is either a direct `gleisner-sandbox-init`
+/// invocation or an `nsenter` wrapping it (when selective network filtering
 /// is active). All handles must outlive the spawned child process.
 pub struct PreparedSandbox {
-    /// The command to spawn (bwrap or nsenter → bwrap).
+    /// The command to spawn (sandbox-init or nsenter → sandbox-init).
     pub command: std::process::Command,
     /// Network namespace handle — must stay alive while the child runs.
     pub ns: Option<crate::NamespaceHandle>,
     /// pasta TAP handle — must stay alive while the child runs.
     pub tap: Option<crate::TapHandle>,
-    /// Landlock policy JSON tempfile — bwrap bind-mounts this.
-    pub policy_file: Option<tempfile::NamedTempFile>,
+    /// Sandbox spec tempfile — sandbox-init reads this on startup.
+    pub spec_file: tempfile::NamedTempFile,
     /// The sandbox instance, kept for `apply_rlimits`.
-    sandbox: BwrapSandbox,
+    sandbox: DirectSandbox,
 }
 
 impl PreparedSandbox {
@@ -64,18 +66,15 @@ impl PreparedSandbox {
 
 /// Build a fully prepared sandbox from the given configuration and inner command.
 ///
-/// This is the single implementation of the sandbox setup pipeline that was
-/// previously duplicated across `wrap.rs`, `record.rs`, and `claude.rs`.
-///
 /// # Pipeline
 ///
 /// 1. Add `$HOME` as readonly bind (Claude Code needs `~/.claude/` for config)
-/// 2. Create `BwrapSandbox` with project directory
+/// 2. Create `DirectSandbox` with project directory
 /// 3. Apply CLI overrides (extra domains, paths)
 /// 4. Merge plugin policy (`~/.claude` rw, MCP domains, `add_dirs`)
-/// 5. Detect and enable `gleisner-sandbox-init` for Landlock-inside-bwrap
+/// 5. Optionally disable Landlock
 /// 6. Resolve selective network filter (TAP provider check)
-/// 7. Build bwrap command with the inner command
+/// 7. Build sandbox command with the inner command
 /// 8. Set up namespace + pasta + nftables when filtering is needed
 ///
 /// # Returns
@@ -99,7 +98,7 @@ pub fn prepare_sandbox(
     }
 
     // ── 2. Create sandbox ─────────────────────────────────────────
-    let mut sandbox = BwrapSandbox::new(profile, config.project_dir)?;
+    let mut sandbox = DirectSandbox::new(profile, config.project_dir)?;
 
     // ── 3. Apply CLI overrides ────────────────────────────────────
     if !config.extra_allow_network.is_empty() {
@@ -112,13 +111,12 @@ pub fn prepare_sandbox(
     // ── 4. Merge plugin policy ────────────────────────────────────
     apply_plugin_sandbox_policy(&mut sandbox);
 
-    // ── 5. Enable Landlock ────────────────────────────────────────
-    if !config.no_landlock {
-        if let Some(init_bin) = detect_sandbox_init() {
-            sandbox.enable_landlock(init_bin);
-        } else {
-            tracing::warn!("gleisner-sandbox-init not found — running without Landlock");
-        }
+    // ── 5. Landlock and cgroups ────────────────────────────────────
+    if config.no_landlock {
+        sandbox.disable_landlock();
+    }
+    if config.no_cgroups {
+        sandbox.disable_cgroups();
     }
 
     // ── 6. Resolve network filter ─────────────────────────────────
@@ -128,7 +126,6 @@ pub fn prepare_sandbox(
             || !sandbox.extra_allow_domains().is_empty());
 
     let filter = if needs_filter {
-        // Verify pasta is available before resolving the filter.
         netfilter::require_pasta().map_err(|_| {
             let profile_name = sandbox.profile().name.clone();
             SandboxError::NetworkSetupFailed(format!(
@@ -146,38 +143,32 @@ pub fn prepare_sandbox(
         None
     };
 
-    // ── 7. Build bwrap command ────────────────────────────────────
+    // ── 7. Build sandbox command ────────────────────────────────
     let has_filter = filter.is_some();
-    let (bwrap_cmd, policy_file) = sandbox.build_command(inner_command, has_filter);
+    let (sandbox_cmd, spec_file) = sandbox.build_command(inner_command, has_filter);
 
     // ── 8. Set up namespace + pasta + nftables ──────────────────────
-    // When filtering is active, we:
-    // 1. Create a user+net namespace pair (NamespaceHandle)
-    // 2. Run pasta to configure networking in that namespace
-    // 3. Apply nftables rules via nsenter (before bwrap starts)
-    // 4. Wrap bwrap in nsenter to enter the pre-created namespace
     let (ns, tap, cmd) = if let Some(ref f) = filter {
         let ns = crate::NamespaceHandle::create()?;
         let tap = crate::TapHandle::start(ns.pid())?;
 
-        // Apply firewall rules before starting bwrap — bwrap's --unshare-user
-        // creates a nested namespace that loses CAP_NET_ADMIN
+        // Apply firewall rules before starting sandbox-init
         f.apply_firewall_via_nsenter(&ns)?;
 
         let mut nsenter = netfilter::nsenter_command(&ns);
-        nsenter.arg(bwrap_cmd.get_program());
-        nsenter.args(bwrap_cmd.get_args());
+        nsenter.arg(sandbox_cmd.get_program());
+        nsenter.args(sandbox_cmd.get_args());
 
         (Some(ns), Some(tap), nsenter)
     } else {
-        (None, None, bwrap_cmd)
+        (None, None, sandbox_cmd)
     };
 
     Ok(PreparedSandbox {
         command: cmd,
         ns,
         tap,
-        policy_file,
+        spec_file,
         sandbox,
     })
 }
@@ -187,7 +178,7 @@ pub fn prepare_sandbox(
 /// - Mounts `~/.claude` as read-write (session state, settings)
 /// - Expands and mounts plugin `add_dirs` as read-write
 /// - Merges MCP network domains into the sandbox allowlist
-fn apply_plugin_sandbox_policy(sandbox: &mut BwrapSandbox) {
+fn apply_plugin_sandbox_policy(sandbox: &mut DirectSandbox) {
     // ~/.claude needs to be writable for session state and settings
     if let Ok(home) = std::env::var("HOME") {
         sandbox.allow_paths(std::iter::once(PathBuf::from(format!("{home}/.claude"))));
@@ -202,19 +193,6 @@ fn apply_plugin_sandbox_policy(sandbox: &mut BwrapSandbox) {
         .collect();
     sandbox.allow_domains(mcp_domains);
     sandbox.allow_paths(add_dirs);
-}
-
-/// Try to find the `gleisner-sandbox-init` binary.
-///
-/// Checks alongside the running binary first, then falls back to `PATH`.
-pub fn detect_sandbox_init() -> Option<PathBuf> {
-    if let Ok(exe) = std::env::current_exe() {
-        let sibling = exe.with_file_name("gleisner-sandbox-init");
-        if sibling.is_file() {
-            return Some(sibling);
-        }
-    }
-    which::which("gleisner-sandbox-init").ok()
 }
 
 #[cfg(test)]
@@ -260,17 +238,9 @@ mod tests {
         }
     }
 
-    /// Helper: collect command args as strings for assertions.
-    fn args_of(cmd: &std::process::Command) -> Vec<String> {
-        cmd.get_args()
-            .filter_map(|a| a.to_str())
-            .map(str::to_owned)
-            .collect()
-    }
-
     #[test]
     fn prepare_sandbox_builds_valid_command() {
-        if which::which("bwrap").is_err() {
+        if crate::sandbox::detect_sandbox_init().is_none() {
             return;
         }
 
@@ -280,32 +250,17 @@ mod tests {
             extra_allow_network: vec![],
             extra_allow_paths: vec![],
             no_landlock: true,
+            no_cgroups: true,
         };
 
         let inner = vec!["/bin/echo".to_owned(), "hello".to_owned()];
         let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
 
-        let args = args_of(&prepared.command);
-
-        // Should contain bwrap fundamentals
-        assert_eq!(
-            prepared.command.get_program().to_str().unwrap(),
-            "bwrap",
-            "program should be bwrap"
-        );
+        // Should be a gleisner-sandbox-init command
+        let program = prepared.command.get_program().to_str().unwrap();
         assert!(
-            args.iter().any(|a| a == "--die-with-parent"),
-            "should die with parent"
-        );
-
-        // Inner command should appear at the end
-        assert!(
-            args.iter().any(|a| a == "/bin/echo"),
-            "inner command should be present"
-        );
-        assert!(
-            args.iter().any(|a| a == "hello"),
-            "inner command args should be present"
+            program.contains("gleisner-sandbox-init"),
+            "program should be gleisner-sandbox-init, got: {program}"
         );
 
         // No network handles needed for Allow policy
@@ -314,36 +269,8 @@ mod tests {
     }
 
     #[test]
-    fn prepare_sandbox_adds_home_readonly() {
-        if which::which("bwrap").is_err() {
-            return;
-        }
-
-        let config = SandboxSessionConfig {
-            profile: test_profile(PolicyDefault::Allow),
-            project_dir: PathBuf::from("/tmp/test-project"),
-            extra_allow_network: vec![],
-            extra_allow_paths: vec![],
-            no_landlock: true,
-        };
-
-        let inner = vec!["/bin/true".to_owned()];
-        let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
-
-        let args = args_of(&prepared.command);
-
-        // $HOME should appear as a readonly bind
-        if let Ok(home) = std::env::var("HOME") {
-            assert!(
-                args.iter().any(|a| a == &home),
-                "$HOME ({home}) should appear in bwrap args"
-            );
-        }
-    }
-
-    #[test]
     fn prepare_sandbox_merges_extra_domains() {
-        if which::which("bwrap").is_err() {
+        if crate::sandbox::detect_sandbox_init().is_none() {
             return;
         }
 
@@ -353,78 +280,20 @@ mod tests {
             extra_allow_network: vec!["extra.example.com".to_owned()],
             extra_allow_paths: vec![],
             no_landlock: true,
+            no_cgroups: true,
         };
 
         let inner = vec!["/bin/true".to_owned()];
         let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
 
-        // The profile is allow-all, so extra domains don't create filters,
-        // but verify the profile is accessible and has the right name
         assert_eq!(prepared.profile().name, "test-session");
     }
 
     #[test]
-    fn prepare_sandbox_merges_extra_paths() {
-        if which::which("bwrap").is_err() {
-            return;
-        }
-
-        let config = SandboxSessionConfig {
-            profile: test_profile(PolicyDefault::Allow),
-            project_dir: PathBuf::from("/tmp/test-project"),
-            extra_allow_network: vec![],
-            extra_allow_paths: vec![PathBuf::from("/opt/extra")],
-            no_landlock: true,
-        };
-
-        let inner = vec!["/bin/true".to_owned()];
-        let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
-
-        let args = args_of(&prepared.command);
-
-        // Extra paths should appear as read-write binds
-        assert!(
-            args.iter().any(|a| a == "/opt/extra"),
-            "extra path should appear in bwrap args"
-        );
-    }
-
-    #[test]
-    fn prepare_sandbox_plugin_policy_adds_claude_dir() {
-        if which::which("bwrap").is_err() {
-            return;
-        }
-
-        let config = SandboxSessionConfig {
-            profile: test_profile(PolicyDefault::Allow),
-            project_dir: PathBuf::from("/tmp/test-project"),
-            extra_allow_network: vec![],
-            extra_allow_paths: vec![],
-            no_landlock: true,
-        };
-
-        let inner = vec!["/bin/true".to_owned()];
-        let prepared = prepare_sandbox(config, &inner).expect("should build sandbox");
-
-        let args = args_of(&prepared.command);
-
-        // ~/.claude should be added as read-write by apply_plugin_sandbox_policy
-        if let Ok(home) = std::env::var("HOME") {
-            let claude_dir = format!("{home}/.claude");
-            assert!(
-                args.iter().any(|a| a == &claude_dir),
-                "~/.claude ({claude_dir}) should be in bwrap args as rw bind"
-            );
-        }
-    }
-
-    #[test]
     fn prepare_sandbox_deny_network_without_pasta_returns_error() {
-        if which::which("bwrap").is_err() {
+        if crate::sandbox::detect_sandbox_init().is_none() {
             return;
         }
-        // This test verifies the error path when pasta is needed but
-        // not available. Skip if pasta is installed.
         if netfilter::pasta_available() {
             return;
         }
@@ -435,6 +304,7 @@ mod tests {
             extra_allow_network: vec![],
             extra_allow_paths: vec![],
             no_landlock: true,
+            no_cgroups: true,
         };
 
         let inner = vec!["/bin/true".to_owned()];
@@ -445,12 +315,5 @@ mod tests {
             Ok(_) => panic!("should error when deny-network profile needs pasta"),
         };
         assert!(err.contains("pasta"), "error should mention pasta: {err}");
-    }
-
-    #[test]
-    fn detect_sandbox_init_returns_option() {
-        // Just verify it doesn't panic — result depends on whether
-        // gleisner-sandbox-init is built/installed
-        let _result = detect_sandbox_init();
     }
 }

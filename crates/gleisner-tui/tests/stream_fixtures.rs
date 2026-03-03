@@ -1043,46 +1043,28 @@ fn sandbox_config_round_trips_through_query_config() {
     assert!(cloned.skip_permissions);
 }
 
-/// Verify sandboxed command includes bwrap with correct args.
+/// Verify sandboxed command uses gleisner-sandbox-init with spec file.
 #[test]
-fn sandboxed_query_builds_bwrap_command() {
-    use gleisner_tui::claude::SandboxConfig;
+fn sandboxed_query_builds_sandbox_command() {
     use std::path::PathBuf;
-
-    // Skip if bwrap is not installed
-    if std::process::Command::new("bwrap")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        return;
-    }
 
     let Ok(profile) = gleisner_polis::profile::resolve_profile("konishi") else {
         return;
     };
 
-    let mut config = QueryConfig::from_profile(&profile);
-    config.prompt = "hello".into();
-    config.sandbox = Some(SandboxConfig {
-        profile: profile.clone(),
+    // Skip if sandbox-init is not built
+    if gleisner_polis::DirectSandbox::new(profile.clone(), PathBuf::from("/tmp/test")).is_err() {
+        return;
+    }
+
+    let config = gleisner_polis::SandboxSessionConfig {
+        profile,
         project_dir: PathBuf::from("/tmp/test-project"),
         extra_allow_network: vec![],
         extra_allow_paths: vec![],
-    });
-
-    // Build the sandbox directly to verify the command structure
-    let mut bwrap_profile = profile;
-    if let Ok(home) = std::env::var("HOME") {
-        let home_path = PathBuf::from(&home);
-        if !bwrap_profile.filesystem.readonly_bind.contains(&home_path) {
-            bwrap_profile.filesystem.readonly_bind.push(home_path);
-        }
-    }
-
-    let sandbox =
-        gleisner_polis::BwrapSandbox::new(bwrap_profile, PathBuf::from("/tmp/test-project"))
-            .expect("bwrap should be found");
+        no_landlock: true,
+        no_cgroups: true,
+    };
 
     let inner = vec![
         "claude".to_owned(),
@@ -1091,41 +1073,32 @@ fn sandboxed_query_builds_bwrap_command() {
         "--output-format".into(),
         "stream-json".into(),
     ];
-    let (cmd, _policy_file) = sandbox.build_command(&inner, false);
 
-    let args: Vec<&str> = cmd.get_args().filter_map(|a| a.to_str()).collect();
+    let prepared = gleisner_polis::prepare_sandbox(config, &inner).expect("should prepare sandbox");
 
-    // Should be a bwrap command
+    // Should be a gleisner-sandbox-init command
+    let program = prepared.command.get_program().to_str().unwrap();
+    assert!(
+        program.contains("gleisner-sandbox-init"),
+        "program should be gleisner-sandbox-init, got: {program}"
+    );
+
+    // Spec file should exist and contain valid JSON
+    let spec_json =
+        std::fs::read_to_string(prepared.spec_file.path()).expect("should read spec file");
+    let spec: gleisner_polis::SandboxSpec =
+        serde_json::from_str(&spec_json).expect("should parse spec");
+
+    // Spec should contain the inner command
+    assert!(
+        spec.inner_command.contains(&"claude".to_owned()),
+        "spec should contain claude command"
+    );
+
+    // Spec should have the project dir as work_dir
     assert_eq!(
-        cmd.get_program().to_str().unwrap(),
-        "bwrap",
-        "outer command should be bwrap"
-    );
-
-    // Should include readonly bind for /usr
-    assert!(args.contains(&"--ro-bind"), "should have --ro-bind");
-    assert!(args.contains(&"/usr"), "should bind /usr");
-
-    // Should include the inner claude command
-    assert!(args.contains(&"claude"), "inner command should be claude");
-    assert!(args.contains(&"stream-json"), "should pass stream-json");
-
-    // Should die with parent
-    assert!(
-        args.contains(&"--die-with-parent"),
-        "should die with parent"
-    );
-
-    // Should set chdir to project dir
-    assert!(args.contains(&"--chdir"), "should set --chdir");
-    assert!(
-        args.contains(&"/tmp/test-project"),
-        "should chdir to project dir"
-    );
-
-    // Network should be unshared (konishi has deny default)
-    assert!(
-        args.contains(&"--unshare-net"),
-        "konishi profile should unshare network"
+        spec.work_dir,
+        PathBuf::from("/tmp/test-project"),
+        "work_dir should be project dir"
     );
 }

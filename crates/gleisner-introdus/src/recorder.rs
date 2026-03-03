@@ -109,7 +109,7 @@ pub async fn run(mut rx: broadcast::Receiver<AuditEvent>) -> RecorderOutput {
     // Drop ephemeral sandbox artifacts: files that no longer exist on disk
     // AND have no usable digest. These are files that only existed inside
     // the sandbox's private mount namespace (e.g., cargo build artifacts
-    // in bwrap's tmpfs target dirs). We keep deleted files that had a real
+    // in the sandbox's tmpfs target dirs). We keep deleted files that had a real
     // digest — those represent meaningful deletions during the session.
     let ephemeral: Vec<PathBuf> = subjects_map
         .iter()

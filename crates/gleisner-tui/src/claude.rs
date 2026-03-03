@@ -15,11 +15,11 @@
 //! TUI receives events → updates app state → re-renders
 //! ```
 //!
-//! When sandboxing is enabled, the subprocess is wrapped in bubblewrap:
+//! When sandboxing is enabled, the subprocess runs inside gleisner-sandbox-init:
 //!
 //! ```text
-//! tokio::spawn → bwrap → claude subprocess
-//!                  ↑ filesystem/network/process isolation from profile
+//! tokio::spawn → gleisner-sandbox-init → claude subprocess
+//!                  ↑ namespaces/bind-mounts/landlock/network isolation from profile
 //! ```
 
 use std::path::PathBuf;
@@ -43,7 +43,7 @@ use tokio_util::sync::CancellationToken;
 /// Sandbox wrapping configuration.
 ///
 /// When present in [`QueryConfig`], the claude subprocess is launched
-/// inside a bubblewrap sandbox with filesystem, network, and process
+/// inside a sandbox with filesystem, network, and process
 /// isolation defined by the profile.
 #[derive(Debug, Clone)]
 pub struct SandboxConfig {
@@ -75,7 +75,7 @@ pub struct QueryConfig {
     /// Additional directories to grant tool access to.
     pub add_dirs: Vec<String>,
     /// Skip Claude Code's built-in permission checks.
-    /// Gleisner's sandbox (bwrap, cgroups, nftables) provides the
+    /// Gleisner's sandbox (namespaces, cgroups, nftables) provides the
     /// actual security boundary, making Claude Code's interactive
     /// permission prompts redundant and counterproductive in -p mode.
     pub skip_permissions: bool,
@@ -84,7 +84,7 @@ pub struct QueryConfig {
     /// browser navigation) while keeping their analysis tools.
     pub disallowed_tools: Vec<String>,
     /// Optional sandbox configuration. When set, the claude command
-    /// is wrapped in a bubblewrap sandbox.
+    /// is wrapped in a sandbox.
     pub sandbox: Option<SandboxConfig>,
     /// Use Sigstore keyless signing for attestation bundles.
     /// Requires the `keyless` feature on gleisner-introdus.
@@ -221,7 +221,7 @@ struct SandboxHandles;
 /// Internal: run the claude subprocess and stream events.
 ///
 /// When `config.sandbox` is set, wraps the claude invocation in a
-/// bubblewrap sandbox with filesystem/network/process isolation.
+/// sandbox with filesystem/network/process isolation.
 /// If the profile declares `network.default = "deny"` with allowed
 /// domains, sets up TAP networking (pasta) + nftables for selective filtering
 /// (matching the behavior of `gleisner wrap`).
@@ -273,7 +273,7 @@ async fn run_query(
         inner_args.push(dir.clone());
     }
 
-    // ── Build the actual command — optionally wrapped in bwrap ──
+    // ── Build the actual command — optionally sandboxed ──
     // _handles keeps PreparedSandbox alive until subprocess exits.
     let (mut cmd, _handles) = if let Some(ref sandbox_cfg) = config.sandbox {
         build_sandboxed_command(config, sandbox_cfg, inner_args)?
@@ -345,7 +345,7 @@ async fn run_query(
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                // sandbox-init status messages are informational — log only
+                // sandbox-init status messages (namespace/mount/landlock setup) — log only
                 if line.starts_with("gleisner-sandbox-init:") {
                     debug!(line = %line, "sandbox-init status (suppressed from UI)");
                     continue;
@@ -418,7 +418,7 @@ async fn run_query(
     Ok(())
 }
 
-/// Build a tokio Command that runs claude inside a bwrap sandbox.
+/// Build a tokio Command that runs claude inside a sandbox.
 ///
 /// Uses the shared [`gleisner_polis::prepare_sandbox`] pipeline, then
 /// converts the resulting `std::process::Command` to a `tokio::process::Command`.
@@ -444,6 +444,7 @@ fn build_sandboxed_command(
         extra_allow_network: sandbox_cfg.extra_allow_network.clone(),
         extra_allow_paths: extra_paths,
         no_landlock: false, // TUI always enables Landlock when available
+        no_cgroups: false,
     };
 
     let prepared = gleisner_polis::prepare_sandbox(session_config, &full_inner)?;

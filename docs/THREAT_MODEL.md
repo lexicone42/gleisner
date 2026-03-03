@@ -20,8 +20,8 @@ The CLI (`gleisner record`, `gleisner wrap`, etc.) provides the same
 capabilities for scripting and CI. Gleisner interposes between the developer
 and Claude Code to provide:
 
-- **Sandboxing** (`gleisner-polis`) -- hermetic execution via bubblewrap and
-  Landlock LSM V7, constraining the filesystem, network, process capabilities,
+- **Sandboxing** (`gleisner-polis`) -- hermetic execution via Linux namespaces
+  (user, mount, PID, network) and Landlock LSM V7, constraining the filesystem, network, process capabilities,
   and MCP tool access available to a Claude Code session.
 - **Attestation** (`gleisner-introdus`) -- cryptographically signed in-toto v1
   attestation statements with SLSA v1.0-compatible provenance predicates that
@@ -126,7 +126,7 @@ represents a transition between principals with different trust levels.
   |  |    |--TB-4: Package registries (HTTPS)--->       |  |
   |  |    |        crates.io, npmjs.com, pypi.org       |  |
   |  |    |                                             |  |
-  |  |    |--TB-5: Filesystem (Landlock/bwrap)--->      |  |
+  |  |    |--TB-5: Filesystem (Landlock/ns)--->          |  |
   |  |             /home, /tmp, project dir             |  |
   |  |                                                  |  |
   |  +--------------------------------------------------+  |
@@ -149,7 +149,7 @@ represents a transition between principals with different trust levels.
 | **TB-2** | Sandbox (polis) | Transition from Gleisner (trusted) to Claude Code (untrusted autonomous agent) |
 | **TB-3** | Anthropic API | Claude Code sends prompts/receives completions over HTTPS; Gleisner trusts Anthropic to return non-malicious model outputs |
 | **TB-4** | Package registries | Claude Code may pull dependencies from public registries; packages are untrusted until verified |
-| **TB-5** | Filesystem | Claude Code reads/writes files constrained by Landlock and bwrap bind mounts |
+| **TB-5** | Filesystem | Claude Code reads/writes files constrained by Landlock and namespace bind mounts |
 | **TB-6** | Attestation signing | Transition from unsigned audit data to cryptographically bound attestation |
 | **TB-7** | Policy evaluation | OPA/Rego policies (potentially user-supplied) execute in Wasmtime sandbox |
 | **TB-8** | Sigstore infrastructure | External trust roots: Fulcio CA, Rekor transparency log |
@@ -536,7 +536,7 @@ services on the developer's machine.
     resource exhaustion
   - `max_disk_write_mb` -- limits disk write to prevent filling the disk
 
-**Residual Risk:** Low -- the bubblewrap + Landlock + namespace stack provides
+**Residual Risk:** Low -- the namespace + Landlock + cgroup stack provides
 defense in depth. Residual risk exists if the profile is misconfigured (overly
 permissive `readwrite_bind` or `allow_domains`) or if a kernel vulnerability
 allows sandbox escape.
@@ -613,22 +613,22 @@ pre-existing compromise).
 granting Claude Code unrestricted access.
 
 **Gleisner Mitigation:**
-- `gleisner-polis` (`BwrapSandbox`): bubblewrap applies namespace isolation
-  atomically at process creation (`clone(2)` with `CLONE_NEWUSER |
-  CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET`), minimizing the window between
-  isolation and execution.
+- `gleisner-polis` (`DirectSandbox`): `gleisner-sandbox-init` applies namespace isolation
+  atomically via `unshare(2)` with `CLONE_NEWUSER | CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET`,
+  minimizing the window between isolation and execution. `pivot_root` replaces
+  the filesystem root entirely.
 - `gleisner-introdus` attestation: the sandbox profile digest
   (`SandboxProfileSummary.profile_digest`) is computed at sandbox setup time
   and included in the attestation, enabling detection of profile
   modification.
 - `gleisner-polis` (`ProcessPolicy`): `no_new_privileges: true` is set via
-  `prctl(PR_SET_NO_NEW_PRIVS)` before `exec`, preventing privilege escalation
+  `prctl(PR_SET_NO_NEW_PRIVS)` before the inner command, preventing privilege escalation
   even if a race is won.
 
-**Residual Risk:** Low -- bubblewrap's design makes TOCTOU exploitation
-difficult. Symlink attacks against bind mounts are mitigated by bubblewrap's
-`--die-with-parent` flag and Landlock's filesystem restrictions. The primary residual risk is a
-vulnerability in bubblewrap or the Linux kernel's namespace implementation.
+**Residual Risk:** Low -- the single-process `unshare` + `pivot_root` design makes
+TOCTOU exploitation difficult. Symlink attacks against bind mounts are mitigated by
+`PR_SET_PDEATHSIG(SIGKILL)` and Landlock's filesystem restrictions. The primary
+residual risk is a vulnerability in the Linux kernel's namespace implementation.
 
 ---
 
@@ -993,7 +993,7 @@ undetected.
 | Assumption | Rationale |
 |---|---|
 | The Linux kernel is not compromised | Gleisner relies on kernel namespace isolation, Landlock, and cgroups. A kernel exploit bypasses all of these. |
-| bubblewrap is correctly implemented | Gleisner delegates sandbox creation to bubblewrap. A vulnerability in bubblewrap's namespace setup would undermine isolation. |
+| The `nix` crate correctly wraps Linux syscalls | Gleisner uses `nix` for namespace, mount, and pivot_root operations. A bug in `nix`'s syscall wrappers could undermine isolation. |
 | The Anthropic Messages API returns model outputs, not attacker-controlled payloads | Gleisner does not intercept or validate API responses. A compromised API could instruct Claude Code to take arbitrary actions. |
 | The developer runs `gleisner wrap` (not bare `claude`) | Gleisner's protections are opt-in. If the developer runs Claude Code directly, no sandboxing or attestation occurs. |
 | Sigstore infrastructure (Fulcio, Rekor) is available and trustworthy | Keyless signing depends on external Sigstore services. If these are compromised or unavailable, attestation signing fails or is forgeable. |
@@ -1123,7 +1123,7 @@ than filesystem-based ECDSA keys but cannot use Sigstore keyless mode.
 |---|---|
 | **Attestation** | A cryptographically signed statement about the provenance of a software artifact |
 | **Attestation chain** | A sequence of attestation bundles linked by parent digest references, enabling session continuity verification |
-| **bubblewrap (bwrap)** | A Linux sandboxing tool that uses unprivileged user namespaces |
+| **gleisner-sandbox-init** | Gleisner's container runtime binary — creates namespaces, bind mounts, pivot_root, and applies Landlock via direct syscalls |
 | **Claude Code** | Anthropic's CLI-based AI coding assistant |
 | **CLAUDE.md** | A project-level markdown file containing instructions for Claude Code |
 | **CycloneDX** | An OWASP standard for software bill of materials (SBOM) |

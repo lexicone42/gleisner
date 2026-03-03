@@ -18,7 +18,7 @@ pub struct FsMonitorConfig {
 
 /// Configuration for the process monitor (/proc scanner).
 pub struct ProcMonitorConfig {
-    /// PID of the root sandboxed process (the bwrap child).
+    /// PID of the root sandboxed process.
     pub root_pid: u32,
     /// How often to scan /proc for new/exited processes.
     pub poll_interval: Duration,

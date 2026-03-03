@@ -1,0 +1,750 @@
+//! Container runtime implementation.
+//!
+//! Creates Linux namespaces, sets up bind mounts with `pivot_root`,
+//! applies Landlock restrictions, and exec's the inner command.
+
+use std::fs;
+use std::os::unix::process::CommandExt as _;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use gleisner_polis::SandboxSpec;
+use gleisner_polis::profile::PolicyDefault;
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
+use nix::sched::{CloneFlags, unshare};
+use nix::sys::resource::{Resource, setrlimit};
+use nix::unistd::{chdir, pivot_root, sethostname};
+
+/// Run the sandbox: set up namespaces, mounts, landlock, then exec.
+pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
+    // ── 0. Die with parent — prevent orphaned sandboxes ──────────
+    // Equivalent to bwrap's --die-with-parent: if our parent exits,
+    // the kernel sends us SIGKILL.
+    // SAFETY: prctl(PR_SET_PDEATHSIG) is a simple kernel call with no
+    // memory-safety implications — it just sets the signal to deliver
+    // when this process's parent terminates.
+    unsafe {
+        nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL);
+    }
+
+    // ── 0b. Rootless cgroup delegation ─────────────────────────────
+    // Create a cgroup scope and move ourselves into it BEFORE unshare().
+    // The kernel allows a process to migrate itself within a writable
+    // cgroup hierarchy without CAP_SYS_ADMIN — it only blocks cross-process
+    // migration. After unshare(), the new namespaced process inherits its
+    // cgroup membership, so limits apply without any privilege escalation.
+    let _cgroup_guard = if let Some(ref limits) = spec.resource_limits {
+        match gleisner_polis::CgroupScope::create(limits) {
+            Ok(scope) => {
+                let pid = std::process::id();
+                match scope.add_pid(pid) {
+                    Ok(()) => {
+                        eprintln!(
+                            "gleisner-sandbox-init: cgroup limits applied (rootless, pid={pid})"
+                        );
+                        Some(scope)
+                    }
+                    Err(e) => {
+                        eprintln!("gleisner-sandbox-init: cgroup add_pid failed (continuing): {e}");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("gleisner-sandbox-init: cgroup creation failed (continuing): {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // ── 1. Create namespaces ──────────────────────────────────────
+    // User, mount, IPC (shared memory/semaphores), UTS (hostname).
+    // CLONE_NEWTIME is included to isolate CLOCK_MONOTONIC/CLOCK_BOOTTIME
+    // — must be combined with CLONE_NEWUSER in the same unshare() call
+    // because time namespace creation requires owning a user namespace.
+    //
+    // The nix crate doesn't expose CLONE_NEWTIME in CloneFlags yet,
+    // so we combine it via raw bits.
+    let mut flags = CloneFlags::CLONE_NEWUSER
+        | CloneFlags::CLONE_NEWNS
+        | CloneFlags::CLONE_NEWIPC
+        | CloneFlags::CLONE_NEWUTS;
+    if spec.process.pid_namespace {
+        flags |= CloneFlags::CLONE_NEWPID;
+    }
+    if !spec.use_external_netns && matches!(spec.network.default, PolicyDefault::Deny) {
+        flags |= CloneFlags::CLONE_NEWNET;
+    }
+
+    // Add CLONE_NEWTIME via raw bits (not in nix::sched::CloneFlags).
+    // SAFETY: unshare() is a simple kernel call. We pass the combined flags
+    // including CLONE_NEWTIME (0x80) which nix doesn't expose yet.
+    let raw_flags = flags.bits() | nix::libc::CLONE_NEWTIME;
+    let unshare_result = unsafe { nix::libc::unshare(raw_flags) };
+    let has_timens = if unshare_result == 0 {
+        true
+    } else {
+        // Time namespace not available (kernel < 5.6) — retry without it.
+        unshare(flags).map_err(|e| format!("unshare failed: {e}"))?;
+        false
+    };
+
+    if !has_timens {
+        eprintln!("gleisner-sandbox-init: time namespace not available (continuing)");
+    }
+
+    // ── 1b. Time namespace offset (before UID mapping!) ──────────
+    // The offset must be written before any child enters the new time
+    // namespace. After unshare(CLONE_NEWTIME), the calling process
+    // stays in the OLD time namespace — children will enter the new one.
+    // We have CAP_SYS_TIME in the new user namespace from creation,
+    // even before configuring the UID map (capabilities are granted at
+    // namespace creation, not at map configuration).
+    //
+    // Writing BEFORE UID mapping avoids the procfs permission complexity
+    // that blocked our previous attempt (post-UID-map).
+    if has_timens {
+        match write_timens_monotonic_offset() {
+            Ok(()) => {
+                eprintln!("gleisner-sandbox-init: time namespace isolated (monotonic zeroed)");
+            }
+            Err(e) => {
+                eprintln!(
+                    "gleisner-sandbox-init: timens_offsets pre-uid write failed ({e}), \
+                     will retry after uid mapping"
+                );
+            }
+        }
+    }
+
+    // Set a distinctive hostname inside the UTS namespace.
+    // Visible in shell prompts and logs — makes it obvious you're sandboxed.
+    sethostname("gleisner-sandbox").map_err(|e| format!("sethostname failed: {e}"))?;
+
+    eprintln!("gleisner-sandbox-init: namespaces created (ipc+uts isolated)");
+
+    // ── 2. Map UID/GID ────────────────────────────────────────────
+    write_id_map("/proc/self/uid_map", spec.uid, spec.uid)?;
+    fs::write("/proc/self/setgroups", "deny")
+        .map_err(|e| format!("failed to write setgroups: {e}"))?;
+    write_id_map("/proc/self/gid_map", spec.gid, spec.gid)?;
+    eprintln!(
+        "gleisner-sandbox-init: uid/gid mapped ({} -> {})",
+        spec.uid, spec.uid
+    );
+
+    // ── 2b. Time namespace offset (retry after UID mapping) ──────
+    // If the pre-UID-map write failed (some kernels require a valid
+    // UID to write to procfs), retry now.
+    if has_timens {
+        // Check if offset was already written (reads "0 0" if not set)
+        let already_set = fs::read_to_string("/proc/self/timens_offsets")
+            .map(|s| s.contains('-'))
+            .unwrap_or(false);
+        if !already_set {
+            match write_timens_monotonic_offset() {
+                Ok(()) => {
+                    eprintln!(
+                        "gleisner-sandbox-init: time namespace isolated (monotonic zeroed, post-uid)"
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "gleisner-sandbox-init: time namespace offset write failed ({e}), continuing"
+                    );
+                }
+            }
+        }
+    }
+
+    // ── 3. Set up filesystem (bind mounts + pivot_root) ──────────
+    setup_filesystem(&spec)?;
+    eprintln!("gleisner-sandbox-init: filesystem ready");
+
+    // ── 4. Apply Landlock ─────────────────────────────────────────
+    if spec.enable_landlock {
+        match gleisner_polis::apply_landlock(
+            &spec.filesystem,
+            &spec.network,
+            &spec.project_dir,
+            &spec.extra_rw_paths,
+            false,
+        ) {
+            Ok(status) => {
+                eprintln!(
+                    "gleisner-sandbox-init: landlock {:?} (network={}, scope={}, audit={})",
+                    status.enforcement,
+                    status.network_enforced,
+                    status.scope_enforced,
+                    status.audit_log_enabled
+                );
+                if !status.skipped_paths.is_empty() {
+                    eprintln!(
+                        "gleisner-sandbox-init: skipped {} nonexistent paths",
+                        status.skipped_paths.len()
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("gleisner-sandbox-init: landlock failed (continuing): {e}");
+            }
+        }
+    } else {
+        eprintln!("gleisner-sandbox-init: landlock disabled");
+    }
+
+    // ── 4b. Enforce no_new_privileges if Landlock didn't already ──
+    // Landlock's restrict_self() sets PR_SET_NO_NEW_PRIVS automatically.
+    // When Landlock is disabled, enforce it explicitly if the profile asks.
+    if !spec.enable_landlock && spec.process.no_new_privileges {
+        let ret = unsafe { nix::libc::prctl(nix::libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) };
+        if ret == 0 {
+            eprintln!("gleisner-sandbox-init: no_new_privileges set");
+        } else {
+            eprintln!("gleisner-sandbox-init: failed to set no_new_privileges (continuing)");
+        }
+    }
+
+    // ── 5. Apply resource limits ────────────────────────────────────
+    // Set rlimits inside the sandbox before exec. This is more reliable than
+    // the orchestrator's prlimit(1) approach: no race window between spawn
+    // and limit application, and works regardless of privilege level.
+    if let Some(ref limits) = spec.resource_limits {
+        if limits.max_file_descriptors > 0 {
+            let val = limits.max_file_descriptors;
+            setrlimit(Resource::RLIMIT_NOFILE, val, val)
+                .map_err(|e| format!("setrlimit NOFILE: {e}"))?;
+        }
+        if limits.max_memory_mb > 0 {
+            let bytes = limits.max_memory_mb * 1024 * 1024;
+            setrlimit(Resource::RLIMIT_AS, bytes, bytes)
+                .map_err(|e| format!("setrlimit AS: {e}"))?;
+        }
+        if limits.max_pids > 0 {
+            setrlimit(
+                Resource::RLIMIT_NPROC,
+                u64::from(limits.max_pids),
+                u64::from(limits.max_pids),
+            )
+            .map_err(|e| format!("setrlimit NPROC: {e}"))?;
+        }
+        if limits.max_disk_write_mb > 0 {
+            let bytes = limits.max_disk_write_mb * 1024 * 1024;
+            setrlimit(Resource::RLIMIT_FSIZE, bytes, bytes)
+                .map_err(|e| format!("setrlimit FSIZE: {e}"))?;
+        }
+        eprintln!("gleisner-sandbox-init: rlimits applied inside sandbox");
+    }
+
+    // ── 6. Set working directory ──────────────────────────────────
+    chdir(&spec.work_dir).map_err(|e| format!("chdir to {}: {e}", spec.work_dir.display()))?;
+
+    // ── 7. Fork and exec the inner command ─────────────────────────
+    if spec.inner_command.is_empty() {
+        return Err("no inner command specified".to_owned());
+    }
+    // We always fork before exec because:
+    // - CLONE_NEWPID: the calling process stays in the old PID namespace;
+    //   only fork children enter the new one (becoming PID 1).
+    // - CLONE_NEWTIME: same — children enter the new time namespace.
+    // - /proc remount: the fork child can mount a fresh procfs that reflects
+    //   both the new PID and time namespaces, preventing host PID and uptime
+    //   leakage from the bind-mounted /proc fallback.
+    fork_and_exec(&spec.inner_command)
+}
+
+/// Set up the sandbox filesystem using bind mounts and `pivot_root`.
+///
+/// Creates a new root filesystem from scratch:
+/// 1. Create a tmpfs as the new root
+/// 2. Bind-mount all paths from the spec (4-phase ordering)
+/// 3. Provide /proc and /dev
+/// 4. `pivot_root` to the new root
+fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
+    let new_root = PathBuf::from("/tmp/.gleisner-root");
+    let old_root = new_root.join("old_root");
+
+    // Create new root tmpfs
+    fs::create_dir_all(&new_root).map_err(|e| format!("failed to create new root: {e}"))?;
+
+    // Make sure we have a private mount namespace
+    mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+        None::<&str>,
+    )
+    .map_err(|e| format!("failed to make mounts private: {e}"))?;
+
+    // Mount tmpfs as new root
+    mount(
+        Some("tmpfs"),
+        &new_root,
+        Some("tmpfs"),
+        MsFlags::empty(),
+        Some("size=64k,mode=0755"),
+    )
+    .map_err(|e| format!("failed to mount tmpfs at new root: {e}"))?;
+
+    // Create old_root mount point for pivot_root
+    fs::create_dir_all(&old_root).map_err(|e| format!("failed to create old_root: {e}"))?;
+
+    // ── Phase 1: Read-only bind mounts ───────────────────────────
+    let home_dir = std::env::var("HOME").ok().map(PathBuf::from);
+    let mut deferred_symlink_targets: Vec<PathBuf> = Vec::new();
+
+    for path in &spec.filesystem.readonly_bind {
+        if !path.exists() {
+            continue;
+        }
+        bind_mount(path, &new_root, MsFlags::MS_RDONLY)?;
+
+        // Collect resolved symlink targets for deferred binding (Phase 3)
+        let is_user_subdir = home_dir
+            .as_ref()
+            .is_some_and(|home| path.starts_with(home) && path != home);
+        if is_user_subdir && path.is_dir() {
+            if let Ok(entries) = fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let entry_path = entry.path();
+                    if entry_path.is_symlink() {
+                        if let Ok(resolved) = fs::canonicalize(&entry_path) {
+                            if resolved.exists() {
+                                deferred_symlink_targets.push(resolved);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Phase 2: Read-write bind mounts ──────────────────────────
+    for path in &spec.filesystem.readwrite_bind {
+        if path.exists() {
+            bind_mount(path, &new_root, MsFlags::empty())?;
+        }
+    }
+    for path in &spec.extra_rw_paths {
+        if path.exists() {
+            bind_mount(path, &new_root, MsFlags::empty())?;
+        }
+    }
+    // Project directory is always read-write
+    if spec.project_dir.exists() {
+        bind_mount(&spec.project_dir, &new_root, MsFlags::empty())?;
+    }
+
+    // ── Phase 3: Symlink target binds ────────────────────────────
+    for target in &deferred_symlink_targets {
+        bind_mount(target, &new_root, MsFlags::MS_RDONLY)?;
+    }
+
+    // ── Phase 4: Deny paths + tmpfs ──────────────────────────────
+    for path in &spec.filesystem.deny {
+        if path.exists() {
+            let target = new_root.join(path.strip_prefix("/").unwrap_or(path));
+            if target.exists() {
+                mount(
+                    Some("tmpfs"),
+                    &target,
+                    Some("tmpfs"),
+                    MsFlags::empty(),
+                    Some("size=0,mode=0000"),
+                )
+                .map_err(|e| format!("tmpfs deny {}: {e}", path.display()))?;
+            }
+        }
+    }
+    for path in &spec.filesystem.tmpfs {
+        let target = new_root.join(path.strip_prefix("/").unwrap_or(path));
+        fs::create_dir_all(&target).ok();
+        // Tmpfs mounts get nosuid+nodev: no SUID binaries or device nodes.
+        // We intentionally do NOT set noexec — Node.js (Claude Code's runtime)
+        // writes temp scripts to /tmp and executes them. The sandbox is already
+        // isolated, so the exec risk is minimal.
+        mount(
+            Some("tmpfs"),
+            &target,
+            Some("tmpfs"),
+            MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
+            Some("size=256m"),
+        )
+        .map_err(|e| format!("tmpfs {}: {e}", path.display()))?;
+    }
+
+    // ── Provide /proc and /dev ───────────────────────────────────
+    // Try mounting a fresh procfs with hidepid=2 (hides other users' /proc/[pid]).
+    // Falls back to plain procfs, then bind-mount of host /proc.
+    // The parent is still in the OLD PID namespace (CLONE_NEWPID only affects
+    // children), so fresh mount often fails — the fork child retries later.
+    let new_proc = new_root.join("proc");
+    fs::create_dir_all(&new_proc).ok();
+    let proc_mounted = mount(
+        Some("proc"),
+        &new_proc,
+        Some("proc"),
+        MsFlags::empty(),
+        Some("hidepid=2"),
+    )
+    .is_ok()
+        || mount(
+            Some("proc"),
+            &new_proc,
+            Some("proc"),
+            MsFlags::empty(),
+            None::<&str>,
+        )
+        .is_ok();
+    if !proc_mounted {
+        // Bind-mount host /proc — still gives us /proc/self etc.
+        // Use a direct bind without the hardening remount (nosuid/nodev
+        // on procfs causes EPERM in user namespaces).
+        //
+        // If the host's /proc doesn't have hidepid=2, host PIDs are
+        // visible inside the sandbox. The fork child will try again.
+        let proc_source = Path::new("/proc");
+        mount(
+            Some(proc_source),
+            &new_proc,
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REC,
+            None::<&str>,
+        )
+        .map_err(|e| format!("bind /proc: {e}"))?;
+
+        // Check if host /proc has hidepid — if not, suggest it.
+        let host_has_hidepid = fs::read_to_string("/proc/self/mountinfo")
+            .map(|s| {
+                s.lines()
+                    .any(|l| l.contains("/proc") && l.contains("hidepid"))
+            })
+            .unwrap_or(false);
+        if !host_has_hidepid {
+            eprintln!(
+                "gleisner-sandbox-init: hint: mount /proc with hidepid=2 to hide \
+                 host PIDs inside sandbox (mount -o remount,hidepid=2 /proc)"
+            );
+        }
+    }
+
+    setup_minimal_dev(&new_root)?;
+
+    // ── pivot_root ───────────────────────────────────────────────
+    pivot_root(&new_root, &old_root).map_err(|e| format!("pivot_root failed: {e}"))?;
+
+    chdir("/").map_err(|e| format!("chdir /: {e}"))?;
+
+    umount2("/old_root", MntFlags::MNT_DETACH).map_err(|e| format!("unmount old_root: {e}"))?;
+    fs::remove_dir("/old_root").ok();
+
+    // ── Post-pivot hardening ─────────────────────────────────────
+    // Ensure the new root has fully private mount propagation.
+    // The pre-pivot MS_PRIVATE on "/" affected the old root; after
+    // pivot_root, "/" is a new mount. Making it recursively private
+    // prevents any mount events from leaking between sandbox and host.
+    mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+        None::<&str>,
+    )
+    .map_err(|e| format!("post-pivot mount propagation isolation failed: {e}"))?;
+
+    Ok(())
+}
+
+/// Create a minimal `/dev` with only essential device nodes.
+///
+/// Instead of bind-mounting the host's full `/dev` (which exposes block devices,
+/// GPU devices, etc.), we mount a fresh tmpfs and create only the handful of
+/// device nodes that userspace actually needs:
+/// - `/dev/null`, `/dev/zero`, `/dev/full` — standard sinks/sources
+/// - `/dev/urandom` — randomness (urandom, not random — never blocks)
+/// - `/dev/tty` — controlling terminal
+/// - `/dev/pts` — pseudo-terminal directory (bind-mounted from host)
+///
+/// This is a significant attack surface reduction over host `/dev` access.
+fn setup_minimal_dev(new_root: &Path) -> Result<(), String> {
+    let dev_dir = new_root.join("dev");
+    fs::create_dir_all(&dev_dir).map_err(|e| format!("mkdir /dev: {e}"))?;
+
+    // Mount a small tmpfs for /dev — nosuid+noexec (no executables in /dev)
+    mount(
+        Some("tmpfs"),
+        &dev_dir,
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+        Some("size=64k,mode=0755"),
+    )
+    .map_err(|e| format!("mount tmpfs /dev: {e}"))?;
+
+    // Create essential device nodes.
+    // Inside a user namespace we can't mknod directly (EPERM), so we
+    // bind-mount each device from the host.
+    let devices = [
+        ("null", MsFlags::empty()),
+        ("zero", MsFlags::empty()),
+        ("full", MsFlags::empty()),
+        ("random", MsFlags::empty()),
+        ("urandom", MsFlags::empty()),
+        ("tty", MsFlags::empty()),
+    ];
+
+    for (name, extra) in &devices {
+        let host_path = PathBuf::from(format!("/dev/{name}"));
+        let target = dev_dir.join(name);
+
+        if !host_path.exists() {
+            continue;
+        }
+
+        // Create mount point file
+        fs::write(&target, b"").map_err(|e| format!("create /dev/{name}: {e}"))?;
+
+        mount(
+            Some(host_path.as_path()),
+            &target,
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        )
+        .map_err(|e| format!("bind /dev/{name}: {e}"))?;
+
+        // Remount with hardening: nosuid+noexec + any extra flags.
+        // NOT nodev — these ARE device nodes and need to function as such.
+        let harden = MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | *extra;
+        mount(
+            None::<&str>,
+            &target,
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | harden,
+            None::<&str>,
+        )
+        .map_err(|e| format!("remount /dev/{name}: {e}"))?;
+    }
+
+    // /dev/pts — pseudo-terminal support (needed for interactive shells)
+    let pts_dir = dev_dir.join("pts");
+    fs::create_dir_all(&pts_dir).map_err(|e| format!("mkdir /dev/pts: {e}"))?;
+    let host_pts = Path::new("/dev/pts");
+    if host_pts.exists() {
+        mount(
+            Some(host_pts),
+            &pts_dir,
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REC,
+            None::<&str>,
+        )
+        .map_err(|e| format!("bind /dev/pts: {e}"))?;
+    }
+
+    // /dev/ptmx — PTY allocation (needed by TUI, Claude Code, and any
+    // subprocess that opens a pseudo-terminal). Modern devpts exposes
+    // the multiplexer at /dev/pts/ptmx; we symlink /dev/ptmx to it.
+    // Fall back to bind-mounting /dev/ptmx from host if the symlink
+    // target doesn't exist.
+    let ptmx_target = dev_dir.join("ptmx");
+    if pts_dir.join("ptmx").exists() {
+        std::os::unix::fs::symlink("pts/ptmx", &ptmx_target).ok();
+    } else if Path::new("/dev/ptmx").exists() {
+        fs::write(&ptmx_target, b"").map_err(|e| format!("create /dev/ptmx: {e}"))?;
+        mount(
+            Some(Path::new("/dev/ptmx")),
+            &ptmx_target,
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        )
+        .map_err(|e| format!("bind /dev/ptmx: {e}"))?;
+    }
+
+    // /dev/shm — shared memory (some programs expect this)
+    let shm_dir = dev_dir.join("shm");
+    fs::create_dir_all(&shm_dir).map_err(|e| format!("mkdir /dev/shm: {e}"))?;
+    mount(
+        Some("tmpfs"),
+        &shm_dir,
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
+        Some("size=64m"),
+    )
+    .map_err(|e| format!("mount /dev/shm: {e}"))?;
+
+    // Symlinks that many programs expect
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::symlink;
+        symlink("/proc/self/fd", dev_dir.join("fd")).ok();
+        symlink("/proc/self/fd/0", dev_dir.join("stdin")).ok();
+        symlink("/proc/self/fd/1", dev_dir.join("stdout")).ok();
+        symlink("/proc/self/fd/2", dev_dir.join("stderr")).ok();
+    }
+
+    Ok(())
+}
+
+/// Bind-mount a host path into the new root.
+///
+/// All bind mounts are hardened with `nosuid|nodev` to prevent SUID binaries
+/// and device node access inside the sandbox. Read-only mounts additionally
+/// get `MS_RDONLY` via `extra_flags`.
+fn bind_mount(source: &Path, new_root: &Path, extra_flags: MsFlags) -> Result<(), String> {
+    let relative = source.strip_prefix("/").unwrap_or(source);
+    let target = new_root.join(relative);
+
+    // Create mount point
+    if source.is_dir() {
+        fs::create_dir_all(&target).map_err(|e| format!("mkdir {}: {e}", target.display()))?;
+    } else {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("mkdir parent of {}: {e}", target.display()))?;
+        }
+        fs::write(&target, b"")
+            .map_err(|e| format!("create mount point {}: {e}", target.display()))?;
+    }
+
+    // Bind mount
+    mount(
+        Some(source),
+        &target,
+        None::<&str>,
+        MsFlags::MS_BIND | MsFlags::MS_REC,
+        None::<&str>,
+    )
+    .map_err(|e| {
+        format!(
+            "bind mount {} -> {}: {e}",
+            source.display(),
+            target.display()
+        )
+    })?;
+
+    // Remount with hardening flags: always nosuid+nodev, plus any extra (e.g., rdonly).
+    let harden_flags = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | extra_flags;
+    mount(
+        None::<&str>,
+        &target,
+        None::<&str>,
+        MsFlags::MS_BIND | MsFlags::MS_REC | MsFlags::MS_REMOUNT | harden_flags,
+        None::<&str>,
+    )
+    .map_err(|e| format!("remount {}: {e}", target.display()))?;
+
+    Ok(())
+}
+
+/// Write a UID or GID map entry.
+fn write_id_map(path: &str, inside: u32, outside: u32) -> Result<(), String> {
+    fs::write(path, format!("{inside} {outside} 1\n"))
+        .map_err(|e| format!("failed to write {path}: {e}"))
+}
+
+/// Write a negative `CLOCK_MONOTONIC` offset to zero the sandbox's monotonic clock.
+///
+/// The kernel requires `timens_offsets` format: `monotonic <secs> <nsecs>\n`
+/// where nsec must be in `0..=999_999_999`. A negative offset of `S.N` seconds
+/// is expressed as `monotonic -(S+1) (1_000_000_000 - N)` when N > 0, because
+/// the kernel rejects negative nanosecond values.
+fn write_timens_monotonic_offset() -> Result<(), String> {
+    let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
+        .map_err(|e| format!("clock_gettime: {e}"))?;
+
+    let sec = ts.tv_sec();
+    let nsec = ts.tv_nsec();
+
+    // Express negative offset with non-negative nanoseconds.
+    // offset = -(sec.nsec) = (-sec-1).(1e9-nsec) when nsec > 0
+    let (off_sec, off_nsec) = if nsec == 0 {
+        (-sec, 0i64)
+    } else {
+        (-sec - 1, 1_000_000_000 - nsec)
+    };
+
+    let offset = format!("monotonic {off_sec} {off_nsec}\n");
+    fs::write("/proc/self/timens_offsets", &offset)
+        .map_err(|e| format!("timens_offsets write: {e}"))
+}
+
+/// Fork a child process that enters the time (and PID) namespace, then exec.
+///
+/// `unshare(CLONE_NEWTIME)` and `unshare(CLONE_NEWPID)` only put *children*
+/// in the new namespace — the calling process stays in the old one. By forking,
+/// the child inherits all setup (mounts, landlock, rlimits, cwd) and additionally
+/// enters both namespaces. The child also remounts `/proc` so it reflects the
+/// new PID and time namespaces (preventing host uptime/PID leakage).
+///
+/// The parent waits for the child and exits with its status.
+fn fork_and_exec(inner_command: &[String]) -> Result<(), String> {
+    use nix::sys::wait::{WaitStatus, waitpid};
+    use nix::unistd::{ForkResult, fork};
+
+    // SAFETY: fork() is safe here because we're single-threaded at this point
+    // (no tokio runtime, no thread pools — we're a simple init process).
+    // All setup (mounts, landlock, rlimits) is already done and inherited.
+    match unsafe { fork() } {
+        Ok(ForkResult::Child) => {
+            // Child: now in the new time namespace (and PID namespace if enabled).
+            // Try to replace bind-mounted /proc with a fresh, hardened procfs.
+            //
+            // hidepid=2: hide /proc/[pid]/ entries for other users' processes.
+            // In a PID namespace where we're PID 1, this means only our own
+            // processes are visible — host PIDs are completely hidden.
+            //
+            // The kernel's mount_too_revealing() check may reject this (EPERM)
+            // if the mount namespace was created with broader visibility than
+            // the current PID namespace. In that case, keep the bind-mounted
+            // /proc. clock_gettime() still uses the correct time namespace
+            // regardless of which procfs is mounted.
+            let proc_remounted = mount(
+                Some("proc"),
+                "/proc",
+                Some("proc"),
+                MsFlags::empty(),
+                Some("hidepid=2"),
+            )
+            .is_ok()
+                || mount(
+                    Some("proc"),
+                    "/proc",
+                    Some("proc"),
+                    MsFlags::empty(),
+                    None::<&str>,
+                )
+                .is_ok();
+            if proc_remounted {
+                eprintln!("gleisner-sandbox-init: /proc remounted (namespace-aware)");
+            }
+
+            let program = &inner_command[0];
+            let err = Command::new(program).args(&inner_command[1..]).exec();
+            // exec only returns on error
+            eprintln!("gleisner-sandbox-init: failed to exec {program}: {err}");
+            std::process::exit(127);
+        }
+        Ok(ForkResult::Parent { child }) => {
+            // Parent: wait for child and propagate its exit status.
+            loop {
+                match waitpid(child, None) {
+                    Ok(WaitStatus::Exited(_, code)) => {
+                        std::process::exit(code);
+                    }
+                    Ok(WaitStatus::Signaled(_, sig, _)) => {
+                        // Child killed by signal — exit with 128 + signal number
+                        std::process::exit(128 + sig as i32);
+                    }
+                    Ok(_) => continue, // stopped/continued — keep waiting
+                    Err(e) => {
+                        return Err(format!("waitpid failed: {e}"));
+                    }
+                }
+            }
+        }
+        Err(e) => Err(format!("fork failed: {e}")),
+    }
+}

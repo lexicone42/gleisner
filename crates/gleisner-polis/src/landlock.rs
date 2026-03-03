@@ -2,8 +2,7 @@
 //!
 //! Applies a Landlock ruleset to the current thread (and all future
 //! children via `fork`/`exec`) based on the sandbox profile's policies.
-//! This provides defense-in-depth on top of the bubblewrap namespace
-//! isolation.
+//! This provides defense-in-depth on top of the namespace isolation.
 //!
 //! # ABI version
 //!
@@ -377,7 +376,7 @@ fn check_deny_conflicts(filesystem: &FilesystemPolicy) {
                     deny = %expanded.display(),
                     parent_allow = %allowed.display(),
                     "deny path is under an allowed path — landlock cannot enforce this denial \
-                     (bubblewrap tmpfs overlay handles it instead)"
+                     (sandbox tmpfs overlay handles it instead)"
                 );
             }
         }

@@ -7,18 +7,18 @@
 //! 1. Resolving domain names to IP addresses before sandbox entry
 //! 2. Creating a user+network namespace pair via `unshare`
 //! 3. Starting pasta to configure networking in that namespace
-//! 4. Running bwrap inside the namespace via `nsenter` (inheriting the
-//!    filtered network instead of using `--unshare-net`)
+//! 4. Running the sandbox process inside the namespace via `nsenter`
+//!    (inheriting the filtered network)
 //! 5. Applying nftables rules inside the namespace to restrict outbound
 //!    traffic to only the resolved IPs
 //!
-//! ## Why not `--unshare-net` inside bwrap?
+//! ## Why a separate network namespace?
 //!
-//! bwrap implicitly creates a user namespace when run unprivileged.
-//! Network namespaces are *owned* by the user namespace they were created
-//! in, and `setns(CLONE_NEWNET)` requires `CAP_SYS_ADMIN` in the owning
-//! user namespace. By creating the namespaces ourselves first, pasta can
-//! configure networking before bwrap starts.
+//! The sandbox creates its own user namespace. Network namespaces are
+//! *owned* by the user namespace they were created in, and
+//! `setns(CLONE_NEWNET)` requires `CAP_SYS_ADMIN` in the owning user
+//! namespace. By creating the namespaces ourselves first, pasta can
+//! configure networking before the sandbox starts.
 
 use std::fmt::Write as _;
 use std::net::ToSocketAddrs;
@@ -156,7 +156,7 @@ impl NetworkFilter {
     /// distros with `ip_tables`.
     ///
     /// The script:
-    /// 1. Verifies `tap0` device exists (created by TAP provider before bwrap)
+    /// 1. Verifies `tap0` device exists (created by TAP provider before sandbox)
     /// 2. Sets default output policy to DROP (blocks both IPv4 and IPv6 with nft)
     /// 3. Allows loopback and optionally DNS
     /// 4. Allows each resolved IP+port combination
@@ -261,8 +261,8 @@ exec "$@"
     /// **Note:** This runs the firewall setup and inner command in the same
     /// process. The caller must ensure the process has `CAP_NET_ADMIN` in
     /// the network namespace (e.g., by running as root in a user namespace).
-    /// If the inner command runs inside a nested user namespace (like bwrap
-    /// with `--unshare-user`), use [`Self::apply_firewall_via_nsenter`]
+    /// If the inner command runs inside a nested user namespace, use
+    /// [`Self::apply_firewall_via_nsenter`]
     /// instead.
     #[must_use]
     pub fn wrap_command(&self, inner_cmd: &[String]) -> Vec<String> {
@@ -334,8 +334,8 @@ exec "$@"
 /// Holds a user+network namespace pair created via `unshare`.
 ///
 /// The namespace is kept alive by a long-running `sleep` process.
-/// pasta configures this namespace, and bwrap enters it via
-/// `nsenter` instead of creating its own with `--unshare-net`.
+/// pasta configures this namespace, and the sandbox enters it via
+/// `nsenter` instead of creating its own network namespace.
 ///
 /// On drop, the holder process is killed, which destroys the namespace.
 #[derive(Debug)]
@@ -492,7 +492,7 @@ impl TapHandle {
 /// Build an nsenter prefix command that enters the given namespace.
 ///
 /// Returns a `Command` for `nsenter --user=... --net=... --preserve-credentials --no-fork`
-/// which should have the actual bwrap command appended to it.
+/// which should have the actual sandbox command appended to it.
 #[must_use]
 pub fn nsenter_command(ns: &NamespaceHandle) -> Command {
     let mut cmd = Command::new("nsenter");
@@ -509,7 +509,7 @@ pub fn nsenter_command(ns: &NamespaceHandle) -> Command {
 /// Scan `/proc` to find a child process of the given parent PID.
 ///
 /// Returns the first PID whose `PPid` field in `/proc/[pid]/status`
-/// matches `parent_pid`. This is used to find the bwrap child process
+/// matches `parent_pid`. This is used to find the sandboxed child process
 /// inside the new PID namespace.
 #[must_use]
 pub fn find_child_pid(parent_pid: u32) -> Option<u32> {

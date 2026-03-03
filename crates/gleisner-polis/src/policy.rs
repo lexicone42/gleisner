@@ -3,7 +3,7 @@
 //! Provides runtime policy checking against the profile's allowlists
 //! and denylists. These functions **classify** events for the audit
 //! trail (allowed vs. denied) — actual enforcement is handled by
-//! bwrap's namespace isolation.
+//! the sandbox's namespace isolation.
 
 use std::path::Path;
 
@@ -11,16 +11,11 @@ use gleisner_scapes::audit::EventResult;
 
 use crate::profile::{FilesystemPolicy, NetworkPolicy, PolicyDefault, Profile};
 
-/// Serializable policy for the sandbox-init binary.
+/// Serializable Landlock policy for backward compatibility.
 ///
-/// The parent orchestrator writes this to a tempfile as JSON, bind-mounts
-/// it into the bwrap sandbox, and the `gleisner-sandbox-init` binary reads
-/// it to apply Landlock restrictions before exec-ing the inner command.
-///
-/// This struct lives in `policy.rs` (not `landlock.rs`) because it contains
-/// only serde-serializable data with no `landlock` crate dependencies,
-/// and must be importable on all platforms (including non-Linux where the
-/// `landlock` module is cfg-gated out).
+/// Retained for attestation bundle format stability. New code should prefer
+/// [`SandboxSpec`] which includes Landlock policy plus all other sandbox
+/// configuration.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LandlockPolicy {
     /// Filesystem access rules (readonly binds, readwrite binds, deny paths, tmpfs).
@@ -31,6 +26,49 @@ pub struct LandlockPolicy {
     pub project_dir: std::path::PathBuf,
     /// Additional paths from `--allow-path` CLI flags.
     pub extra_rw_paths: Vec<std::path::PathBuf>,
+}
+
+/// Complete sandbox specification — passed to `gleisner-sandbox-init` as JSON.
+///
+/// The parent orchestrator (polis `DirectSandbox`) serializes this to a pipe,
+/// and `gleisner-sandbox-init` reads it to set up the full container:
+/// user namespace → mount namespace → PID namespace → bind mounts → Landlock → exec.
+///
+/// This replaces the previous bwrap CLI flags and `LandlockPolicy` JSON tempfile.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SandboxSpec {
+    /// Filesystem access rules (readonly binds, readwrite binds, deny paths, tmpfs).
+    pub filesystem: FilesystemPolicy,
+    /// Network access rules (used for Landlock network port filtering).
+    pub network: NetworkPolicy,
+    /// Process isolation settings.
+    pub process: crate::profile::ProcessPolicy,
+    /// Project directory — always gets read-write access.
+    pub project_dir: std::path::PathBuf,
+    /// Additional paths from `--allow-path` CLI flags and plugin policy.
+    pub extra_rw_paths: Vec<std::path::PathBuf>,
+    /// Working directory inside the sandbox.
+    pub work_dir: std::path::PathBuf,
+    /// The inner command to exec after sandbox setup.
+    pub inner_command: Vec<String>,
+    /// Whether to apply Landlock restrictions (false = skip).
+    pub enable_landlock: bool,
+    /// Whether the caller has pre-created a network namespace
+    /// (sandbox-init should skip `--unshare-net` equivalent).
+    pub use_external_netns: bool,
+    /// Real UID to map inside the user namespace.
+    pub uid: u32,
+    /// Real GID to map inside the user namespace.
+    pub gid: u32,
+    /// Optional resource limits for rootless cgroup delegation.
+    ///
+    /// When set, `gleisner-sandbox-init` creates a cgroup scope and moves
+    /// itself into it *before* calling `unshare()`. This works rootless
+    /// because cgroup migration of the current task is allowed without
+    /// `CAP_SYS_ADMIN` — the kernel only blocks *cross-process* migration.
+    /// After `unshare()`, the new namespaced process inherits the cgroup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_limits: Option<crate::profile::ResourceLimits>,
 }
 
 /// The type of file access being evaluated.
