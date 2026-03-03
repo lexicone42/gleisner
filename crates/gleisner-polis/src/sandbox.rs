@@ -32,6 +32,8 @@ pub struct DirectSandbox {
     extra_rw_paths: Vec<PathBuf>,
     /// Whether to apply Landlock restrictions inside the sandbox.
     enable_landlock: bool,
+    /// Whether to skip cgroup resource limits inside the sandbox.
+    no_cgroups: bool,
     /// Path to the `gleisner-sandbox-init` binary.
     init_bin: PathBuf,
 }
@@ -59,6 +61,7 @@ impl DirectSandbox {
             extra_allow_domains: Vec::new(),
             extra_rw_paths: Vec::new(),
             enable_landlock: true,
+            no_cgroups: false,
             init_bin,
         })
     }
@@ -76,6 +79,11 @@ impl DirectSandbox {
     /// Disable Landlock enforcement inside the sandbox.
     pub const fn disable_landlock(&mut self) {
         self.enable_landlock = false;
+    }
+
+    /// Disable rootless cgroup resource limits inside the sandbox.
+    pub const fn disable_cgroups(&mut self) {
+        self.no_cgroups = true;
     }
 
     /// Build the sandbox spec and launch command.
@@ -145,6 +153,11 @@ impl DirectSandbox {
             use_external_netns,
             uid,
             gid,
+            resource_limits: if self.no_cgroups {
+                None
+            } else {
+                Some(self.profile.resources.clone())
+            },
         }
     }
 
@@ -297,6 +310,7 @@ mod tests {
             extra_allow_domains: vec![],
             extra_rw_paths: vec![],
             enable_landlock: true,
+            no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
         };
 
@@ -328,6 +342,7 @@ mod tests {
             extra_allow_domains: vec![],
             extra_rw_paths: vec![PathBuf::from("~/.cargo")],
             enable_landlock: true,
+            no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
         };
 
@@ -372,6 +387,7 @@ mod tests {
             extra_allow_domains: vec![],
             extra_rw_paths: vec![],
             enable_landlock: true,
+            no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
         };
 
@@ -388,6 +404,7 @@ mod tests {
             extra_allow_domains: vec![],
             extra_rw_paths: vec![],
             enable_landlock: true,
+            no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
         };
 
@@ -424,6 +441,7 @@ mod tests {
             use_external_netns: false,
             uid: 1000,
             gid: 1000,
+            resource_limits: None,
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");

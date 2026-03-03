@@ -1058,11 +1058,12 @@ fn sandboxed_query_builds_sandbox_command() {
     }
 
     let config = gleisner_polis::SandboxSessionConfig {
-        profile: profile,
+        profile,
         project_dir: PathBuf::from("/tmp/test-project"),
         extra_allow_network: vec![],
         extra_allow_paths: vec![],
         no_landlock: true,
+        no_cgroups: true,
     };
 
     let inner = vec![

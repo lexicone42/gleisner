@@ -60,6 +60,15 @@ pub struct SandboxSpec {
     pub uid: u32,
     /// Real GID to map inside the user namespace.
     pub gid: u32,
+    /// Optional resource limits for rootless cgroup delegation.
+    ///
+    /// When set, `gleisner-sandbox-init` creates a cgroup scope and moves
+    /// itself into it *before* calling `unshare()`. This works rootless
+    /// because cgroup migration of the current task is allowed without
+    /// `CAP_SYS_ADMIN` — the kernel only blocks *cross-process* migration.
+    /// After `unshare()`, the new namespaced process inherits the cgroup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_limits: Option<crate::profile::ResourceLimits>,
 }
 
 /// The type of file access being evaluated.

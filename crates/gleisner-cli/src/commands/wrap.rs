@@ -94,6 +94,7 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
         extra_allow_network: args.allow_network,
         extra_allow_paths: args.allow_path,
         no_landlock: args.no_landlock,
+        no_cgroups: false,
     };
 
     let mut prepared = gleisner_polis::prepare_sandbox(config, &inner_command)?;

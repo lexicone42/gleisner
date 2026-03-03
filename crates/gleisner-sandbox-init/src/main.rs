@@ -94,6 +94,7 @@ mod tests {
             use_external_netns: false,
             uid: 1000,
             gid: 1000,
+            resource_limits: None,
         };
 
         let json = serde_json::to_string(&spec).unwrap();

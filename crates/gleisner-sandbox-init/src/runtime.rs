@@ -26,6 +26,38 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
         nix::libc::prctl(nix::libc::PR_SET_PDEATHSIG, nix::libc::SIGKILL);
     }
 
+    // ── 0b. Rootless cgroup delegation ─────────────────────────────
+    // Create a cgroup scope and move ourselves into it BEFORE unshare().
+    // The kernel allows a process to migrate itself within a writable
+    // cgroup hierarchy without CAP_SYS_ADMIN — it only blocks cross-process
+    // migration. After unshare(), the new namespaced process inherits its
+    // cgroup membership, so limits apply without any privilege escalation.
+    let _cgroup_guard = if let Some(ref limits) = spec.resource_limits {
+        match gleisner_polis::CgroupScope::create(limits) {
+            Ok(scope) => {
+                let pid = std::process::id();
+                match scope.add_pid(pid) {
+                    Ok(()) => {
+                        eprintln!(
+                            "gleisner-sandbox-init: cgroup limits applied (rootless, pid={pid})"
+                        );
+                        Some(scope)
+                    }
+                    Err(e) => {
+                        eprintln!("gleisner-sandbox-init: cgroup add_pid failed (continuing): {e}");
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("gleisner-sandbox-init: cgroup creation failed (continuing): {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // ── 1. Create namespaces ──────────────────────────────────────
     let mut clone_flags = CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS;
     if spec.process.pid_namespace {
@@ -259,6 +291,20 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
 
     umount2("/old_root", MntFlags::MNT_DETACH).map_err(|e| format!("unmount old_root: {e}"))?;
     fs::remove_dir("/old_root").ok();
+
+    // ── Post-pivot hardening ─────────────────────────────────────
+    // Ensure the new root has fully private mount propagation.
+    // The pre-pivot MS_PRIVATE on "/" affected the old root; after
+    // pivot_root, "/" is a new mount. Making it recursively private
+    // prevents any mount events from leaking between sandbox and host.
+    mount(
+        None::<&str>,
+        "/",
+        None::<&str>,
+        MsFlags::MS_REC | MsFlags::MS_PRIVATE,
+        None::<&str>,
+    )
+    .map_err(|e| format!("post-pivot mount propagation isolation failed: {e}"))?;
 
     Ok(())
 }

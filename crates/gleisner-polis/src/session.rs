@@ -28,6 +28,8 @@ pub struct SandboxSessionConfig {
     pub extra_allow_paths: Vec<PathBuf>,
     /// Skip Landlock filesystem access control.
     pub no_landlock: bool,
+    /// Skip cgroup resource limits inside the sandbox.
+    pub no_cgroups: bool,
 }
 
 /// A fully prepared sandbox, ready to spawn.
@@ -109,9 +111,12 @@ pub fn prepare_sandbox(
     // ── 4. Merge plugin policy ────────────────────────────────────
     apply_plugin_sandbox_policy(&mut sandbox);
 
-    // ── 5. Landlock ──────────────────────────────────────────────
+    // ── 5. Landlock and cgroups ────────────────────────────────────
     if config.no_landlock {
         sandbox.disable_landlock();
+    }
+    if config.no_cgroups {
+        sandbox.disable_cgroups();
     }
 
     // ── 6. Resolve network filter ─────────────────────────────────
@@ -245,6 +250,7 @@ mod tests {
             extra_allow_network: vec![],
             extra_allow_paths: vec![],
             no_landlock: true,
+            no_cgroups: true,
         };
 
         let inner = vec!["/bin/echo".to_owned(), "hello".to_owned()];
@@ -274,6 +280,7 @@ mod tests {
             extra_allow_network: vec!["extra.example.com".to_owned()],
             extra_allow_paths: vec![],
             no_landlock: true,
+            no_cgroups: true,
         };
 
         let inner = vec!["/bin/true".to_owned()];
@@ -297,6 +304,7 @@ mod tests {
             extra_allow_network: vec![],
             extra_allow_paths: vec![],
             no_landlock: true,
+            no_cgroups: true,
         };
 
         let inner = vec!["/bin/true".to_owned()];

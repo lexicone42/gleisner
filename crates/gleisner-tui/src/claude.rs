@@ -444,6 +444,7 @@ fn build_sandboxed_command(
         extra_allow_network: sandbox_cfg.extra_allow_network.clone(),
         extra_allow_paths: extra_paths,
         no_landlock: false, // TUI always enables Landlock when available
+        no_cgroups: false,
     };
 
     let prepared = gleisner_polis::prepare_sandbox(session_config, &full_inner)?;
