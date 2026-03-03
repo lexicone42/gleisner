@@ -47,6 +47,17 @@ pub struct ForgeArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// Deployment target: local (default), gcp, or aws.
+    /// With --dry-run, includes deployment commands in the output.
+    /// With --run, executes the deployment on the specified target.
+    #[arg(long, default_value = "local")]
+    pub target: String,
+
+    /// Path to a JSON file with target-specific configuration.
+    /// Required for gcp and aws targets (project ID, bucket, region, etc.).
+    #[arg(long)]
+    pub target_config: Option<PathBuf>,
+
     /// Also run Claude Code inside a sandbox derived from the composed environment.
     #[arg(long)]
     pub run: bool,
@@ -181,7 +192,37 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
 
     // --dry-run: print JSON to stdout and exit (no files written, no sandbox)
     if args.dry_run {
-        println!("{}", serde_json::to_string_pretty(&full_json)?);
+        let deploy_target = parse_deploy_target(&args.target, &args.target_config)?;
+        let mut output_json = full_json.clone();
+
+        // Include deploy spec for non-local targets
+        if !matches!(deploy_target, gleisner_forge::deploy::DeployTarget::Local) {
+            let session_id = {
+                use sha2::{Digest, Sha256};
+                let hash = Sha256::digest(
+                    serde_json::to_string(&full_json)
+                        .unwrap_or_default()
+                        .as_bytes(),
+                );
+                format!(
+                    "{}-{}",
+                    chrono::Utc::now().format("%Y%m%d-%H%M%S"),
+                    &hex::encode(hash)[..8],
+                )
+            };
+            let deploy_input = gleisner_forge::deploy::DeployInput {
+                forge_json: &full_json,
+                report: &report,
+                project_dir: &project_dir,
+                claude_image: &args.claude_bin,
+                claude_args: &args.claude_args,
+                session_id: &session_id,
+            };
+            let spec = gleisner_forge::deploy::generate_deploy_spec(&deploy_target, &deploy_input);
+            output_json["deploy"] = serde_json::to_value(&spec)?;
+        }
+
+        println!("{}", serde_json::to_string_pretty(&output_json)?);
         return Ok(());
     }
 
@@ -362,6 +403,41 @@ fn run_in_composed_sandbox(
     );
 
     std::process::exit(exit_code);
+}
+
+/// Parse the `--target` and `--target-config` flags into a `DeployTarget`.
+fn parse_deploy_target(
+    target: &str,
+    config_path: &Option<PathBuf>,
+) -> Result<gleisner_forge::deploy::DeployTarget> {
+    match target {
+        "local" => Ok(gleisner_forge::deploy::DeployTarget::Local),
+        "gcp" => {
+            let path = config_path.as_ref().ok_or_else(|| {
+                eyre!(
+                    "--target-config is required for GCP target (JSON with project, region, bucket)"
+                )
+            })?;
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| eyre!("failed to read target config '{}': {e}", path.display()))?;
+            let config: gleisner_forge::deploy::GcpConfig =
+                serde_json::from_str(&content).map_err(|e| eyre!("invalid GCP config: {e}"))?;
+            Ok(gleisner_forge::deploy::DeployTarget::Gcp(config))
+        }
+        "aws" => {
+            let path = config_path.as_ref().ok_or_else(|| {
+                eyre!("--target-config is required for AWS target (JSON with region, bucket)")
+            })?;
+            let content = std::fs::read_to_string(path)
+                .map_err(|e| eyre!("failed to read target config '{}': {e}", path.display()))?;
+            let config: gleisner_forge::deploy::AwsConfig =
+                serde_json::from_str(&content).map_err(|e| eyre!("invalid AWS config: {e}"))?;
+            Ok(gleisner_forge::deploy::DeployTarget::Aws(config))
+        }
+        other => Err(eyre!(
+            "unknown deploy target '{other}' (valid: local, gcp, aws)"
+        )),
+    }
 }
 
 /// Stub for non-Linux platforms.
