@@ -4,7 +4,7 @@
 # This script:
 # 1. Builds gleisner release binary (if not already built)
 # 2. Uploads binary + minimal.dev package tree + stdlib to S3
-# 3. Launches an EC2 instance with user-data that sets up the environment
+# 3. Launches an Amazon Linux 2023 (kernel 6.12) EC2 instance with user-data
 # 4. Waits for the session to complete
 # 5. Downloads the session manifest and forge output from S3
 #
@@ -145,20 +145,12 @@ exec > /var/log/gleisner-deploy.log 2>&1
 
 echo "gleisner-deploy: starting at \$(date -Iseconds)"
 
-# Install AWS CLI if not present (Amazon Linux 2023 has it, Debian may not)
-if ! command -v aws &>/dev/null; then
-    apt-get update -qq && apt-get install -y -qq awscli
-fi
-
-# Install pasta for user-namespace networking
-if ! command -v pasta &>/dev/null; then
-    apt-get update -qq && apt-get install -y -qq passt || true
-fi
-
-# Install nftables for sandbox firewall
-if ! command -v nft &>/dev/null; then
-    apt-get update -qq && apt-get install -y -qq nftables || true
-fi
+# AL2023 has AWS CLI pre-installed.
+# Sandbox deps (pasta, nftables) are only needed for --run mode.
+# For --dry-run (evaluation only), these are optional.
+dnf install -y -q nftables 2>/dev/null || true
+# passt may not be in AL2023 repos — only needed for sandbox networking
+dnf install -y -q passt 2>/dev/null || true
 
 # Create working directory
 WORK_DIR="/opt/gleisner-session"
@@ -241,7 +233,7 @@ USERDATA
 echo "deploy: launching EC2 instance (${INSTANCE_TYPE})..." >&2
 
 LAUNCH_ARGS=(
-    --image-id "resolve:ssm:/aws/service/debian/release/12/latest/amd64"
+    --image-id "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.12-x86_64"
     --instance-type "$INSTANCE_TYPE"
     --region "$REGION"
     --instance-initiated-shutdown-behavior terminate

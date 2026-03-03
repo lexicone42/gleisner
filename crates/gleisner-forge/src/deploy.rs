@@ -709,7 +709,7 @@ shutdown -h now"#,
 
     let mut create_cmd = format!(
         "aws ec2 run-instances \
-         --image-id resolve:ssm:/aws/service/debian/release/12/latest/amd64 \
+         --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.12-x86_64 \
          --instance-type {instance_type} \
          --tag-specifications 'ResourceType=instance,Tags=[{{Key=Name,Value={instance_name}}}]' \
          --user-data '{user_data}'",
