@@ -126,6 +126,9 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
     eprintln!("gleisner-sandbox-init: namespaces created (ipc+uts isolated)");
 
     // ── 2. Map UID/GID ────────────────────────────────────────────
+    // Order matters: uid_map first, then deny setgroups, then gid_map.
+    // The kernel requires setgroups to be "deny" BEFORE writing gid_map
+    // when we lack CAP_SETGID in the parent user namespace.
     write_id_map("/proc/self/uid_map", spec.uid, spec.uid)?;
     fs::write("/proc/self/setgroups", "deny")
         .map_err(|e| format!("failed to write setgroups: {e}"))?;
@@ -294,6 +297,12 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
 
     // ── Phase 1: Read-only bind mounts ───────────────────────────
     let home_dir = std::env::var("HOME").ok().map(PathBuf::from);
+    if home_dir.is_none() {
+        eprintln!(
+            "gleisner-sandbox-init: $HOME unset, symlink target resolution in \
+             user directories will be skipped"
+        );
+    }
     let mut deferred_symlink_targets: Vec<PathBuf> = Vec::new();
 
     for path in &spec.filesystem.readonly_bind {
@@ -550,7 +559,9 @@ fn setup_minimal_dev(new_root: &Path) -> Result<(), String> {
     // target doesn't exist.
     let ptmx_target = dev_dir.join("ptmx");
     if pts_dir.join("ptmx").exists() {
-        std::os::unix::fs::symlink("pts/ptmx", &ptmx_target).ok();
+        if let Err(e) = std::os::unix::fs::symlink("pts/ptmx", &ptmx_target) {
+            eprintln!("gleisner-sandbox-init: symlink /dev/ptmx -> pts/ptmx failed: {e}");
+        }
     } else if Path::new("/dev/ptmx").exists() {
         fs::write(&ptmx_target, b"").map_err(|e| format!("create /dev/ptmx: {e}"))?;
         mount(
@@ -579,10 +590,16 @@ fn setup_minimal_dev(new_root: &Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use std::os::unix::fs::symlink;
-        symlink("/proc/self/fd", dev_dir.join("fd")).ok();
-        symlink("/proc/self/fd/0", dev_dir.join("stdin")).ok();
-        symlink("/proc/self/fd/1", dev_dir.join("stdout")).ok();
-        symlink("/proc/self/fd/2", dev_dir.join("stderr")).ok();
+        for (target, link_name) in [
+            ("/proc/self/fd", "fd"),
+            ("/proc/self/fd/0", "stdin"),
+            ("/proc/self/fd/1", "stdout"),
+            ("/proc/self/fd/2", "stderr"),
+        ] {
+            if let Err(e) = symlink(target, dev_dir.join(link_name)) {
+                eprintln!("gleisner-sandbox-init: symlink /dev/{link_name}: {e}");
+            }
+        }
     }
 
     Ok(())
@@ -671,6 +688,30 @@ fn write_timens_monotonic_offset() -> Result<(), String> {
         .map_err(|e| format!("timens_offsets write: {e}"))
 }
 
+/// Close all file descriptors above stderr (FD 3+) to prevent leaking
+/// orchestrator state into the sandboxed process.
+///
+/// Uses `/proc/self/fd` to enumerate open FDs efficiently rather than
+/// brute-forcing a range. Falls back to closing FDs 3..1024 if procfs
+/// is unavailable.
+fn close_inherited_fds() {
+    let fds_to_close: Vec<i32> = if let Ok(entries) = fs::read_dir("/proc/self/fd") {
+        entries
+            .flatten()
+            .filter_map(|e| e.file_name().to_str()?.parse::<i32>().ok())
+            .filter(|&fd| fd > 2)
+            .collect()
+    } else {
+        (3..1024).collect()
+    };
+    for fd in fds_to_close {
+        // SAFETY: close() on an invalid FD returns EBADF which we ignore.
+        unsafe {
+            nix::libc::close(fd);
+        }
+    }
+}
+
 /// Fork a child process that enters the time (and PID) namespace, then exec.
 ///
 /// `unshare(CLONE_NEWTIME)` and `unshare(CLONE_NEWPID)` only put *children*
@@ -721,8 +762,47 @@ fn fork_and_exec(inner_command: &[String]) -> Result<(), String> {
                 eprintln!("gleisner-sandbox-init: /proc remounted (namespace-aware)");
             }
 
+            // Close inherited file descriptors (3..max) before exec.
+            // The orchestrator passes a spec tempfile and may hold other FDs.
+            // Leaving them open lets the inner process read orchestrator state
+            // via /proc/self/fd — bwrap handled this with --noinherit-fds.
+            close_inherited_fds();
+
+            // Sanitize environment: start from a clean slate and only pass
+            // through safe variables. The orchestrator's env may contain
+            // secrets (API keys, tokens) or information leaks (CI variables,
+            // gleisner internal state).
             let program = &inner_command[0];
-            let err = Command::new(program).args(&inner_command[1..]).exec();
+            let mut cmd = Command::new(program);
+            cmd.args(&inner_command[1..]);
+            cmd.env_clear();
+            // Preserve essential variables from the current environment.
+            for key in &[
+                "PATH",
+                "HOME",
+                "USER",
+                "LOGNAME",
+                "SHELL",
+                "TERM",
+                "LANG",
+                "LC_ALL",
+                "TMPDIR",
+                "XDG_RUNTIME_DIR",
+                "XDG_CONFIG_HOME",
+                "XDG_CACHE_HOME",
+                "XDG_DATA_HOME",
+            ] {
+                if let Ok(val) = std::env::var(key) {
+                    cmd.env(key, val);
+                }
+            }
+            // Pass through ANTHROPIC_* for Claude Code API access.
+            for (key, val) in std::env::vars() {
+                if key.starts_with("ANTHROPIC_") || key.starts_with("CLAUDE_") {
+                    cmd.env(&key, val);
+                }
+            }
+            let err = cmd.exec();
             // exec only returns on error
             eprintln!("gleisner-sandbox-init: failed to exec {program}: {err}");
             std::process::exit(127);
