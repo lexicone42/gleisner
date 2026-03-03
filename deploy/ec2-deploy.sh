@@ -4,7 +4,7 @@
 # This script:
 # 1. Builds gleisner release binary (if not already built)
 # 2. Uploads binary + minimal.dev package tree + stdlib to S3
-# 3. Launches an Amazon Linux 2023 (kernel 6.12) EC2 instance with user-data
+# 3. Launches a Fedora 42 (kernel 6.18, Landlock V7) EC2 instance with user-data
 # 4. Waits for the session to complete
 # 5. Downloads the session manifest and forge output from S3
 #
@@ -145,12 +145,12 @@ exec > /var/log/gleisner-deploy.log 2>&1
 
 echo "gleisner-deploy: starting at \$(date -Iseconds)"
 
-# AL2023 has AWS CLI pre-installed.
-# Sandbox deps (pasta, nftables) are only needed for --run mode.
-# For --dry-run (evaluation only), these are optional.
-dnf install -y -q nftables 2>/dev/null || true
-# passt may not be in AL2023 repos — only needed for sandbox networking
-dnf install -y -q passt 2>/dev/null || true
+# Fedora 42 (kernel 6.18) — full Landlock V7 audit support.
+# Install AWS CLI + sandbox dependencies.
+dnf install -y -q awscli2 nftables passt 2>/dev/null || dnf install -y -q awscli nftables passt 2>/dev/null || true
+if ! command -v aws &>/dev/null; then
+    dnf install -y -q python3-pip && pip3 install awscli 2>/dev/null || true
+fi
 
 # Create working directory
 WORK_DIR="/opt/gleisner-session"
@@ -230,10 +230,27 @@ USERDATA
 )
 
 # ── Step 4: Launch EC2 instance ───────────────────────────────────────
+# Resolve latest Fedora 42 Cloud AMI (kernel 6.18 — full Landlock V7 support)
+echo "deploy: resolving latest Fedora 42 AMI in ${REGION}..." >&2
+AMI_ID=$(aws ec2 describe-images \
+    --region "$REGION" \
+    --owners 125523088429 \
+    --filters "Name=name,Values=Fedora-Cloud-Base-AmazonEC2.x86_64-42-*" \
+              "Name=architecture,Values=x86_64" \
+              "Name=state,Values=available" \
+    --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
+    --output text)
+
+if [[ -z "$AMI_ID" || "$AMI_ID" == "None" ]]; then
+    echo "error: could not find Fedora 42 AMI in ${REGION}" >&2
+    exit 1
+fi
+echo "deploy: using AMI ${AMI_ID}" >&2
+
 echo "deploy: launching EC2 instance (${INSTANCE_TYPE})..." >&2
 
 LAUNCH_ARGS=(
-    --image-id "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.12-x86_64"
+    --image-id "$AMI_ID"
     --instance-type "$INSTANCE_TYPE"
     --region "$REGION"
     --instance-initiated-shutdown-behavior terminate

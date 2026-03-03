@@ -709,7 +709,9 @@ shutdown -h now"#,
 
     let mut create_cmd = format!(
         "aws ec2 run-instances \
-         --image-id resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-6.12-x86_64 \
+         --image-id $(aws ec2 describe-images --owners 125523088429 \
+           --filters 'Name=name,Values=Fedora-Cloud-Base-AmazonEC2.x86_64-42-*' \
+           --query 'Images|sort_by(@,&CreationDate)|[-1].ImageId' --output text) \
          --instance-type {instance_type} \
          --tag-specifications 'ResourceType=instance,Tags=[{{Key=Name,Value={instance_name}}}]' \
          --user-data '{user_data}'",
