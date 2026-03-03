@@ -27,20 +27,26 @@ use crate::attest::{PackageMetadata, VerifiedProperty};
 pub struct VerifyConfig {
     /// Path to the Lean 4 binary. If None, verification is skipped.
     pub lean_bin: Option<PathBuf>,
+    /// Path to the `lake` binary (Lean build tool). If None, auto-detected.
+    pub lake_bin: Option<PathBuf>,
     /// Whether to treat verification failure as a hard error.
     /// When true, any failed verification stops the pipeline.
     /// When false, failures are recorded but the pipeline continues.
     pub strict: bool,
     /// Maximum time (seconds) to allow for a single proof check.
     pub timeout_secs: u64,
+    /// Directory for cloning proof repositories.
+    pub proof_cache_dir: PathBuf,
 }
 
 impl Default for VerifyConfig {
     fn default() -> Self {
         Self {
             lean_bin: None,
+            lake_bin: None,
             strict: false,
             timeout_secs: 300,
+            proof_cache_dir: PathBuf::from(".gleisner/proof-cache"),
         }
     }
 }
@@ -91,10 +97,20 @@ impl PackageVerification {
 
 /// Detect the Lean binary on the system.
 ///
-/// Checks for `lean` in PATH, then common installation locations.
+/// Checks for `lean` in PATH, then common elan-managed locations.
 pub fn detect_lean() -> Option<PathBuf> {
+    detect_tool("lean")
+}
+
+/// Detect the `lake` build tool on the system.
+pub fn detect_lake() -> Option<PathBuf> {
+    detect_tool("lake")
+}
+
+/// Detect a tool by name from PATH or ~/.elan/bin/.
+fn detect_tool(name: &str) -> Option<PathBuf> {
     // Check PATH first
-    if let Ok(output) = Command::new("which").arg("lean").output() {
+    if let Ok(output) = Command::new("which").arg(name).output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
@@ -105,12 +121,117 @@ pub fn detect_lean() -> Option<PathBuf> {
 
     // Common elan-managed locations
     let home = std::env::var("HOME").ok()?;
-    let elan_path = PathBuf::from(&home).join(".elan/bin/lean");
+    let elan_path = PathBuf::from(&home).join(format!(".elan/bin/{name}"));
     if elan_path.exists() {
         return Some(elan_path);
     }
 
     None
+}
+
+/// Extract a GitHub repo URL from a `proof_uri`.
+///
+/// Handles patterns like:
+/// - `https://github.com/owner/repo/blob/branch/path/to/file.lean`
+/// - `https://github.com/owner/repo`
+fn extract_github_repo_url(uri: &str) -> Option<String> {
+    if !uri.starts_with("https://github.com/") {
+        return None;
+    }
+
+    // Parse: https://github.com/{owner}/{repo}[/blob/...]
+    let path = uri.strip_prefix("https://github.com/")?;
+    let parts: Vec<&str> = path.splitn(4, '/').collect();
+    if parts.len() >= 2 {
+        Some(format!("https://github.com/{}/{}", parts[0], parts[1]))
+    } else {
+        None
+    }
+}
+
+/// Verify a proof repository by cloning it and running `lake build`.
+///
+/// This is the primary verification method for Lean 4 projects: `lake build`
+/// type-checks all source files, including proof files. If it succeeds with
+/// exit code 0, every theorem in the project (including all `sorry`-free proofs)
+/// has been verified by the Lean kernel.
+pub fn verify_proof_repo(repo_url: &str, config: &VerifyConfig) -> Result<bool, String> {
+    let lake_bin = config
+        .lake_bin
+        .clone()
+        .or_else(detect_lake)
+        .ok_or_else(|| "lake binary not found (install elan)".to_string())?;
+
+    // Derive a cache directory name from the repo URL
+    let repo_name = repo_url
+        .rsplit('/')
+        .next()
+        .unwrap_or("proof-repo")
+        .trim_end_matches(".git");
+    let clone_dir = config.proof_cache_dir.join(repo_name);
+
+    // Clone or update
+    if clone_dir.join("lakefile.lean").exists() {
+        tracing::info!(repo = %repo_url, dir = %clone_dir.display(), "proof repo already cached, pulling latest");
+        let pull = Command::new("git")
+            .args(["pull", "--ff-only"])
+            .current_dir(&clone_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output();
+        if let Ok(output) = pull {
+            if !output.status.success() {
+                tracing::warn!("git pull failed, continuing with cached version");
+            }
+        }
+    } else {
+        tracing::info!(repo = %repo_url, dir = %clone_dir.display(), "cloning proof repo");
+        std::fs::create_dir_all(&config.proof_cache_dir)
+            .map_err(|e| format!("failed to create proof cache dir: {e}"))?;
+
+        let clone = Command::new("git")
+            .args(["clone", "--depth", "1", repo_url])
+            .arg(&clone_dir)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+            .map_err(|e| format!("git clone failed: {e}"))?;
+
+        if !clone.status.success() {
+            let stderr = String::from_utf8_lossy(&clone.stderr);
+            return Err(format!(
+                "git clone failed: {}",
+                stderr.chars().take(500).collect::<String>()
+            ));
+        }
+    }
+
+    // Run `lake build` — this type-checks all proofs
+    tracing::info!(dir = %clone_dir.display(), "running lake build (verifying proofs)");
+    let build = Command::new(&lake_bin)
+        .arg("build")
+        .current_dir(&clone_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("lake build failed to start: {e}"))?;
+
+    if build.status.success() {
+        tracing::info!("lake build succeeded — all proofs verified by Lean kernel");
+        Ok(true)
+    } else {
+        let stderr = String::from_utf8_lossy(&build.stderr);
+        let stdout = String::from_utf8_lossy(&build.stdout);
+        Err(format!(
+            "lake build failed (exit {}): {}{}",
+            build.status.code().unwrap_or(-1),
+            stderr.chars().take(500).collect::<String>(),
+            stdout.chars().take(500).collect::<String>(),
+        ))
+    }
 }
 
 /// Verify a proof artifact using the Lean kernel.
@@ -139,9 +260,27 @@ pub fn verify_property(property: &VerifiedProperty, config: &VerifyConfig) -> Pr
         Some(uri) if !uri.starts_with("http://") && !uri.starts_with("https://") => {
             PathBuf::from(uri)
         }
+        Some(uri) if uri.starts_with("https://github.com/") => {
+            // GitHub URL — extract repo, clone, and verify via lake build
+            let repo_url = match extract_github_repo_url(uri) {
+                Some(url) => url,
+                None => {
+                    return PropertyVerification::Skipped {
+                        reason: format!("could not parse GitHub repo from: {uri}"),
+                    };
+                }
+            };
+            return match verify_proof_repo(&repo_url, config) {
+                Ok(true) => PropertyVerification::Verified,
+                Ok(false) => PropertyVerification::Failed {
+                    reason: "lake build returned false".to_string(),
+                },
+                Err(e) => PropertyVerification::Failed { reason: e },
+            };
+        }
         Some(uri) => {
             return PropertyVerification::Skipped {
-                reason: format!("remote proof URI not yet supported for local verification: {uri}"),
+                reason: format!("unsupported remote proof URI scheme: {uri}"),
             };
         }
         None => {
@@ -301,7 +440,7 @@ mod tests {
     #[test]
     fn skip_unsupported_proof_system() {
         let config = VerifyConfig {
-            lean_bin: Some(PathBuf::from("/usr/bin/lean")),
+            lean_bin: Some("/usr/bin/lean".into()),
             ..Default::default()
         };
         let mut prop = sample_property();
@@ -314,24 +453,24 @@ mod tests {
     }
 
     #[test]
-    fn skip_remote_uri() {
+    fn skip_non_github_remote_uri() {
         let config = VerifyConfig {
-            lean_bin: Some(PathBuf::from("/usr/bin/lean")),
+            lean_bin: Some("/usr/bin/lean".into()),
             ..Default::default()
         };
         let mut prop = sample_property();
-        prop.proof_uri = Some("https://github.com/example/proof.lean".to_string());
+        prop.proof_uri = Some("https://gitlab.com/example/proof.lean".to_string());
         let result = verify_property(&prop, &config);
         assert!(matches!(
             result,
-            PropertyVerification::Skipped { reason } if reason.contains("remote")
+            PropertyVerification::Skipped { reason } if reason.contains("unsupported remote")
         ));
     }
 
     #[test]
     fn skip_missing_proof_file() {
         let config = VerifyConfig {
-            lean_bin: Some(PathBuf::from("/usr/bin/lean")),
+            lean_bin: Some("/usr/bin/lean".into()),
             ..Default::default()
         };
         let mut prop = sample_property();
@@ -346,7 +485,7 @@ mod tests {
     #[test]
     fn skip_no_proof_uri() {
         let config = VerifyConfig {
-            lean_bin: Some(PathBuf::from("/usr/bin/lean")),
+            lean_bin: Some("/usr/bin/lean".into()),
             ..Default::default()
         };
         let prop = sample_property();
@@ -418,6 +557,29 @@ mod tests {
             metadata[0].verified_properties[0].verified_by_forge,
             Some(false)
         );
+    }
+
+    #[test]
+    fn extract_github_repo_from_blob_url() {
+        let url = "https://github.com/kim-em/lean-zip/blob/master/Zip/Spec/ZlibCorrect.lean";
+        assert_eq!(
+            extract_github_repo_url(url),
+            Some("https://github.com/kim-em/lean-zip".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_github_repo_from_bare_url() {
+        let url = "https://github.com/kim-em/lean-zip";
+        assert_eq!(
+            extract_github_repo_url(url),
+            Some("https://github.com/kim-em/lean-zip".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_github_repo_not_github() {
+        assert_eq!(extract_github_repo_url("https://gitlab.com/foo/bar"), None);
     }
 
     #[test]

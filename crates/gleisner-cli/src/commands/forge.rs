@@ -168,10 +168,17 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
             }
         }
 
+        let proof_cache_dir = config
+            .store_dir
+            .parent()
+            .unwrap_or(&config.store_dir)
+            .join("proof-cache");
         let verify_config = VerifyConfig {
             lean_bin,
+            lake_bin: gleisner_forge::verify::detect_lake(),
             strict: args.strict_verify,
             timeout_secs: 300,
+            proof_cache_dir,
         };
 
         let metadata: Vec<_> = output
