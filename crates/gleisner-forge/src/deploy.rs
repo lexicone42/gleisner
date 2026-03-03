@@ -12,6 +12,8 @@
 //! can read the spec to understand what will happen, then execute the commands
 //! (or pass them to the user for review).
 
+use std::fmt::Write as _;
+
 use crate::bridge::BridgeReport;
 
 /// Deployment target for running a composed sandbox.
@@ -400,7 +402,7 @@ fn generate_gcp_cloudrun_commands(
     }
 
     if let Some(sa) = &config.service_account {
-        create_cmd.push_str(&format!(" --service-account={sa}"));
+        let _ = write!(create_cmd, " --service-account={sa}");
     }
 
     commands.push(DeployCommand {
@@ -453,7 +455,7 @@ fn generate_gcp_vm_commands(
     }
 
     if let Some(sa) = &config.service_account {
-        create_cmd.push_str(&format!(" --service-account={sa}"));
+        let _ = write!(create_cmd, " --service-account={sa}");
     }
 
     if !input.report.network.allow_internet {
@@ -644,7 +646,7 @@ fn generate_aws_fargate_commands(
     );
 
     if let Some(role) = &config.iam_role {
-        task_def.push_str(&format!(" --task-role-arn {role}"));
+        let _ = write!(task_def, " --task-role-arn {role}");
     }
 
     commands.push(DeployCommand {
@@ -718,7 +720,7 @@ shutdown -h now"#,
     }
 
     if let Some(role) = &config.iam_role {
-        create_cmd.push_str(&format!(" --iam-instance-profile Arn={role}"));
+        let _ = write!(create_cmd, " --iam-instance-profile Arn={role}");
     }
 
     if !input.report.network.allow_internet {

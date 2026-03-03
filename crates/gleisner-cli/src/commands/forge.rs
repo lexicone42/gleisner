@@ -192,7 +192,7 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
 
     // --dry-run: print JSON to stdout and exit (no files written, no sandbox)
     if args.dry_run {
-        let deploy_target = parse_deploy_target(&args.target, &args.target_config)?;
+        let deploy_target = parse_deploy_target(&args.target, args.target_config.as_ref())?;
         let mut output_json = full_json.clone();
 
         // Include deploy spec for non-local targets
@@ -244,7 +244,7 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
     if args.run {
         let manifest_path = output_path
             .parent()
-            .unwrap_or(std::path::Path::new("."))
+            .unwrap_or_else(|| std::path::Path::new("."))
             .join("session-manifest.json");
         run_in_composed_sandbox(args, &report, &project_dir, &full_json, &manifest_path)?;
     }
@@ -287,6 +287,7 @@ fn validate_against_profile(
 /// the forge output. This manifest is the trust signal a management Claude
 /// uses to verify what happened.
 #[cfg(target_os = "linux")]
+#[expect(clippy::needless_pass_by_value, reason = "args is consumed by fields")]
 fn run_in_composed_sandbox(
     args: ForgeArgs,
     report: &gleisner_forge::bridge::BridgeReport,
@@ -408,12 +409,12 @@ fn run_in_composed_sandbox(
 /// Parse the `--target` and `--target-config` flags into a `DeployTarget`.
 fn parse_deploy_target(
     target: &str,
-    config_path: &Option<PathBuf>,
+    config_path: Option<&PathBuf>,
 ) -> Result<gleisner_forge::deploy::DeployTarget> {
     match target {
         "local" => Ok(gleisner_forge::deploy::DeployTarget::Local),
         "gcp" => {
-            let path = config_path.as_ref().ok_or_else(|| {
+            let path = config_path.ok_or_else(|| {
                 eyre!(
                     "--target-config is required for GCP target (JSON with project, region, bucket)"
                 )
@@ -425,7 +426,7 @@ fn parse_deploy_target(
             Ok(gleisner_forge::deploy::DeployTarget::Gcp(config))
         }
         "aws" => {
-            let path = config_path.as_ref().ok_or_else(|| {
+            let path = config_path.ok_or_else(|| {
                 eyre!("--target-config is required for AWS target (JSON with region, bucket)")
             })?;
             let content = std::fs::read_to_string(path)
