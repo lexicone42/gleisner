@@ -518,10 +518,7 @@ mod tests {
             project_dir: project_dir.clone(),
             extra_rw_paths: vec![],
             work_dir: project_dir,
-            inner_command: inner_command
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect(),
+            inner_command: inner_command.iter().map(ToString::to_string).collect(),
             enable_landlock: false,
             use_external_netns: false,
             uid,
@@ -614,8 +611,9 @@ mod tests {
     }
 
     #[test]
-    fn e2e_sandbox_tmp_noexec() {
-        // /tmp should be noexec — verify by checking mount flags
+    fn e2e_sandbox_tmp_nosuid() {
+        // /tmp should be nosuid+nodev (NOT noexec — Node.js needs to exec
+        // temp scripts). Verify by checking mount flags in mountinfo.
         let Some(output) = run_sandboxed(&["cat", "/proc/self/mountinfo"]) else {
             eprintln!("skipping: sandbox-init not available or no user namespace support");
             return;
@@ -624,8 +622,12 @@ mod tests {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() > 5 && parts[4] == "/tmp" {
                 assert!(
-                    line.contains("noexec"),
-                    "/tmp mount should have noexec flag: {line}"
+                    line.contains("nosuid"),
+                    "/tmp mount should have nosuid flag: {line}"
+                );
+                assert!(
+                    line.contains("nodev"),
+                    "/tmp mount should have nodev flag: {line}"
                 );
                 return;
             }
@@ -665,39 +667,27 @@ mod tests {
 
     #[test]
     fn e2e_sandbox_time_namespace() {
-        // Inside the time namespace, CLOCK_MONOTONIC should be near zero
-        // (offset = negative of host uptime at sandbox creation).
-        // We verify by reading /proc/self/stat's field 22 (starttime in clock ticks)
-        // or more directly: run a command that prints monotonic time.
-        //
-        // The simplest check: read /proc/uptime inside the sandbox — in a time
-        // namespace with zeroed monotonic, this should be much smaller than the host.
-        let Some(output) = run_sandboxed(&["cat", "/proc/uptime"]) else {
+        // Verify the sandbox runs in a separate time namespace by comparing
+        // the time namespace inode inside the sandbox with the host's.
+        // (We can't check /proc/uptime because bind-mounted procfs doesn't
+        // reflect timens offsets — only clock_gettime sees the zeroed clock.)
+        let Some(sandbox_ns) = run_sandboxed(&["readlink", "/proc/self/ns/time"]) else {
             eprintln!("skipping: sandbox-init not available or no user namespace support");
             return;
         };
-        // /proc/uptime format: "seconds.fraction idle_seconds.fraction"
-        let uptime_str = output.split_whitespace().next().unwrap_or("0");
-        let uptime: f64 = uptime_str.parse().unwrap_or(0.0);
+        let host_ns = std::fs::read_link("/proc/self/ns/time")
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
 
-        // The sandbox just started, so uptime should be very small (< 10 seconds).
-        // The host has been up much longer. If time namespace is working, this
-        // value reflects sandbox-relative time, not host uptime.
-        //
-        // If time namespace is NOT supported (kernel < 5.6), the sandbox sees
-        // host uptime and this assertion would fail — but the sandbox-init
-        // gracefully continues without it, so we check if time namespace was
-        // actually created before asserting.
-        if uptime < 30.0 {
-            // Time namespace is working — uptime is sandbox-relative
-            eprintln!("time namespace confirmed: sandbox uptime = {uptime:.1}s");
-        } else {
-            // Likely no time namespace support — uptime reflects host.
-            // This is not a failure, just a feature not available.
+        let sandbox_ns = sandbox_ns.trim();
+        if sandbox_ns == host_ns {
+            // Same inode — time namespace not created (kernel may not support it).
             eprintln!(
-                "time namespace may not be active (uptime={uptime:.1}s) — \
+                "time namespace not active (same inode: {sandbox_ns}) — \
                  kernel may not support CLONE_NEWTIME"
             );
+        } else {
+            eprintln!("time namespace confirmed: sandbox={sandbox_ns} host={host_ns}");
         }
     }
 }

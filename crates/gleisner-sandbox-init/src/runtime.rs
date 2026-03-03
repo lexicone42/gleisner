@@ -95,6 +95,30 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
         eprintln!("gleisner-sandbox-init: time namespace not available (continuing)");
     }
 
+    // ── 1b. Time namespace offset (before UID mapping!) ──────────
+    // The offset must be written before any child enters the new time
+    // namespace. After unshare(CLONE_NEWTIME), the calling process
+    // stays in the OLD time namespace — children will enter the new one.
+    // We have CAP_SYS_TIME in the new user namespace from creation,
+    // even before configuring the UID map (capabilities are granted at
+    // namespace creation, not at map configuration).
+    //
+    // Writing BEFORE UID mapping avoids the procfs permission complexity
+    // that blocked our previous attempt (post-UID-map).
+    if has_timens {
+        match write_timens_monotonic_offset() {
+            Ok(()) => {
+                eprintln!("gleisner-sandbox-init: time namespace isolated (monotonic zeroed)");
+            }
+            Err(e) => {
+                eprintln!(
+                    "gleisner-sandbox-init: timens_offsets pre-uid write failed ({e}), \
+                     will retry after uid mapping"
+                );
+            }
+        }
+    }
+
     // Set a distinctive hostname inside the UTS namespace.
     // Visible in shell prompts and logs — makes it obvious you're sandboxed.
     sethostname("gleisner-sandbox").map_err(|e| format!("sethostname failed: {e}"))?;
@@ -111,20 +135,26 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
         spec.uid, spec.uid
     );
 
-    // ── 2b. Time namespace offset ────────────────────────────────
-    // Must be written after UID mapping (procfs requires valid UID),
-    // but before any child process enters the time namespace.
-    // Zeroes CLOCK_MONOTONIC so the sandbox starts at ~0, preventing:
-    // - Timing side-channels (probing host activity via clock deltas)
-    // - Non-deterministic builds (monotonic timestamps in outputs)
-    // - Uptime fingerprinting (host uptime leaking into sandbox)
+    // ── 2b. Time namespace offset (retry after UID mapping) ──────
+    // If the pre-UID-map write failed (some kernels require a valid
+    // UID to write to procfs), retry now.
     if has_timens {
-        if let Ok(ts) = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC) {
-            let offset = format!("monotonic -{} -{}\n", ts.tv_sec(), ts.tv_nsec());
-            if fs::write("/proc/self/timens_offsets", &offset).is_ok() {
-                eprintln!("gleisner-sandbox-init: time namespace isolated (monotonic zeroed)");
-            } else {
-                eprintln!("gleisner-sandbox-init: time namespace offset write failed (continuing)");
+        // Check if offset was already written (reads "0 0" if not set)
+        let already_set = fs::read_to_string("/proc/self/timens_offsets")
+            .map(|s| s.contains('-'))
+            .unwrap_or(false);
+        if !already_set {
+            match write_timens_monotonic_offset() {
+                Ok(()) => {
+                    eprintln!(
+                        "gleisner-sandbox-init: time namespace isolated (monotonic zeroed, post-uid)"
+                    );
+                }
+                Err(e) => {
+                    eprintln!(
+                        "gleisner-sandbox-init: time namespace offset write failed ({e}), continuing"
+                    );
+                }
             }
         }
     }
@@ -216,10 +246,15 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
         return Err("no inner command specified".to_owned());
     }
 
-    let program = &spec.inner_command[0];
-    let err = Command::new(program).args(&spec.inner_command[1..]).exec();
-
-    Err(format!("failed to exec {program}: {err}"))
+    // ── 7. Fork and exec the inner command ─────────────────────────
+    // We always fork before exec because:
+    // - CLONE_NEWPID: the calling process stays in the old PID namespace;
+    //   only fork children enter the new one (becoming PID 1).
+    // - CLONE_NEWTIME: same — children enter the new time namespace.
+    // - /proc remount: the fork child can mount a fresh procfs that reflects
+    //   both the new PID and time namespaces, preventing host PID and uptime
+    //   leakage from the bind-mounted /proc fallback.
+    fork_and_exec(&spec.inner_command)
 }
 
 /// Set up the sandbox filesystem using bind mounts and `pivot_root`.
@@ -329,13 +364,15 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
     for path in &spec.filesystem.tmpfs {
         let target = new_root.join(path.strip_prefix("/").unwrap_or(path));
         fs::create_dir_all(&target).ok();
-        // Tmpfs mounts get noexec+nosuid+nodev: data files in /tmp should
-        // never be executable, and no device nodes or SUID binaries allowed.
+        // Tmpfs mounts get nosuid+nodev: no SUID binaries or device nodes.
+        // We intentionally do NOT set noexec — Node.js (Claude Code's runtime)
+        // writes temp scripts to /tmp and executes them. The sandbox is already
+        // isolated, so the exec risk is minimal.
         mount(
             Some("tmpfs"),
             &target,
             Some("tmpfs"),
-            MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
+            MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
             Some("size=256m"),
         )
         .map_err(|e| format!("tmpfs {}: {e}", path.display()))?;
@@ -429,6 +466,7 @@ fn setup_minimal_dev(new_root: &Path) -> Result<(), String> {
         ("null", MsFlags::empty()),
         ("zero", MsFlags::empty()),
         ("full", MsFlags::empty()),
+        ("random", MsFlags::empty()),
         ("urandom", MsFlags::empty()),
         ("tty", MsFlags::empty()),
     ];
@@ -478,6 +516,26 @@ fn setup_minimal_dev(new_root: &Path) -> Result<(), String> {
             None::<&str>,
         )
         .map_err(|e| format!("bind /dev/pts: {e}"))?;
+    }
+
+    // /dev/ptmx — PTY allocation (needed by TUI, Claude Code, and any
+    // subprocess that opens a pseudo-terminal). Modern devpts exposes
+    // the multiplexer at /dev/pts/ptmx; we symlink /dev/ptmx to it.
+    // Fall back to bind-mounting /dev/ptmx from host if the symlink
+    // target doesn't exist.
+    let ptmx_target = dev_dir.join("ptmx");
+    if pts_dir.join("ptmx").exists() {
+        std::os::unix::fs::symlink("pts/ptmx", &ptmx_target).ok();
+    } else if Path::new("/dev/ptmx").exists() {
+        fs::write(&ptmx_target, b"").map_err(|e| format!("create /dev/ptmx: {e}"))?;
+        mount(
+            Some(Path::new("/dev/ptmx")),
+            &ptmx_target,
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        )
+        .map_err(|e| format!("bind /dev/ptmx: {e}"))?;
     }
 
     // /dev/shm — shared memory (some programs expect this)
@@ -560,4 +618,99 @@ fn bind_mount(source: &Path, new_root: &Path, extra_flags: MsFlags) -> Result<()
 fn write_id_map(path: &str, inside: u32, outside: u32) -> Result<(), String> {
     fs::write(path, format!("{inside} {outside} 1\n"))
         .map_err(|e| format!("failed to write {path}: {e}"))
+}
+
+/// Write a negative `CLOCK_MONOTONIC` offset to zero the sandbox's monotonic clock.
+///
+/// The kernel requires `timens_offsets` format: `monotonic <secs> <nsecs>\n`
+/// where nsec must be in `0..=999_999_999`. A negative offset of `S.N` seconds
+/// is expressed as `monotonic -(S+1) (1_000_000_000 - N)` when N > 0, because
+/// the kernel rejects negative nanosecond values.
+fn write_timens_monotonic_offset() -> Result<(), String> {
+    let ts = nix::time::clock_gettime(nix::time::ClockId::CLOCK_MONOTONIC)
+        .map_err(|e| format!("clock_gettime: {e}"))?;
+
+    let sec = ts.tv_sec();
+    let nsec = ts.tv_nsec();
+
+    // Express negative offset with non-negative nanoseconds.
+    // offset = -(sec.nsec) = (-sec-1).(1e9-nsec) when nsec > 0
+    let (off_sec, off_nsec) = if nsec == 0 {
+        (-sec, 0i64)
+    } else {
+        (-sec - 1, 1_000_000_000 - nsec)
+    };
+
+    let offset = format!("monotonic {off_sec} {off_nsec}\n");
+    fs::write("/proc/self/timens_offsets", &offset)
+        .map_err(|e| format!("timens_offsets write: {e}"))
+}
+
+/// Fork a child process that enters the time (and PID) namespace, then exec.
+///
+/// `unshare(CLONE_NEWTIME)` and `unshare(CLONE_NEWPID)` only put *children*
+/// in the new namespace — the calling process stays in the old one. By forking,
+/// the child inherits all setup (mounts, landlock, rlimits, cwd) and additionally
+/// enters both namespaces. The child also remounts `/proc` so it reflects the
+/// new PID and time namespaces (preventing host uptime/PID leakage).
+///
+/// The parent waits for the child and exits with its status.
+fn fork_and_exec(inner_command: &[String]) -> Result<(), String> {
+    use nix::sys::wait::{WaitStatus, waitpid};
+    use nix::unistd::{ForkResult, fork};
+
+    // SAFETY: fork() is safe here because we're single-threaded at this point
+    // (no tokio runtime, no thread pools — we're a simple init process).
+    // All setup (mounts, landlock, rlimits) is already done and inherited.
+    match unsafe { fork() } {
+        Ok(ForkResult::Child) => {
+            // Child: now in the new time namespace (and PID namespace if enabled).
+            // Try to replace bind-mounted /proc with fresh namespace-aware procfs.
+            // This would hide host PIDs and reflect the time namespace offset.
+            //
+            // The kernel's mount_too_revealing() check may reject this (EPERM)
+            // if the mount namespace was created with broader visibility than
+            // the current PID namespace. In that case, keep the bind-mounted
+            // /proc — clock_gettime() still uses the correct time namespace;
+            // only /proc/uptime and /proc/[pid] entries leak host info.
+            if mount(
+                Some("proc"),
+                "/proc",
+                Some("proc"),
+                MsFlags::empty(),
+                None::<&str>,
+            ) == Ok(())
+            {
+                eprintln!("gleisner-sandbox-init: /proc remounted (namespace-aware)");
+            } else {
+                // Bind-mounted /proc remains. This is the common case on
+                // unprivileged setups. Host PIDs visible but read-only.
+            }
+
+            let program = &inner_command[0];
+            let err = Command::new(program).args(&inner_command[1..]).exec();
+            // exec only returns on error
+            eprintln!("gleisner-sandbox-init: failed to exec {program}: {err}");
+            std::process::exit(127);
+        }
+        Ok(ForkResult::Parent { child }) => {
+            // Parent: wait for child and propagate its exit status.
+            loop {
+                match waitpid(child, None) {
+                    Ok(WaitStatus::Exited(_, code)) => {
+                        std::process::exit(code);
+                    }
+                    Ok(WaitStatus::Signaled(_, sig, _)) => {
+                        // Child killed by signal — exit with 128 + signal number
+                        std::process::exit(128 + sig as i32);
+                    }
+                    Ok(_) => continue, // stopped/continued — keep waiting
+                    Err(e) => {
+                        return Err(format!("waitpid failed: {e}"));
+                    }
+                }
+            }
+        }
+        Err(e) => Err(format!("fork failed: {e}")),
+    }
 }
