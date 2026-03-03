@@ -60,7 +60,7 @@ The project is a Cargo workspace with eight crates. All version numbers and lint
 | `gleisner-introdus` | Attestation creation. In-toto statement assembly, ECDSA P-256 signing, chain discovery, git state capture, Claude Code context capture, session recording. | `InTotoStatement`, `GleisnerProvenance`, `AttestationBundle`, `LocalSigner`, `ChainLink` |
 | `gleisner-lacerta` | Verification. Signature verification (local key + Sigstore), digest checking, policy evaluation (builtin JSON + WASM/OPA), chain walking. | `Verifier`, `VerificationReport`, `BuiltinPolicy`, `WasmPolicy` |
 | `gleisner-scapes` | Event infrastructure. Audit event types, broadcast channel event bus, JSONL audit log writer. | `EventBus`, `EventPublisher`, `AuditEvent`, `EventKind`, `JsonlWriter` |
-| `gleisner-forge` | Nickel package evaluation for minimal.dev. Content-addressed evaluation, topological dependency ordering, sandbox policy composition, Lean 4 proof verification (single and dual-kernel via nanoda), attestation metadata extraction. | `ForgeConfig`, `EvalContext`, `ComposedEnvironment`, `VerifyConfig`, `PackageVerification` |
+| `gleisner-forge` | Nickel package evaluation for minimal.dev. Content-addressed evaluation, topological dependency ordering, sandbox policy composition, Lean 4 proof verification (via `lake build`), attestation metadata extraction. | `ForgeConfig`, `EvalContext`, `ComposedEnvironment`, `VerifyConfig`, `PackageVerification` |
 | `gleisner-bridger` | SBOM generation. Cargo.lock parsing, CycloneDX 1.5 JSON output. | `Sbom`, `Component` |
 
 ### Dependency Graph

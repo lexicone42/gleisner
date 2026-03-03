@@ -57,11 +57,9 @@ log has not been truncated or modified.
 ### 1.4 Proof Verification (Optional)
 
 When packages declare `verified_properties`, `gleisner-forge` can invoke
-external proof kernels to verify mathematical correctness guarantees:
+the Lean 4 proof kernel to verify mathematical correctness guarantees:
 
-- **Lean 4 C++ kernel** (`lake build`) -- the reference type checker
-- **nanoda Rust kernel** (`lean4export` + `nanoda_bin`) -- independent
-  re-implementation for dual-kernel verification
+- **Lean 4 kernel** (`lake build`) -- type-checks all proofs during compilation
 
 Verification results are embedded in the attestation's `package_metadata` as
 `VerifiedProperty` structs, enabling policies that require proof coverage for

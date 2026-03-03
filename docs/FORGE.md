@@ -156,18 +156,8 @@ Packages can declare `verified_properties` in their `attrs`, linking to formal p
 
 1. Identifies packages with `verified_properties` in their evaluated output
 2. Clones proof repositories from `proof_uri` fields
-3. Runs `lake build` (Lean 4 C++ kernel) to type-check all proofs
-4. Optionally runs `lean4export` + `nanoda_bin` (independent Rust kernel) for dual-kernel verification
-5. Records per-property results in the attestation output
-
-### Dual-Kernel Verification
-
-When both `lean4export` and `nanoda_bin` are available, the forge performs independent verification with two kernel implementations:
-
-- **Lean C++ kernel** (`lake build`) -- the reference type checker
-- **nanoda Rust kernel** (`lean4export` → NDJSON → `nanoda_bin`) -- an independent re-implementation
-
-Properties verified by both kernels are reported as `DualVerified`. Agreement between two independent implementations is a stronger trust signal than single-kernel verification.
+3. Runs `lake build` to type-check all proofs via the Lean 4 kernel
+4. Records per-property results in the attestation output
 
 ### Verification Results
 
@@ -181,13 +171,12 @@ Results flow into the attestation as `VerifiedProperty` structs with:
 | `specification_hash` | SHA-256 of the specification |
 | `proof_hash` | SHA-256 of the proof artifact |
 | `verified_by_forge` | `true` (verified), `false` (failed), or `null` (unchecked) |
-| `dual_verified` | `true` if both kernels independently verified |
 
-A `VerificationSummary` reports aggregate counts: total, verified, failed, unchecked, and dual-verified.
+A `VerificationSummary` reports aggregate counts: total, verified, failed, and unchecked.
 
 ### Graceful Degradation
 
-If the Lean binary is not available, verification is skipped with a warning. If nanoda fails (e.g., unsupported axioms), the pipeline falls back to single-kernel `Verified` status. If `--strict-verify` is passed, any failure is a hard error.
+If the Lean binary is not available, verification is skipped with a warning. If `--strict-verify` is passed, any failure is a hard error.
 
 ## Performance
 
@@ -216,7 +205,7 @@ crates/gleisner-forge/
 |   +-- orchestrate.rs  -- ForgeConfig, evaluate_packages (top-level entry point)
 |   +-- bridge.rs       -- BridgeReport, compose_to_policy (forge→sandbox translation)
 |   +-- attest.rs       -- ForgeAttestation, package metadata extraction, verification summary
-|   +-- verify.rs       -- Lean 4 proof verification, dual-kernel (lean4export + nanoda)
+|   +-- verify.rs       -- Lean 4 proof verification (via lake build)
 |   +-- negotiate.rs    -- Capability negotiation between package needs and profile rules
 |   +-- deploy.rs       -- Deployment helpers (store layout, output paths)
 |   +-- error.rs        -- ForgeError type
@@ -235,13 +224,8 @@ The primary interface for forge evaluation:
 # Evaluate all packages, write composed environment
 gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/
 
-# Evaluate with proof verification
+# Evaluate with proof verification (via lake build)
 gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify
-
-# Dual-kernel verification (Lean C++ + nanoda Rust)
-gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify \
-  --lean4export-bin ~/.elan/bin/lean4export \
-  --nanoda-bin ~/.cargo/bin/nanoda_bin
 
 # Dry run (JSON to stdout, no files written)
 gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify --dry-run

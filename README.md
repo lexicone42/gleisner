@@ -142,13 +142,8 @@ gleisner learn --kernel-audit-log /var/log/gleisner/landlock-audit.log
 # Generate a Software Bill of Materials
 gleisner sbom --json --output sbom.json
 
-# Evaluate minimal.dev packages and verify proofs
+# Evaluate minimal.dev packages and verify proofs (via lake build)
 gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify --dry-run
-
-# Forge with dual-kernel verification (Lean C++ + nanoda Rust)
-gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify \
-  --lean4export-bin ~/.elan/bin/lean4export \
-  --nanoda-bin ~/.cargo/bin/nanoda_bin
 ```
 
 ## Sandbox Layers
@@ -278,7 +273,7 @@ All rules are opt-in. Absent fields are skipped, not failed.
 | `gleisner-cli` | CLI: `wrap`, `record`, `verify`, `inspect`, `diff`, `sbom`, `learn`, `forge` |
 | `gleisner-tui` | Interactive TUI with security dashboard, slash commands, attestation recording |
 | `gleisner-polis` | Sandbox: namespaces, Landlock V7, cgroups/rlimits, inotify, pasta networking, profile learning |
-| `gleisner-forge` | Forge: Nickel package evaluator for minimal.dev, proof verification (Lean 4 + nanoda dual-kernel), attestation metadata |
+| `gleisner-forge` | Forge: Nickel package evaluator for minimal.dev, proof verification (Lean 4 via `lake build`), attestation metadata |
 | `gleisner-introdus` | Attestation: in-toto v1 statements, ECDSA P-256 + Sigstore signing, chain linking |
 | `gleisner-lacerta` | Verification: signature checking, digest verification, policy engine (JSON + WASM/OPA) |
 | `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.5 JSON |

@@ -57,16 +57,6 @@ pub struct ForgeArgs {
     #[arg(long)]
     pub lean_bin: Option<PathBuf>,
 
-    /// Path to `lean4export` binary for independent NDJSON export.
-    /// Enables dual-kernel verification when combined with --nanoda-bin.
-    #[arg(long)]
-    pub lean4export_bin: Option<PathBuf>,
-
-    /// Path to `nanoda_bin` (Rust Lean 4 type checker) for independent verification.
-    /// Requires --lean4export-bin. Together they enable dual-kernel checking.
-    #[arg(long)]
-    pub nanoda_bin: Option<PathBuf>,
-
     /// Fail the pipeline if any proof verification fails (used with --verify).
     #[arg(long)]
     pub strict_verify: bool,
@@ -175,22 +165,10 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         let verify_config = VerifyConfig {
             lean_bin,
             lake_bin: gleisner_forge::verify::detect_lake(),
-            lean4export_bin: args
-                .lean4export_bin
-                .clone()
-                .or_else(gleisner_forge::verify::detect_lean4export),
-            nanoda_bin: args
-                .nanoda_bin
-                .clone()
-                .or_else(gleisner_forge::verify::detect_nanoda),
             strict: args.strict_verify,
             timeout_secs: 300,
             proof_cache_dir,
         };
-
-        if verify_config.lean4export_bin.is_some() && verify_config.nanoda_bin.is_some() {
-            eprintln!("forge: dual-kernel verification enabled (Lean C++ + nanoda Rust)");
-        }
 
         let metadata: Vec<_> = output
             .package_results
@@ -214,20 +192,12 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
 
             for vr in &verification_results {
                 let verified = vr.verified_count();
-                let dual = vr.dual_verified_count();
                 let failed = vr.failed_count();
                 let total = vr.results.len();
-                if dual > 0 {
-                    eprintln!(
-                        "forge: {} — {}/{} verified ({} dual-kernel), {} failed",
-                        vr.package_name, verified, total, dual, failed
-                    );
-                } else {
-                    eprintln!(
-                        "forge: {} — {}/{} verified, {} failed",
-                        vr.package_name, verified, total, failed
-                    );
-                }
+                eprintln!(
+                    "forge: {} — {}/{} verified, {} failed",
+                    vr.package_name, verified, total, failed
+                );
 
                 if failed > 0 && args.strict_verify {
                     return Err(eyre!(
