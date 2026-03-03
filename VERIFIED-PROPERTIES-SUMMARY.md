@@ -60,11 +60,32 @@ status). The `VerificationSummary` reports aggregate counts. This is designed
 to map cleanly to CycloneDX 1.6's `evidence` and `formulation` fields,
 connecting package identity to machine-checkable proof artifacts.
 
+## Dual-kernel verification (nanoda)
+
+When both `lean4export` and `nanoda_bin` are available, the forge runs
+**independent dual-kernel verification**:
+
+1. `lake build` — reference C++ kernel checks the proofs
+2. `lean4export <module>` — exports declarations as NDJSON
+3. `nanoda_bin <config>` — independent Rust type checker re-verifies
+
+Agreement between two independent kernel implementations (C++ and Rust)
+is a much stronger signal than a single-kernel check. Properties verified
+by both are reported as `DualVerified` in the attestation.
+
+```
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify \
+  --lean4export-bin ~/.elan/bin/lean4export \
+  --nanoda-bin ~/.cargo/bin/nanoda_bin
+```
+
+```
+forge: dual-kernel verification enabled (Lean C++ + nanoda Rust)
+forge: zlib — 3/3 verified (3 dual-kernel), 0 failed
+```
+
 ## Next steps
 
-- **nanoda_lib integration**: Add [nanoda_lib](https://github.com/ammkrn/nanoda_lib)
-  (Rust Lean 4 type checker) as an independent second verifier via
-  `lean4export` NDJSON — diverse double-checking with two independent kernels.
 - **Verification caching**: Cache results keyed on `sha256(proof_repo_commit)`
   to avoid re-running `lake build` on unchanged proofs.
 - **More packages**: Any minimal.dev package can declare verified properties.

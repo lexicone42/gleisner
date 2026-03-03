@@ -29,6 +29,12 @@ pub struct VerifyConfig {
     pub lean_bin: Option<PathBuf>,
     /// Path to the `lake` binary (Lean build tool). If None, auto-detected.
     pub lake_bin: Option<PathBuf>,
+    /// Path to the `lean4export` binary. If set, enables independent
+    /// verification via nanoda (dual-kernel checking).
+    pub lean4export_bin: Option<PathBuf>,
+    /// Path to the `nanoda_bin` binary. Used with `lean4export_bin` for
+    /// independent type checking with a second kernel implementation.
+    pub nanoda_bin: Option<PathBuf>,
     /// Whether to treat verification failure as a hard error.
     /// When true, any failed verification stops the pipeline.
     /// When false, failures are recorded but the pipeline continues.
@@ -44,6 +50,8 @@ impl Default for VerifyConfig {
         Self {
             lean_bin: None,
             lake_bin: None,
+            lean4export_bin: None,
+            nanoda_bin: None,
             strict: false,
             timeout_secs: 300,
             proof_cache_dir: PathBuf::from(".gleisner/proof-cache"),
@@ -57,10 +65,21 @@ impl Default for VerifyConfig {
 pub enum PropertyVerification {
     /// Proof checked successfully by the kernel.
     Verified,
+    /// Proof checked by two independent kernels (Lean C++ + nanoda Rust).
+    DualVerified,
     /// Proof check failed (kernel returned non-zero).
     Failed { reason: String },
     /// Verification skipped (no kernel available, unsupported proof system, etc.).
     Skipped { reason: String },
+}
+
+/// Identifies which kernel implementation performed the check.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub enum VerifierKernel {
+    /// Reference C++ kernel via `lake build`.
+    LeanCpp,
+    /// Independent Rust kernel via `nanoda_lib` + `lean4export`.
+    NanodaRust,
 }
 
 /// Result of verifying all properties for a single package.
@@ -77,7 +96,12 @@ impl PackageVerification {
     pub fn verified_count(&self) -> usize {
         self.results
             .iter()
-            .filter(|(_, v)| matches!(v, PropertyVerification::Verified))
+            .filter(|(_, v)| {
+                matches!(
+                    v,
+                    PropertyVerification::Verified | PropertyVerification::DualVerified
+                )
+            })
             .count()
     }
 
@@ -86,6 +110,14 @@ impl PackageVerification {
         self.results
             .iter()
             .filter(|(_, v)| matches!(v, PropertyVerification::Failed { .. }))
+            .count()
+    }
+
+    /// Number of properties verified by two independent kernels.
+    pub fn dual_verified_count(&self) -> usize {
+        self.results
+            .iter()
+            .filter(|(_, v)| matches!(v, PropertyVerification::DualVerified))
             .count()
     }
 
@@ -105,6 +137,16 @@ pub fn detect_lean() -> Option<PathBuf> {
 /// Detect the `lake` build tool on the system.
 pub fn detect_lake() -> Option<PathBuf> {
     detect_tool("lake")
+}
+
+/// Detect the `lean4export` binary (Lean declaration exporter → NDJSON).
+pub fn detect_lean4export() -> Option<PathBuf> {
+    detect_tool("lean4export")
+}
+
+/// Detect the `nanoda_bin` binary (independent Rust Lean type checker).
+pub fn detect_nanoda() -> Option<PathBuf> {
+    detect_tool("nanoda_bin")
 }
 
 /// Detect a tool by name from PATH or ~/.elan/bin/.
@@ -149,13 +191,42 @@ fn extract_github_repo_url(uri: &str) -> Option<String> {
     }
 }
 
-/// Verify a proof repository by cloning it and running `lake build`.
+/// Result of verifying a proof repository, including which kernels checked it.
+#[derive(Debug)]
+pub struct RepoVerification {
+    /// Whether the reference C++ kernel (lake build) succeeded.
+    pub lean_cpp_ok: bool,
+    /// Whether the independent Rust kernel (nanoda) succeeded.
+    /// `None` if nanoda was not configured or not attempted.
+    pub nanoda_ok: Option<bool>,
+}
+
+impl RepoVerification {
+    /// True if at least one kernel verified the proofs.
+    pub fn any_verified(&self) -> bool {
+        self.lean_cpp_ok || self.nanoda_ok == Some(true)
+    }
+
+    /// True if both kernels independently verified the proofs.
+    pub fn dual_verified(&self) -> bool {
+        self.lean_cpp_ok && self.nanoda_ok == Some(true)
+    }
+}
+
+/// Verify a proof repository by cloning it and running `lake build`,
+/// optionally followed by independent verification via `lean4export` + `nanoda`.
 ///
 /// This is the primary verification method for Lean 4 projects: `lake build`
 /// type-checks all source files, including proof files. If it succeeds with
 /// exit code 0, every theorem in the project (including all `sorry`-free proofs)
 /// has been verified by the Lean kernel.
-pub fn verify_proof_repo(repo_url: &str, config: &VerifyConfig) -> Result<bool, String> {
+///
+/// When `lean4export_bin` and `nanoda_bin` are both configured, a second
+/// independent type check is performed for diverse double-checking.
+pub fn verify_proof_repo(
+    repo_url: &str,
+    config: &VerifyConfig,
+) -> Result<RepoVerification, String> {
     let lake_bin = config
         .lake_bin
         .clone()
@@ -219,19 +290,192 @@ pub fn verify_proof_repo(repo_url: &str, config: &VerifyConfig) -> Result<bool, 
         .output()
         .map_err(|e| format!("lake build failed to start: {e}"))?;
 
-    if build.status.success() {
-        tracing::info!("lake build succeeded — all proofs verified by Lean kernel");
-        Ok(true)
-    } else {
+    if !build.status.success() {
         let stderr = String::from_utf8_lossy(&build.stderr);
         let stdout = String::from_utf8_lossy(&build.stdout);
-        Err(format!(
+        return Err(format!(
             "lake build failed (exit {}): {}{}",
             build.status.code().unwrap_or(-1),
             stderr.chars().take(500).collect::<String>(),
             stdout.chars().take(500).collect::<String>(),
+        ));
+    }
+
+    tracing::info!("lake build succeeded — proofs verified by Lean C++ kernel");
+
+    // Attempt independent verification via nanoda if both tools are configured
+    let nanoda_ok = if config.lean4export_bin.is_some() && config.nanoda_bin.is_some() {
+        match verify_independent(&clone_dir, config) {
+            Ok(true) => {
+                tracing::info!("nanoda verification succeeded — dual-kernel verification complete");
+                Some(true)
+            }
+            Ok(false) => Some(false),
+            Err(e) => {
+                tracing::warn!(error = %e, "nanoda independent verification failed");
+                Some(false)
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(RepoVerification {
+        lean_cpp_ok: true,
+        nanoda_ok,
+    })
+}
+
+/// Run independent verification via `lean4export` + `nanoda_bin`.
+///
+/// This provides diverse double-checking: the reference C++ kernel (via `lake build`)
+/// and an independent Rust type checker (nanoda) verify the same proofs through
+/// different implementations. Agreement between two kernels is a much stronger
+/// signal than a single kernel check.
+///
+/// Pipeline: `lean4export <module>` → NDJSON file → `nanoda_bin <config.json>`
+pub fn verify_independent(clone_dir: &Path, config: &VerifyConfig) -> Result<bool, String> {
+    let lean4export_bin = config
+        .lean4export_bin
+        .as_ref()
+        .ok_or_else(|| "lean4export binary not configured".to_string())?;
+    let nanoda_bin = config
+        .nanoda_bin
+        .as_ref()
+        .ok_or_else(|| "nanoda_bin binary not configured".to_string())?;
+    let lake_bin = config
+        .lake_bin
+        .clone()
+        .or_else(detect_lake)
+        .ok_or_else(|| "lake binary not found".to_string())?;
+
+    // 1. Discover the root module from lakefile.lean
+    let root_module = discover_root_module(clone_dir)?;
+    tracing::info!(module = %root_module, "exporting declarations via lean4export");
+
+    // 2. Run lean4export to produce NDJSON
+    let export_file = clone_dir.join(".gleisner-export.ndjson");
+    let export_output = Command::new(&lake_bin)
+        .arg("env")
+        .arg(lean4export_bin)
+        .arg(&root_module)
+        .current_dir(clone_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("lean4export failed to start: {e}"))?;
+
+    if !export_output.status.success() {
+        let stderr = String::from_utf8_lossy(&export_output.stderr);
+        return Err(format!(
+            "lean4export failed (exit {}): {}",
+            export_output.status.code().unwrap_or(-1),
+            stderr.chars().take(500).collect::<String>(),
+        ));
+    }
+
+    // Write NDJSON output to file
+    std::fs::write(&export_file, &export_output.stdout)
+        .map_err(|e| format!("failed to write export file: {e}"))?;
+
+    let decl_count = export_output.stdout.iter().filter(|&&b| b == b'\n').count();
+    tracing::info!(
+        declarations = decl_count,
+        "export complete, running nanoda type checker"
+    );
+
+    // 3. Create nanoda config JSON
+    let nanoda_config = serde_json::json!({
+        "export_file_path": export_file.to_string_lossy(),
+        "permitted_axioms": ["Quot.sound", "Classical.choice", "propext"],
+        "unpermitted_axiom_hard_error": true,
+        "nat_extension": true,
+        "string_extension": true,
+        "print_success_message": true,
+        "print_axioms": false,
+    });
+
+    let config_file = clone_dir.join(".gleisner-nanoda-config.json");
+    std::fs::write(
+        &config_file,
+        serde_json::to_string_pretty(&nanoda_config)
+            .map_err(|e| format!("failed to serialize nanoda config: {e}"))?,
+    )
+    .map_err(|e| format!("failed to write nanoda config: {e}"))?;
+
+    // 4. Run nanoda_bin
+    let nanoda_output = Command::new(nanoda_bin)
+        .arg(&config_file)
+        .current_dir(clone_dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .map_err(|e| format!("nanoda_bin failed to start: {e}"))?;
+
+    // Clean up temp files
+    std::fs::remove_file(&export_file).ok();
+    std::fs::remove_file(&config_file).ok();
+
+    if nanoda_output.status.success() {
+        let stdout = String::from_utf8_lossy(&nanoda_output.stdout);
+        tracing::info!(output = %stdout.trim(), "nanoda verification succeeded (independent Rust kernel)");
+        Ok(true)
+    } else {
+        let stderr = String::from_utf8_lossy(&nanoda_output.stderr);
+        let stdout = String::from_utf8_lossy(&nanoda_output.stdout);
+        Err(format!(
+            "nanoda type check failed (exit {}): {}{}",
+            nanoda_output.status.code().unwrap_or(-1),
+            stderr.chars().take(500).collect::<String>(),
+            stdout.chars().take(500).collect::<String>(),
         ))
     }
+}
+
+/// Discover the root Lean module name from a lakefile.
+///
+/// Parses `lakefile.lean` looking for `@[default_target]` or the first
+/// `lean_lib` / `lean_exe` declaration to determine the module name.
+fn discover_root_module(project_dir: &Path) -> Result<String, String> {
+    let lakefile = project_dir.join("lakefile.lean");
+    if !lakefile.exists() {
+        return Err("no lakefile.lean found in proof repository".to_string());
+    }
+
+    let content = std::fs::read_to_string(&lakefile)
+        .map_err(|e| format!("failed to read lakefile.lean: {e}"))?;
+
+    // Look for lean_lib declarations like: lean_lib Zip where
+    // or lean_lib «Zip» where
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("lean_lib") {
+            let name = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches('«')
+                .trim_matches('»');
+            if !name.is_empty() {
+                return Ok(name.to_string());
+            }
+        }
+        if let Some(rest) = trimmed.strip_prefix("lean_exe") {
+            let name = rest
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .trim_matches('«')
+                .trim_matches('»');
+            if !name.is_empty() {
+                return Ok(name.to_string());
+            }
+        }
+    }
+
+    Err("could not determine root module from lakefile.lean".to_string())
 }
 
 /// Verify a proof artifact using the Lean kernel.
@@ -271,9 +515,10 @@ pub fn verify_property(property: &VerifiedProperty, config: &VerifyConfig) -> Pr
                 }
             };
             return match verify_proof_repo(&repo_url, config) {
-                Ok(true) => PropertyVerification::Verified,
-                Ok(false) => PropertyVerification::Failed {
-                    reason: "lake build returned false".to_string(),
+                Ok(rv) if rv.dual_verified() => PropertyVerification::DualVerified,
+                Ok(rv) if rv.any_verified() => PropertyVerification::Verified,
+                Ok(_) => PropertyVerification::Failed {
+                    reason: "no kernel verified the proofs".to_string(),
                 },
                 Err(e) => PropertyVerification::Failed { reason: e },
             };
@@ -386,7 +631,9 @@ pub fn apply_verification_results(
                     .find(|p| p.property == verified_prop.property)
                 {
                     prop.verified_by_forge = match result {
-                        PropertyVerification::Verified => Some(true),
+                        PropertyVerification::Verified | PropertyVerification::DualVerified => {
+                            Some(true)
+                        }
                         PropertyVerification::Failed { .. } => Some(false),
                         PropertyVerification::Skipped { .. } => None,
                     };
@@ -593,5 +840,123 @@ mod tests {
         let results = verify_packages(&packages, &config);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].package_name, "zlib");
+    }
+
+    #[test]
+    fn dual_verified_counted_separately() {
+        let prop = sample_property();
+        let ver = PackageVerification {
+            package_name: "zlib".to_string(),
+            results: vec![
+                (prop.clone(), PropertyVerification::DualVerified),
+                (prop.clone(), PropertyVerification::Verified),
+                (
+                    prop,
+                    PropertyVerification::Failed {
+                        reason: "bad".to_string(),
+                    },
+                ),
+            ],
+        };
+        // DualVerified + Verified both count as "verified"
+        assert_eq!(ver.verified_count(), 2);
+        assert_eq!(ver.dual_verified_count(), 1);
+        assert_eq!(ver.failed_count(), 1);
+        assert!(!ver.all_passed());
+    }
+
+    #[test]
+    fn apply_results_dual_verified_sets_true() {
+        let mut metadata = vec![sample_metadata("zlib", true)];
+        let verifications = vec![PackageVerification {
+            package_name: "zlib".to_string(),
+            results: vec![(sample_property(), PropertyVerification::DualVerified)],
+        }];
+        apply_verification_results(&mut metadata, &verifications);
+        assert_eq!(
+            metadata[0].verified_properties[0].verified_by_forge,
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn repo_verification_logic() {
+        let rv = RepoVerification {
+            lean_cpp_ok: true,
+            nanoda_ok: Some(true),
+        };
+        assert!(rv.dual_verified());
+        assert!(rv.any_verified());
+
+        let rv2 = RepoVerification {
+            lean_cpp_ok: true,
+            nanoda_ok: Some(false),
+        };
+        assert!(!rv2.dual_verified());
+        assert!(rv2.any_verified());
+
+        let rv3 = RepoVerification {
+            lean_cpp_ok: true,
+            nanoda_ok: None,
+        };
+        assert!(!rv3.dual_verified());
+        assert!(rv3.any_verified());
+
+        let rv4 = RepoVerification {
+            lean_cpp_ok: false,
+            nanoda_ok: None,
+        };
+        assert!(!rv4.dual_verified());
+        assert!(!rv4.any_verified());
+    }
+
+    #[test]
+    fn discover_root_module_lean_lib() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lakefile.lean"),
+            "import Lake\nopen Lake DSL\n\nlean_lib Zip where\n  srcDir := \".\"\n",
+        )
+        .unwrap();
+        assert_eq!(discover_root_module(dir.path()).unwrap(), "Zip");
+    }
+
+    #[test]
+    fn discover_root_module_lean_exe() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lakefile.lean"),
+            "import Lake\nopen Lake DSL\n\nlean_exe mytool where\n  root := `Main\n",
+        )
+        .unwrap();
+        assert_eq!(discover_root_module(dir.path()).unwrap(), "mytool");
+    }
+
+    #[test]
+    fn discover_root_module_guillemets() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lakefile.lean"),
+            "lean_lib \u{ab}My.Lib\u{bb} where\n",
+        )
+        .unwrap();
+        assert_eq!(discover_root_module(dir.path()).unwrap(), "My.Lib");
+    }
+
+    #[test]
+    fn discover_root_module_missing_lakefile() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(discover_root_module(dir.path()).is_err());
+    }
+
+    #[test]
+    fn discover_root_module_no_declarations() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("lakefile.lean"),
+            "import Lake\nopen Lake DSL\n-- nothing here\n",
+        )
+        .unwrap();
+        assert!(discover_root_module(dir.path()).is_err());
     }
 }
