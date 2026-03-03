@@ -11,9 +11,20 @@
 //! - `source_provenance`: Authoritative source (GitHub repo, GNU project)
 //! - `upstream_version`: The software version from upstream
 //! - `repology_project`: Cross-distro version tracking identifier
+//! - `verified_properties`: Formally verified properties with proof artifacts
 //!
 //! These are extracted per-package and collected into [`PackageMetadata`]
 //! for SBOM enrichment and provenance attestation.
+//!
+//! # Formal verification
+//!
+//! Packages may carry [`VerifiedProperty`] entries declaring properties that
+//! have been formally proved (e.g., in Lean 4). Each entry references the
+//! proof system, specification hash, and proof artifact hash. The forge
+//! `verify` step can invoke the proof kernel to mechanically check these.
+//!
+//! See: Leo de Moura, "When AI Writes the World's Software, Who Verifies It?"
+//! <https://leodemoura.github.io/blog/2026/02/28/when-ai-writes-the-worlds-software.html>
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -58,6 +69,12 @@ pub struct ForgeAttestation {
     pub packages: Vec<String>,
     /// Per-package supply chain metadata extracted from `attrs`.
     pub package_metadata: Vec<PackageMetadata>,
+    /// Summary of formal verification across all packages.
+    ///
+    /// Gives management Claudes a quick signal about whether the composed
+    /// environment includes formally proved components.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationSummary>,
 }
 
 /// Source provenance for a package.
@@ -82,12 +99,68 @@ pub enum SourceProvenance {
     },
 }
 
+/// A formally verified property of a software component.
+///
+/// Represents a mathematical proof that a component satisfies a stated
+/// property. The proof can be mechanically checked by the proof system's
+/// kernel (e.g., Lean 4's type checker) without trusting the prover.
+///
+/// This enables a trust chain where:
+/// - The **specification** defines what "correct" means (`specification_hash`)
+/// - The **proof** demonstrates correctness (`proof_hash`)
+/// - The **kernel** mechanically verifies the proof (`proof_system` + `kernel_version`)
+/// - The **attestation** records that verification happened (this struct)
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VerifiedProperty {
+    /// Human-readable property name (e.g., "roundtrip", "`crash_safety`",
+    /// "`constant_time`").
+    pub property: String,
+    /// Description of what the property guarantees.
+    pub description: String,
+    /// Proof system used (e.g., "lean4", "coq", "isabelle").
+    pub proof_system: String,
+    /// Version of the proof kernel that verified this (e.g., "lean4/4.16.0").
+    pub kernel_version: String,
+    /// SHA-256 of the specification file/module.
+    pub specification_hash: String,
+    /// SHA-256 of the proof artifact (e.g., `.olean` file or proof bundle).
+    pub proof_hash: String,
+    /// URI where the proof artifact can be retrieved for re-verification.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof_uri: Option<String>,
+    /// Whether the forge `verify` step mechanically checked this proof.
+    /// `None` means verification was not attempted (no kernel available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verified_by_forge: Option<bool>,
+}
+
+/// Summary of formal verification across all packages in a forge evaluation.
+///
+/// Included in [`ForgeAttestation`] to give management Claudes a quick signal
+/// about the overall verification posture of a composed environment.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct VerificationSummary {
+    /// Total number of verified properties across all packages.
+    pub total_properties: usize,
+    /// Properties that were mechanically checked by the forge verify step.
+    pub forge_verified: usize,
+    /// Properties declared but not checked (no kernel available or not attempted).
+    pub unchecked: usize,
+    /// Packages that carry at least one verified property.
+    pub packages_with_proofs: usize,
+    /// Packages with no verified properties.
+    pub packages_without_proofs: usize,
+}
+
 /// Per-package supply chain metadata extracted from minimal.dev `attrs`.
 ///
 /// Contains the structured provenance fields that minimal.dev's type system
 /// guarantees: upstream version, source provenance (GitHub/GNU), and
 /// repology cross-distro tracking. These feed into SBOM components and
 /// attestation materials.
+///
+/// May also contain [`VerifiedProperty`] entries from packages that carry
+/// formal proofs of correctness (e.g., Lean 4 proof artifacts).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PackageMetadata {
     /// Package name.
@@ -106,6 +179,12 @@ pub struct PackageMetadata {
     pub purl: String,
     /// Source tarball URLs with SHA-256 digests (from `build_deps`).
     pub source_urls: Vec<ForgeMaterial>,
+    /// Formally verified properties with proof artifacts.
+    ///
+    /// Empty for packages without formal verification. When present,
+    /// each entry can be independently checked by the proof system's kernel.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub verified_properties: Vec<VerifiedProperty>,
 }
 
 /// Extract attestation data from a forge output and the composed environment.
@@ -173,12 +252,15 @@ pub fn extract_attestation_with_results(
         });
     }
 
+    let verification = compute_verification_summary(&package_metadata);
+
     ForgeAttestation {
         materials,
         subjects,
         builder_id: format!("gleisner-forge/{}", env!("CARGO_PKG_VERSION")),
         packages: output.environment.packages.clone(),
         package_metadata,
+        verification,
     }
 }
 
@@ -227,6 +309,16 @@ pub fn extract_package_metadata(name: &str, json: &serde_json::Value) -> Package
     let purl = make_purl(name, upstream_version.as_deref(), &source_provenance);
     let source_urls = extract_sources_from_package(name, json);
 
+    let verified_properties = attrs
+        .and_then(|a| a.get("verified_properties"))
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(parse_verified_property)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
     PackageMetadata {
         name: name.to_string(),
         upstream_version,
@@ -234,6 +326,7 @@ pub fn extract_package_metadata(name: &str, json: &serde_json::Value) -> Package
         repology_project,
         purl,
         source_urls,
+        verified_properties,
     }
 }
 
@@ -259,6 +352,55 @@ fn parse_source_provenance(value: &serde_json::Value) -> Option<SourceProvenance
         }
         _ => None,
     }
+}
+
+/// Parse a `verified_properties` JSON entry into our struct.
+fn parse_verified_property(value: &serde_json::Value) -> Option<VerifiedProperty> {
+    Some(VerifiedProperty {
+        property: value.get("property")?.as_str()?.to_string(),
+        description: value
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
+        proof_system: value.get("proof_system")?.as_str()?.to_string(),
+        kernel_version: value
+            .get("kernel_version")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string(),
+        specification_hash: value.get("specification_hash")?.as_str()?.to_string(),
+        proof_hash: value.get("proof_hash")?.as_str()?.to_string(),
+        proof_uri: value
+            .get("proof_uri")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        verified_by_forge: None, // Set by the verify step
+    })
+}
+
+/// Compute a [`VerificationSummary`] from collected package metadata.
+fn compute_verification_summary(metadata: &[PackageMetadata]) -> Option<VerificationSummary> {
+    let mut summary = VerificationSummary::default();
+    let mut has_any = false;
+
+    for pkg in metadata {
+        if pkg.verified_properties.is_empty() {
+            summary.packages_without_proofs += 1;
+        } else {
+            has_any = true;
+            summary.packages_with_proofs += 1;
+            for prop in &pkg.verified_properties {
+                summary.total_properties += 1;
+                match prop.verified_by_forge {
+                    Some(true) => summary.forge_verified += 1,
+                    _ => summary.unchecked += 1,
+                }
+            }
+        }
+    }
+
+    if has_any { Some(summary) } else { None }
 }
 
 /// Generate a PURL from source provenance and version.
@@ -460,6 +602,126 @@ mod tests {
             })
         );
         assert_eq!(meta.purl, "pkg:gnu/bash@5.2");
+    }
+
+    #[test]
+    fn extract_metadata_with_verified_properties() {
+        let json = serde_json::json!({
+            "name": "zlib",
+            "attrs": {
+                "upstream_version": "1.3.1",
+                "source_provenance": {
+                    "category": "GithubRepo",
+                    "owner": "madler",
+                    "repo": "zlib",
+                },
+                "verified_properties": [
+                    {
+                        "property": "roundtrip",
+                        "description": "decompress(compress(data)) = data for all inputs",
+                        "proof_system": "lean4",
+                        "kernel_version": "lean4/4.16.0",
+                        "specification_hash": "sha256:aabbccdd",
+                        "proof_hash": "sha256:11223344",
+                        "proof_uri": "ipfs://QmExample",
+                    },
+                    {
+                        "property": "no_buffer_overflow",
+                        "description": "No out-of-bounds memory access",
+                        "proof_system": "lean4",
+                        "kernel_version": "lean4/4.16.0",
+                        "specification_hash": "sha256:eeff0011",
+                        "proof_hash": "sha256:55667788",
+                    },
+                ],
+            },
+        });
+
+        let meta = extract_package_metadata("zlib", &json);
+        assert_eq!(meta.verified_properties.len(), 2);
+        assert_eq!(meta.verified_properties[0].property, "roundtrip");
+        assert_eq!(meta.verified_properties[0].proof_system, "lean4");
+        assert_eq!(
+            meta.verified_properties[0].proof_uri.as_deref(),
+            Some("ipfs://QmExample")
+        );
+        assert!(meta.verified_properties[0].verified_by_forge.is_none());
+        assert_eq!(meta.verified_properties[1].property, "no_buffer_overflow");
+        assert!(meta.verified_properties[1].proof_uri.is_none());
+    }
+
+    #[test]
+    fn verification_summary_with_proofs() {
+        let metadata = vec![
+            PackageMetadata {
+                name: "zlib".to_string(),
+                upstream_version: Some("1.3.1".to_string()),
+                source_provenance: None,
+                repology_project: None,
+                purl: "pkg:github/madler/zlib@1.3.1".to_string(),
+                source_urls: vec![],
+                verified_properties: vec![VerifiedProperty {
+                    property: "roundtrip".to_string(),
+                    description: "decompress(compress(d)) = d".to_string(),
+                    proof_system: "lean4".to_string(),
+                    kernel_version: "lean4/4.16.0".to_string(),
+                    specification_hash: "sha256:aa".to_string(),
+                    proof_hash: "sha256:bb".to_string(),
+                    proof_uri: None,
+                    verified_by_forge: Some(true),
+                }],
+            },
+            PackageMetadata {
+                name: "curl".to_string(),
+                upstream_version: Some("8.11.0".to_string()),
+                source_provenance: None,
+                repology_project: None,
+                purl: "pkg:github/curl/curl@8.11.0".to_string(),
+                source_urls: vec![],
+                verified_properties: vec![],
+            },
+        ];
+
+        let summary = compute_verification_summary(&metadata);
+        let summary = summary.expect("should have summary when proofs exist");
+        assert_eq!(summary.total_properties, 1);
+        assert_eq!(summary.forge_verified, 1);
+        assert_eq!(summary.unchecked, 0);
+        assert_eq!(summary.packages_with_proofs, 1);
+        assert_eq!(summary.packages_without_proofs, 1);
+    }
+
+    #[test]
+    fn verification_summary_none_when_no_proofs() {
+        let metadata = vec![PackageMetadata {
+            name: "curl".to_string(),
+            upstream_version: None,
+            source_provenance: None,
+            repology_project: None,
+            purl: "pkg:generic/minimal.dev/curl".to_string(),
+            source_urls: vec![],
+            verified_properties: vec![],
+        }];
+
+        assert!(compute_verification_summary(&metadata).is_none());
+    }
+
+    #[test]
+    fn verified_property_serialization_roundtrip() {
+        let prop = VerifiedProperty {
+            property: "constant_time".to_string(),
+            description: "No timing side-channels on secret data".to_string(),
+            proof_system: "lean4".to_string(),
+            kernel_version: "lean4/4.16.0".to_string(),
+            specification_hash: "sha256:abcdef".to_string(),
+            proof_hash: "sha256:123456".to_string(),
+            proof_uri: Some("https://proofs.example.com/aes-ct.olean".to_string()),
+            verified_by_forge: Some(true),
+        };
+
+        let json = serde_json::to_string(&prop).unwrap();
+        let roundtripped: VerifiedProperty = serde_json::from_str(&json).unwrap();
+        assert_eq!(prop, roundtripped);
     }
 
     #[test]
