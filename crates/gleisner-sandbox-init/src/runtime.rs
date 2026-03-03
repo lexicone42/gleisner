@@ -12,7 +12,8 @@ use gleisner_polis::SandboxSpec;
 use gleisner_polis::profile::PolicyDefault;
 use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use nix::sched::{CloneFlags, unshare};
-use nix::unistd::{chdir, pivot_root};
+use nix::sys::resource::{Resource, setrlimit};
+use nix::unistd::{chdir, pivot_root, sethostname};
 
 /// Run the sandbox: set up namespaces, mounts, landlock, then exec.
 pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
@@ -59,7 +60,11 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
     };
 
     // ── 1. Create namespaces ──────────────────────────────────────
-    let mut clone_flags = CloneFlags::CLONE_NEWUSER | CloneFlags::CLONE_NEWNS;
+    // Always isolate: user, mount, IPC (shared memory/semaphores), UTS (hostname).
+    let mut clone_flags = CloneFlags::CLONE_NEWUSER
+        | CloneFlags::CLONE_NEWNS
+        | CloneFlags::CLONE_NEWIPC
+        | CloneFlags::CLONE_NEWUTS;
     if spec.process.pid_namespace {
         clone_flags |= CloneFlags::CLONE_NEWPID;
     }
@@ -68,7 +73,12 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
     }
 
     unshare(clone_flags).map_err(|e| format!("unshare failed: {e}"))?;
-    eprintln!("gleisner-sandbox-init: namespaces created");
+
+    // Set a distinctive hostname inside the UTS namespace.
+    // Visible in shell prompts and logs — makes it obvious you're sandboxed.
+    sethostname("gleisner-sandbox").map_err(|e| format!("sethostname failed: {e}"))?;
+
+    eprintln!("gleisner-sandbox-init: namespaces created (ipc+uts isolated)");
 
     // ── 2. Map UID/GID ────────────────────────────────────────────
     write_id_map("/proc/self/uid_map", spec.uid, spec.uid)?;
@@ -128,10 +138,41 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
         }
     }
 
-    // ── 5. Set working directory ──────────────────────────────────
+    // ── 5. Apply resource limits ────────────────────────────────────
+    // Set rlimits inside the sandbox before exec. This is more reliable than
+    // the orchestrator's prlimit(1) approach: no race window between spawn
+    // and limit application, and works regardless of privilege level.
+    if let Some(ref limits) = spec.resource_limits {
+        if limits.max_file_descriptors > 0 {
+            let val = limits.max_file_descriptors;
+            setrlimit(Resource::RLIMIT_NOFILE, val, val)
+                .map_err(|e| format!("setrlimit NOFILE: {e}"))?;
+        }
+        if limits.max_memory_mb > 0 {
+            let bytes = limits.max_memory_mb * 1024 * 1024;
+            setrlimit(Resource::RLIMIT_AS, bytes, bytes)
+                .map_err(|e| format!("setrlimit AS: {e}"))?;
+        }
+        if limits.max_pids > 0 {
+            setrlimit(
+                Resource::RLIMIT_NPROC,
+                u64::from(limits.max_pids),
+                u64::from(limits.max_pids),
+            )
+            .map_err(|e| format!("setrlimit NPROC: {e}"))?;
+        }
+        if limits.max_disk_write_mb > 0 {
+            let bytes = limits.max_disk_write_mb * 1024 * 1024;
+            setrlimit(Resource::RLIMIT_FSIZE, bytes, bytes)
+                .map_err(|e| format!("setrlimit FSIZE: {e}"))?;
+        }
+        eprintln!("gleisner-sandbox-init: rlimits applied inside sandbox");
+    }
+
+    // ── 6. Set working directory ──────────────────────────────────
     chdir(&spec.work_dir).map_err(|e| format!("chdir to {}: {e}", spec.work_dir.display()))?;
 
-    // ── 6. Exec the inner command ─────────────────────────────────
+    // ── 7. Exec the inner command ─────────────────────────────────
     if spec.inner_command.is_empty() {
         return Err("no inner command specified".to_owned());
     }
@@ -249,12 +290,14 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
     for path in &spec.filesystem.tmpfs {
         let target = new_root.join(path.strip_prefix("/").unwrap_or(path));
         fs::create_dir_all(&target).ok();
+        // Tmpfs mounts get noexec+nosuid+nodev: data files in /tmp should
+        // never be executable, and no device nodes or SUID binaries allowed.
         mount(
             Some("tmpfs"),
             &target,
             Some("tmpfs"),
-            MsFlags::empty(),
-            None::<&str>,
+            MsFlags::MS_NOEXEC | MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
+            Some("size=256m"),
         )
         .map_err(|e| format!("tmpfs {}: {e}", path.display()))?;
     }
@@ -271,18 +314,7 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
     )
     .map_err(|e| format!("mount /proc: {e}"))?;
 
-    let new_dev = new_root.join("dev");
-    fs::create_dir_all(&new_dev).ok();
-    // Best effort: make /dev private before binding it
-    mount(
-        None::<&str>,
-        "/dev",
-        None::<&str>,
-        MsFlags::MS_REC | MsFlags::MS_PRIVATE,
-        None::<&str>,
-    )
-    .ok();
-    bind_mount(Path::new("/dev"), &new_root, MsFlags::empty())?;
+    setup_minimal_dev(&new_root)?;
 
     // ── pivot_root ───────────────────────────────────────────────
     pivot_root(&new_root, &old_root).map_err(|e| format!("pivot_root failed: {e}"))?;
@@ -309,7 +341,119 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
     Ok(())
 }
 
+/// Create a minimal `/dev` with only essential device nodes.
+///
+/// Instead of bind-mounting the host's full `/dev` (which exposes block devices,
+/// GPU devices, etc.), we mount a fresh tmpfs and create only the handful of
+/// device nodes that userspace actually needs:
+/// - `/dev/null`, `/dev/zero`, `/dev/full` — standard sinks/sources
+/// - `/dev/urandom` — randomness (urandom, not random — never blocks)
+/// - `/dev/tty` — controlling terminal
+/// - `/dev/pts` — pseudo-terminal directory (bind-mounted from host)
+///
+/// This is a significant attack surface reduction over host `/dev` access.
+fn setup_minimal_dev(new_root: &Path) -> Result<(), String> {
+    let dev_dir = new_root.join("dev");
+    fs::create_dir_all(&dev_dir).map_err(|e| format!("mkdir /dev: {e}"))?;
+
+    // Mount a small tmpfs for /dev — nosuid+noexec (no executables in /dev)
+    mount(
+        Some("tmpfs"),
+        &dev_dir,
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC,
+        Some("size=64k,mode=0755"),
+    )
+    .map_err(|e| format!("mount tmpfs /dev: {e}"))?;
+
+    // Create essential device nodes.
+    // Inside a user namespace we can't mknod directly (EPERM), so we
+    // bind-mount each device from the host.
+    let devices = [
+        ("null", MsFlags::empty()),
+        ("zero", MsFlags::empty()),
+        ("full", MsFlags::empty()),
+        ("urandom", MsFlags::empty()),
+        ("tty", MsFlags::empty()),
+    ];
+
+    for (name, extra) in &devices {
+        let host_path = PathBuf::from(format!("/dev/{name}"));
+        let target = dev_dir.join(name);
+
+        if !host_path.exists() {
+            continue;
+        }
+
+        // Create mount point file
+        fs::write(&target, b"").map_err(|e| format!("create /dev/{name}: {e}"))?;
+
+        mount(
+            Some(host_path.as_path()),
+            &target,
+            None::<&str>,
+            MsFlags::MS_BIND,
+            None::<&str>,
+        )
+        .map_err(|e| format!("bind /dev/{name}: {e}"))?;
+
+        // Remount with hardening: nosuid+nodev+noexec + any extra flags
+        let harden = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC | *extra;
+        mount(
+            None::<&str>,
+            &target,
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REMOUNT | harden,
+            None::<&str>,
+        )
+        .map_err(|e| format!("remount /dev/{name}: {e}"))?;
+    }
+
+    // /dev/pts — pseudo-terminal support (needed for interactive shells)
+    let pts_dir = dev_dir.join("pts");
+    fs::create_dir_all(&pts_dir).map_err(|e| format!("mkdir /dev/pts: {e}"))?;
+    let host_pts = Path::new("/dev/pts");
+    if host_pts.exists() {
+        mount(
+            Some(host_pts),
+            &pts_dir,
+            None::<&str>,
+            MsFlags::MS_BIND | MsFlags::MS_REC,
+            None::<&str>,
+        )
+        .map_err(|e| format!("bind /dev/pts: {e}"))?;
+    }
+
+    // /dev/shm — shared memory (some programs expect this)
+    let shm_dir = dev_dir.join("shm");
+    fs::create_dir_all(&shm_dir).map_err(|e| format!("mkdir /dev/shm: {e}"))?;
+    mount(
+        Some("tmpfs"),
+        &shm_dir,
+        Some("tmpfs"),
+        MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | MsFlags::MS_NODEV,
+        Some("size=64m"),
+    )
+    .map_err(|e| format!("mount /dev/shm: {e}"))?;
+
+    // Symlinks that many programs expect
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::symlink;
+        symlink("/proc/self/fd", dev_dir.join("fd")).ok();
+        symlink("/proc/self/fd/0", dev_dir.join("stdin")).ok();
+        symlink("/proc/self/fd/1", dev_dir.join("stdout")).ok();
+        symlink("/proc/self/fd/2", dev_dir.join("stderr")).ok();
+    }
+
+    Ok(())
+}
+
 /// Bind-mount a host path into the new root.
+///
+/// All bind mounts are hardened with `nosuid|nodev` to prevent SUID binaries
+/// and device node access inside the sandbox. Read-only mounts additionally
+/// get `MS_RDONLY` via `extra_flags`.
 fn bind_mount(source: &Path, new_root: &Path, extra_flags: MsFlags) -> Result<(), String> {
     let relative = source.strip_prefix("/").unwrap_or(source);
     let target = new_root.join(relative);
@@ -342,17 +486,16 @@ fn bind_mount(source: &Path, new_root: &Path, extra_flags: MsFlags) -> Result<()
         )
     })?;
 
-    // Remount with extra flags (e.g., readonly)
-    if !extra_flags.is_empty() {
-        mount(
-            None::<&str>,
-            &target,
-            None::<&str>,
-            MsFlags::MS_BIND | MsFlags::MS_REC | MsFlags::MS_REMOUNT | extra_flags,
-            None::<&str>,
-        )
-        .map_err(|e| format!("remount {}: {e}", target.display()))?;
-    }
+    // Remount with hardening flags: always nosuid+nodev, plus any extra (e.g., rdonly).
+    let harden_flags = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | extra_flags;
+    mount(
+        None::<&str>,
+        &target,
+        None::<&str>,
+        MsFlags::MS_BIND | MsFlags::MS_REC | MsFlags::MS_REMOUNT | harden_flags,
+        None::<&str>,
+    )
+    .map_err(|e| format!("remount {}: {e}", target.display()))?;
 
     Ok(())
 }
