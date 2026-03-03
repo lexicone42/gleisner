@@ -125,13 +125,13 @@ each enforced by a different Linux kernel subsystem:
 | Layer | Mechanism | Purpose |
 |-------|-----------|---------|
 | 1 | User namespaces | Unprivileged isolation -- sandboxed process has no real host privileges |
-| 2 | Bubblewrap (bwrap) | Mount namespace -- bind-mounts, tmpfs deny, PID namespace, `--die-with-parent` |
+| 2 | Mount namespace + pivot_root | Bind-mounts, tmpfs deny, PID namespace, die-with-parent (`PR_SET_PDEATHSIG`) |
 | 3 | Landlock LSM (V7) | Filesystem and network access control, IPC scope isolation, `PR_SET_NO_NEW_PRIVS`, kernel audit logging |
 | 4 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits (cgroups with rlimit fallback) |
 | 5 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
 
 Compromising one layer does not automatically compromise the others. For
-example, even if bubblewrap's mount namespace is bypassed, Landlock
+example, even if the mount namespace is bypassed, Landlock
 independently restricts filesystem access.
 
 ---
@@ -419,8 +419,7 @@ Practical steps for users setting up Gleisner in a new environment.
 
 ### Initial Setup
 
-- [ ] **Install bubblewrap.** Gleisner requires `bwrap` on PATH.
-      (`apt install bubblewrap` / `pacman -S bubblewrap` / etc.)
+- [ ] **Build gleisner-sandbox-init.** The sandbox runtime is built automatically with `cargo build --workspace`.
 - [ ] **Install passt** (for network filtering via pasta).
       (`apt install passt` / `pacman -S passt` / `emerge net-misc/passt`)
 - [ ] **Verify kernel version.** Landlock requires Linux 5.13+.

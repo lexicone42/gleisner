@@ -3,9 +3,9 @@
 /// Errors from the Polis sandbox subsystem.
 #[derive(Debug, thiserror::Error)]
 pub enum SandboxError {
-    /// bubblewrap binary not found on PATH.
-    #[error("bwrap not found — install with: sudo apt install bubblewrap")]
-    BwrapNotFound,
+    /// `gleisner-sandbox-init` binary not found.
+    #[error("gleisner-sandbox-init not found — build with: cargo build -p gleisner-sandbox-init")]
+    SandboxInitNotFound,
 
     /// Profile TOML failed to parse.
     #[error("invalid profile `{path}`: {source}")]

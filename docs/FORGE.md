@@ -110,7 +110,7 @@ let mut env = ComposedEnvironment::new();
 for (name, json) in &results {
     env.merge_package(name, json);
 }
-// env.dir_mappings -> bwrap bind mounts + Landlock rules
+// env.dir_mappings -> sandbox bind mounts + Landlock rules
 // env.needs.dns -> nftables DNS allow
 // env.needs.internet -> nftables outbound policy
 ```

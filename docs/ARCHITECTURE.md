@@ -33,7 +33,7 @@ Gleisner addresses a specific problem: when an AI coding agent (Claude Code) mod
 
 The system provides three capabilities:
 
-1. **Sandboxing** (`gleisner wrap` or `gleisner-tui --sandbox`) -- Run Claude Code inside a bubblewrap/Landlock sandbox with filesystem, network, process, and resource isolation. Credentials are hidden, network is restricted to the Anthropic API, and every file access is monitored.
+1. **Sandboxing** (`gleisner wrap` or `gleisner-tui --sandbox`) -- Run Claude Code inside a namespace/Landlock sandbox with filesystem, network, process, and resource isolation. Credentials are hidden, network is restricted to the Anthropic API, and every file access is monitored.
 
 2. **Attestation** (`gleisner record` or `gleisner-tui --sandbox`) -- Everything above, plus cryptographic attestation. The session produces a signed in-toto v1 statement with SLSA-compatible provenance that records materials (inputs), subjects (outputs), timing, environment metadata, and sandbox configuration. Attestations chain together via parent payload digests.
 
@@ -53,8 +53,8 @@ The project is a Cargo workspace with eight crates. All version numbers and lint
 |-------|------|-----------|
 | `gleisner-cli` | Binary entry point. CLI parsing, command dispatch, pipeline orchestration. | `RecordArgs`, `WrapArgs`, `VerifyArgs` |
 | `gleisner-tui` | Interactive TUI. Ratatui-based security-aware REPL with live dashboard, slash commands, attestation recording, and Sigstore signing. | `App`, `QueryConfig`, `SandboxConfig` |
-| `gleisner-polis` | Sandbox enforcement. Bubblewrap command construction, Landlock LSM, cgroup v2 resource limits, inotify filesystem monitoring with snapshot reconciliation, `/proc` process monitoring, network filtering. | `BwrapSandbox`, `Profile`, `CgroupScope`, `NetworkFilter`, `NamespaceHandle`, `TapHandle` |
-| `gleisner-sandbox-init` | Landlock trampoline. Applies Landlock restrictions inside bwrap from a JSON policy file, then exec's the inner command. | `LandlockPolicy` (via gleisner-polis) |
+| `gleisner-polis` | Sandbox enforcement. Direct sandbox via `gleisner-sandbox-init`, Landlock LSM, cgroup v2 resource limits, inotify filesystem monitoring with snapshot reconciliation, `/proc` process monitoring, network filtering. | `DirectSandbox`, `Profile`, `CgroupScope`, `NetworkFilter`, `NamespaceHandle`, `TapHandle` |
+| `gleisner-sandbox-init` | Container runtime. Creates user/mount/PID/network namespaces, sets up bind mounts with pivot_root, applies Landlock V7, then exec's the inner command. | `SandboxSpec` (via gleisner-polis) |
 | `gleisner-introdus` | Attestation creation. In-toto statement assembly, ECDSA P-256 signing, chain discovery, git state capture, Claude Code context capture, session recording. | `InTotoStatement`, `GleisnerProvenance`, `AttestationBundle`, `LocalSigner`, `ChainLink` |
 | `gleisner-lacerta` | Verification. Signature verification (local key + Sigstore), digest checking, policy evaluation (builtin JSON + WASM/OPA), chain walking. | `Verifier`, `VerificationReport`, `BuiltinPolicy`, `WasmPolicy` |
 | `gleisner-scapes` | Event infrastructure. Audit event types, broadcast channel event bus, JSONL audit log writer. | `EventBus`, `EventPublisher`, `AuditEvent`, `EventKind`, `JsonlWriter` |
@@ -122,7 +122,7 @@ sequenceDiagram
     participant Profile as Profile Resolution
     participant Git as Git Capture
     participant Bus as Event Bus
-    participant Sandbox as Sandbox (bwrap)
+    participant Sandbox as Sandbox (sandbox-init)
     participant Monitor as Monitors
     participant Recorder as Recorder
     participant Chain as Chain Discovery
@@ -141,7 +141,7 @@ sequenceDiagram
     CLI->>CLI: spawn_jsonl_writer(rx_writer, audit.jsonl)
     CLI->>CLI: spawn recorder::run(rx_recorder)
 
-    CLI->>Sandbox: BwrapSandbox::new(profile, project_dir)
+    CLI->>Sandbox: DirectSandbox::new(profile, project_dir)
     Note over Sandbox: If network filtering needed:
     CLI->>Sandbox: NetworkFilter::resolve(policy, domains)
     CLI->>Sandbox: NamespaceHandle::create()
@@ -191,9 +191,9 @@ sequenceDiagram
 - The recorder classifies events into materials (first digest wins) and subjects (last digest wins)
 
 **Phase 4: Sandbox Spawn**
-- Construct `BwrapSandbox` from the profile
-- If selective network filtering is needed (network deny + allowed domains): resolve domains to IPs, create user+net namespace, start pasta, apply nftables via nsenter, wrap bwrap in nsenter
-- Otherwise: plain bwrap with `--unshare-net` for full network denial
+- Construct `DirectSandbox` from the profile
+- If selective network filtering is needed (network deny + allowed domains): resolve domains to IPs, create user+net namespace, start pasta, apply nftables via nsenter, wrap sandbox-init in nsenter
+- Otherwise: sandbox-init creates its own network namespace for full network denial
 
 **Phase 5: Monitoring**
 - Capture pre-session filesystem snapshot (hash all project files for later reconciliation)
@@ -421,7 +421,7 @@ graph TB
     subgraph "Outer: User+Network Namespace"
         subgraph "pasta TAP network"
             subgraph "nftables/iptables rules"
-                subgraph "bubblewrap container"
+                subgraph "sandbox-init container"
                     subgraph "Landlock LSM"
                         subgraph "cgroup v2 scope"
                             CC["Claude Code Process"]
@@ -445,20 +445,21 @@ graph TB
     style NS fill:#f3e5f5,stroke:#6a1b9a
 ```
 
-### Layer 1: Bubblewrap (bwrap)
+### Layer 1: Namespace Isolation (gleisner-sandbox-init)
 
-Bubblewrap creates unprivileged Linux containers using user namespaces. The `BwrapSandbox` struct translates a `Profile` into bwrap command-line arguments:
+The `DirectSandbox` struct serializes a `SandboxSpec` to JSON and launches `gleisner-sandbox-init`, which creates the container via direct syscalls (no external C dependencies):
 
-- **Filesystem isolation**: System paths (`/usr`, `/lib`, `/etc`, `/bin`) are bind-mounted read-only. The project directory is read-write. Sensitive paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, etc.) are shadowed with empty tmpfs mounts. Argument order matters: deny tmpfs overlays must come after readonly binds to properly shadow them.
-- **PID namespace**: `--unshare-pid` gives the sandbox its own PID namespace. The sandboxed process sees itself as PID 1.
-- **Privilege escalation prevention**: `PR_SET_NO_NEW_PRIVS` is applied by Landlock inside `sandbox-init`, preventing SUID/SGID escalation. Note: `--new-session` is deliberately NOT used because it calls `setsid()`, which disconnects the controlling terminal and breaks interactive use (no Ctrl+C, no stdin).
-- **Orphan prevention**: `--die-with-parent` ensures the sandbox is killed if the parent gleisner process dies.
+- **Filesystem isolation**: `unshare(CLONE_NEWNS)` creates a mount namespace. A tmpfs is mounted as the new root, then system paths (`/usr`, `/lib`, `/etc`, `/bin`) are bind-mounted read-only, the project directory is read-write, and sensitive paths (`~/.ssh`, `~/.aws`, `~/.gnupg`, etc.) are shadowed with empty tmpfs mounts. `pivot_root` replaces the filesystem root entirely. Mount ordering matters: deny tmpfs overlays must come after readonly binds to properly shadow them (4-phase ordering).
+- **PID namespace**: `unshare(CLONE_NEWPID)` gives the sandbox its own PID namespace. The sandboxed process sees itself as PID 1.
+- **Privilege escalation prevention**: `PR_SET_NO_NEW_PRIVS` is applied by Landlock inside `sandbox-init` (or explicitly when Landlock is disabled), preventing SUID/SGID escalation.
+- **Orphan prevention**: `PR_SET_PDEATHSIG(SIGKILL)` ensures the sandbox is killed if the parent gleisner process dies.
+- **UID/GID mapping**: The real UID/GID are mapped inside the user namespace so Claude Code does not see itself as root.
 
 ### Layer 2: Network Filtering
 
 Two modes:
 
-**Full denial** (simple case): When `network.default = "deny"` with no `allow_domains`, bwrap uses `--unshare-net` to create an empty network namespace. No network access at all.
+**Full denial** (simple case): When `network.default = "deny"` with no `allow_domains`, sandbox-init uses `unshare(CLONE_NEWNET)` to create an empty network namespace. No network access at all.
 
 **Selective filtering** (complex case): When `allow_domains` are specified alongside `network.default = "deny"`:
 
@@ -473,9 +474,9 @@ Two modes:
    - **iptables** (fallback): Sets `OUTPUT DROP`, adds loopback and per-IP rules. Also blocks IPv6 via `ip6tables`
    - If neither works, the sandbox refuses to start
 
-5. **nsenter**: The bwrap command is wrapped with `nsenter --user=... --net=... --preserve-credentials --no-fork` to enter the pre-created namespace instead of using `--unshare-net`.
+5. **nsenter**: The sandbox-init command is wrapped with `nsenter --user=... --net=... --preserve-credentials --no-fork` to enter the pre-created namespace. sandbox-init then skips creating its own network namespace (the `use_external_netns` flag).
 
-Why not just `--unshare-net` with external pasta? Because bwrap's `--unshare-user` creates a nested user namespace that loses `CAP_NET_ADMIN`, preventing nftables rules from being applied inside. Creating the namespaces first, applying firewall rules via nsenter, and then running bwrap inside the pre-created namespace avoids this problem.
+Why a separate namespace phase? The sandbox creates its own user namespace via `unshare(CLONE_NEWUSER)`. Network namespaces are owned by the user namespace they were created in, and `setns(CLONE_NEWNET)` requires `CAP_NET_ADMIN` in the owning user namespace. Creating the namespaces first, applying firewall rules via nsenter, and then running sandbox-init inside the pre-created namespace avoids this problem.
 
 ### Layer 3: Cgroup v2 Resource Limits
 
@@ -734,7 +735,7 @@ On channel close, the recorder hashes the completed audit log file and returns a
 gleisner-tui [OPTIONS]
 
 --profile <name>           Sandbox profile (default: "konishi")
---sandbox                  Enable bwrap isolation + attestation (Linux only)
+--sandbox                  Enable namespace isolation + attestation (Linux only)
 --project-dir <path>       Project directory (default: cwd)
 --claude-bin <path>        Override Claude binary path
 --allow-network <domain>   Additional allowed domains (repeatable)
@@ -801,7 +802,7 @@ The TUI renders a fixed-width (~28 column) telemetry sidebar:
 │ State                 │
 │  Profile  konishi     │
 │  Mode     bypassAll   │
-│  Sandbox  ⦿ bwrap     │
+│  Sandbox  ⦿ sandbox   │
 │  Attest   ⦿ REC 42    │
 │  Cosign   ⦿ /cosign   │
 │  Exo      ○ ---       │
@@ -820,7 +821,7 @@ The TUI renders a fixed-width (~28 column) telemetry sidebar:
 ```
 
 Dashboard state indicators:
-- **Sandbox**: green `⦿ bwrap` when active, dimmed `○ off` when disabled
+- **Sandbox**: green `⦿ sandbox` when active, dimmed `○ off` when disabled
 - **Attest**: red `⦿ REC N` during recording (live event count), dimmed `○ N` after finalization
 - **Cosign**: amber `⦿ /cosign` when attestation is ready for signing, green `⦿ signed` after Sigstore signing completes
 - **Ctx**: Context window usage bar, color-coded: green (0-60%), amber (60-80%), red (80-100%)
@@ -867,19 +868,20 @@ Message role badges (`[you]`, `[claude]`, `[suit]`, `[tool]`) use distinct backg
 
 The chain links on `SHA-256(bundle.payload)`, not `SHA-256(entire_bundle_json)`. This means re-signing a statement (e.g., rotating keys or switching from local to Sigstore signing) does not break the chain. The payload contains the attestation content; the bundle wraps it with signing metadata. The content is what matters for provenance continuity. Re-keying is a legitimate operational need that should not invalidate the attestation history.
 
-### Why Bubblewrap Over Other Sandboxing
+### Why Direct Syscalls Over External Sandboxing Tools
 
-Several options were considered:
+Several options were evaluated over the project's lifetime:
 
 | Option | Verdict | Reason |
 |--------|---------|--------|
-| **bubblewrap** | Chosen | Unprivileged (no root needed), mature, widely packaged, simple CLI interface, composable with other namespace tools |
+| **Direct syscalls (nix crate)** | Chosen | Zero external dependencies, full control over namespace setup, pivot_root for proper filesystem isolation, no CLI flag assembly, single binary |
+| bubblewrap (bwrap) | Previously used, replaced | Added an external C dependency, 50+ CLI flags to assemble, no pivot_root in our configuration, separate binary to package |
 | Docker/Podman | Rejected | Heavyweight, requires daemon or rootless setup, overkill for wrapping a single interactive CLI process |
 | Firejail | Rejected | Less composable, historically had security issues, less widely deployed |
-| Raw namespaces | Rejected | Too low-level, would duplicate what bwrap already provides robustly |
+| hakoniwa | Evaluated | Good ideas (empty-root-first model, pivot_root), but LGPL-3.0 license is incompatible with supply chain security tooling |
 | Flatpak | Rejected | Designed for GUI applications, wrong abstraction level |
 
-Bubblewrap's key advantage is that it works unprivileged (via user namespaces) and produces a single process tree that is easy to monitor and control.
+The direct syscall approach works unprivileged (via user namespaces), produces a single process tree, eliminates the external C dependency, and gives us `pivot_root` for proper root filesystem replacement (stronger than bubblewrap's bind-mount-based isolation).
 
 ### Why In-Toto / SLSA Format
 

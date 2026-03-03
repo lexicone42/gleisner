@@ -35,7 +35,7 @@ async fn main() -> color_eyre::Result<()> {
         .cloned()
         .unwrap_or_else(|| "konishi".into());
 
-    // Parse --sandbox flag — wraps claude in bubblewrap isolation
+    // Parse --sandbox flag — wraps claude in namespace isolation
     let sandboxed = args.iter().any(|a| a == "--sandbox");
 
     // Parse --project-dir argument (default: current directory)

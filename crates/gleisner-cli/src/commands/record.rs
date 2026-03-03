@@ -4,7 +4,7 @@
 //! 1. Capture pre-session state (git, Claude Code context)
 //! 2. Set up event bus with JSONL writer and session recorder
 //! 3. Start event monitors (inotify filesystem, /proc process)
-//! 4. Run Claude Code in a bwrap sandbox
+//! 4. Run Claude Code in a sandboxed environment
 //! 5. On exit: cancel monitors, finalize recorder, assemble in-toto statement, sign
 //! 6. Write attestation bundle (or unsigned statement) to disk
 
@@ -94,7 +94,7 @@ pub struct RecordArgs {
 /// Stub for non-Linux platforms.
 #[cfg(not(target_os = "linux"))]
 pub async fn execute(_args: RecordArgs) -> Result<()> {
-    color_eyre::eyre::bail!("gleisner record requires Linux (bubblewrap sandbox)")
+    color_eyre::eyre::bail!("gleisner record requires Linux")
 }
 
 // ── Linux implementation ────────────────────────────────────────────

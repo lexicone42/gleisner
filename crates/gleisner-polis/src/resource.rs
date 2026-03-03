@@ -96,7 +96,7 @@ impl CgroupScope {
             self.write_control("pids.max", &limits.max_pids.to_string())?;
         }
 
-        // RLIMIT_NOFILE: enforced by BwrapSandbox::apply_rlimits() after spawn,
+        // RLIMIT_NOFILE: enforced by DirectSandbox::apply_rlimits() after spawn,
         // not via cgroup. Logged here for completeness.
         if limits.max_file_descriptors > 0 {
             debug!(

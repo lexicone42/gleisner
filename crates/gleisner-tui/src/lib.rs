@@ -9,7 +9,7 @@
 //! ```text
 //! User ──→ gleisner-tui (ratatui)
 //!               │
-//!               ├── Spawns: claude -p --output-format stream-json (in bwrap)
+//!               ├── Spawns: claude -p --output-format stream-json (sandboxed)
 //!               ├── Parses: NDJSON event stream
 //!               ├── Renders: conversation + security dashboard
 //!               └── Records: tool calls for attestation

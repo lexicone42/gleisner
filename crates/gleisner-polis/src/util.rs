@@ -1,7 +1,7 @@
 //! Portable utilities — path expansion, binary resolution, command building.
 //!
 //! These functions use no Linux-specific APIs and are available on all
-//! platforms. Extracted from `bwrap.rs` and `session.rs` to support
+//! platforms. Extracted from `sandbox.rs` and `session.rs` to support
 //! cfg-gating the Linux-only sandbox modules.
 
 use std::path::{Path, PathBuf};

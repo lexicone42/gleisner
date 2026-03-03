@@ -10,7 +10,7 @@ Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligen
 
 ## What Gleisner Does
 
-**Sandbox** -- Run Claude Code inside a multi-layer Linux sandbox (bubblewrap + Landlock V7 + cgroups + nftables). Credentials are hidden, network egress is restricted to an explicit domain allowlist, and filesystem writes are confined to the project directory.
+**Sandbox** -- Run Claude Code inside a multi-layer Linux sandbox (user namespaces + pivot_root + Landlock V7 + cgroups + nftables). Credentials are hidden, network egress is restricted to an explicit domain allowlist, and filesystem writes are confined to the project directory. No external C dependencies -- the container runtime uses direct syscalls via the `nix` crate.
 
 **Attest** -- Every sandboxed session produces a signed [in-toto v1](https://in-toto.io/) attestation bundle with [SLSA](https://slsa.dev/)-compatible provenance. Materials (files read), subjects (files written), timestamps, sandbox configuration, and git state are all cryptographically bound. Attestations chain together via parent payload digests.
 
@@ -21,7 +21,6 @@ Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligen
 ### Requirements
 
 - **Linux** (x86_64) -- user namespaces, Landlock LSM, cgroups v2
-- **[bubblewrap](https://github.com/containers/bubblewrap)** -- `apt install bubblewrap` / `pacman -S bubblewrap`
 - **Rust 1.85+** -- [rustup.rs](https://rustup.rs/)
 - **Claude Code** -- `npm install -g @anthropic-ai/claude-code`
 - **[pasta](https://passt.top/)** (from passt) -- required for domain-filtered networking. `apt install passt` / `pacman -S passt`
@@ -64,7 +63,7 @@ The TUI displays a telemetry sidebar with live status:
 +- Telemetry ---------------+
 | State                      |
 |  Profile  developer        |
-|  Sandbox  . bwrap          |
+|  Sandbox  . sandbox        |
 |  Attest   . REC 42         |
 |  Cosign   . /cosign        |
 |                            |
@@ -80,7 +79,7 @@ The TUI displays a telemetry sidebar with live status:
 +----------------------------+
 ```
 
-- **Sandbox**: green when bwrap isolation is active
+- **Sandbox**: green when namespace isolation is active
 - **Attest**: red REC indicator with live event count during recording
 - **Cosign**: amber when ready for Sigstore signing, green after signed
 - **Ctx**: context window usage bar, color-coded (green/amber/red)
@@ -103,7 +102,7 @@ Vim-inspired modal input. `i` enters insert mode, `Esc` returns to normal mode. 
 
 When `--sandbox` is passed, the TUI automatically:
 
-1. Creates a bubblewrap + Landlock sandbox for the Claude session
+1. Creates a namespace + Landlock sandbox for the Claude session
 2. Monitors filesystem changes (inotify) and child processes (`/proc`)
 3. Records all events to a JSONL audit log
 4. Reconciles pre/post filesystem snapshots on session end
@@ -151,7 +150,7 @@ Five independent isolation layers, each enforced by a different Linux kernel mec
 | Layer | Mechanism | Purpose |
 |-------|-----------|---------|
 | 1 | User namespaces | Unprivileged isolation -- no real host privileges |
-| 2 | Bubblewrap (bwrap) | Mount namespace -- bind-mounts, tmpfs deny, PID namespace, `--die-with-parent` |
+| 2 | Mount namespace + pivot_root | Bind-mounts, tmpfs deny, PID namespace, die-with-parent |
 | 3 | Landlock LSM (V7) | Filesystem and network access control, IPC scope isolation, kernel audit logging |
 | 4 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits |
 | 5 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
@@ -262,7 +261,7 @@ All rules are opt-in. Absent fields are skipped, not failed.
     +-----------+ +----------+ +-----------+ +----------+ +--------+
           |
     +---------------+
-    | sandbox-init  |  Landlock trampoline (inside bwrap)
+    | sandbox-init  |  Container runtime (namespaces, mounts, Landlock)
     +---------------+
 ```
 
@@ -270,12 +269,12 @@ All rules are opt-in. Absent fields are skipped, not failed.
 |-------|------|
 | `gleisner-cli` | CLI: `wrap`, `record`, `verify`, `inspect`, `diff`, `sbom`, `learn` |
 | `gleisner-tui` | Interactive TUI with security dashboard, slash commands, attestation recording |
-| `gleisner-polis` | Sandbox: bubblewrap, Landlock V7, cgroups/rlimits, inotify, pasta networking, profile learning |
+| `gleisner-polis` | Sandbox: namespaces, Landlock V7, cgroups/rlimits, inotify, pasta networking, profile learning |
 | `gleisner-introdus` | Attestation: in-toto v1 statements, ECDSA P-256 + Sigstore signing, chain linking |
 | `gleisner-lacerta` | Verification: signature checking, digest verification, policy engine (JSON + WASM/OPA) |
 | `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.5 JSON |
 | `gleisner-scapes` | Events: tokio broadcast bus, JSONL audit writer, session recorder |
-| `gleisner-sandbox-init` | Trampoline: applies Landlock rules inside bubblewrap before exec |
+| `gleisner-sandbox-init` | Container runtime: creates namespaces, bind mounts, pivot_root, applies Landlock, execs inner command |
 
 ## Documentation
 
@@ -297,7 +296,7 @@ Before submitting a PR:
    ```
 2. Format: `cargo fmt --all`
 3. Audit: `cargo deny check`
-4. No `unsafe` -- the workspace enforces `unsafe_code = "forbid"`
+4. No `unsafe` in library crates -- the workspace enforces `unsafe_code = "forbid"` (exception: `gleisner-sandbox-init` uses `nix` syscall wrappers)
 
 All dependency versions live in the root `Cargo.toml` via workspace inheritance. Never duplicate a version in a member crate.
 

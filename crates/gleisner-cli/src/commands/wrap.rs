@@ -1,7 +1,7 @@
 //! `gleisner wrap` — run Claude Code inside a sandbox without attestation.
 //!
 //! This is the simplest Gleisner command: it wraps Claude Code in a
-//! bubblewrap sandbox using the specified profile, without recording
+//! sandbox using the specified profile, without recording
 //! attestation data. Useful for day-to-day development where you want
 //! isolation but don't need cryptographic provenance.
 
@@ -140,7 +140,7 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
 #[cfg(not(target_os = "linux"))]
 #[allow(clippy::unused_async)]
 pub async fn execute(_args: WrapArgs) -> Result<()> {
-    color_eyre::eyre::bail!("gleisner wrap requires Linux (bubblewrap sandbox)")
+    color_eyre::eyre::bail!("gleisner wrap requires Linux")
 }
 
 /// Detect Claude Code version by running `claude --version`.

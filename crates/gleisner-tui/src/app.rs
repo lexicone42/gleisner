@@ -62,7 +62,7 @@ pub struct SecurityState {
     pub pending_cosign: bool,
     /// The current session's attestation has been cosigned with Sigstore.
     pub cosigned: bool,
-    /// Whether the sandbox (bwrap) is active for this session.
+    /// Whether the sandbox is active for this session.
     pub sandbox_active: bool,
     /// Number of attestation events recorded during this session.
     pub attest_events: u64,

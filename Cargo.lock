@@ -2833,6 +2833,7 @@ name = "gleisner-sandbox-init"
 version = "0.1.0"
 dependencies = [
  "gleisner-polis",
+ "nix 0.29.0",
  "serde",
  "serde_json",
  "tempfile",
