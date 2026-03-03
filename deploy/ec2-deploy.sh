@@ -35,6 +35,8 @@ STDLIB_DIR=""
 PACKAGES=""
 PROFILE="konishi"
 KEY_NAME="${GLEISNER_SSH_KEY:-}"
+SECURITY_GROUP="${GLEISNER_SECURITY_GROUP:-}"
+SUBNET="${GLEISNER_SUBNET:-}"
 PROJECT_DIR="${PWD}"
 GLEISNER_BIN=""
 CLEANUP="true"
@@ -50,6 +52,8 @@ while [[ $# -gt 0 ]]; do
         --packages)     PACKAGES="$2"; shift 2 ;;
         --profile)      PROFILE="$2"; shift 2 ;;
         --key-name)     KEY_NAME="$2"; shift 2 ;;
+        --security-group) SECURITY_GROUP="$2"; shift 2 ;;
+        --subnet)       SUBNET="$2"; shift 2 ;;
         --project-dir)  PROJECT_DIR="$2"; shift 2 ;;
         --gleisner-bin) GLEISNER_BIN="$2"; shift 2 ;;
         --no-cleanup)   CLEANUP="false"; shift ;;
@@ -261,6 +265,12 @@ LAUNCH_ARGS=(
 
 if [[ -n "$KEY_NAME" ]]; then
     LAUNCH_ARGS+=(--key-name "$KEY_NAME")
+fi
+if [[ -n "$SECURITY_GROUP" ]]; then
+    LAUNCH_ARGS+=(--security-group-ids "$SECURITY_GROUP")
+fi
+if [[ -n "$SUBNET" ]]; then
+    LAUNCH_ARGS+=(--subnet-id "$SUBNET")
 fi
 
 # Instance profile for S3 access — run deploy/setup-iam.sh first

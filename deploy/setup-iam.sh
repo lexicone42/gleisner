@@ -45,7 +45,7 @@ TRUST_POLICY='{
 aws iam create-role \
     --role-name "$ROLE_NAME" \
     --assume-role-policy-document "$TRUST_POLICY" \
-    --description "Gleisner forge session role — S3 access for package evaluation" \
+    --description "Gleisner forge session role - S3 access for package evaluation" \
     2>/dev/null || echo "setup: role ${ROLE_NAME} already exists" >&2
 
 # Inline policy: S3 access to the specific bucket
