@@ -241,12 +241,10 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
     // ── 6. Set working directory ──────────────────────────────────
     chdir(&spec.work_dir).map_err(|e| format!("chdir to {}: {e}", spec.work_dir.display()))?;
 
-    // ── 7. Exec the inner command ─────────────────────────────────
+    // ── 7. Fork and exec the inner command ─────────────────────────
     if spec.inner_command.is_empty() {
         return Err("no inner command specified".to_owned());
     }
-
-    // ── 7. Fork and exec the inner command ─────────────────────────
     // We always fork before exec because:
     // - CLONE_NEWPID: the calling process stays in the old PID namespace;
     //   only fork children enter the new one (becoming PID 1).
@@ -379,9 +377,10 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
     }
 
     // ── Provide /proc and /dev ───────────────────────────────────
-    // Try mounting a new procfs first (works when we own the PID namespace).
-    // If that fails (EPERM — PID namespace takes effect only after fork()),
-    // fall back to bind-mounting the host's /proc.
+    // Try mounting a fresh procfs with hidepid=2 (hides other users' /proc/[pid]).
+    // Falls back to plain procfs, then bind-mount of host /proc.
+    // The parent is still in the OLD PID namespace (CLONE_NEWPID only affects
+    // children), so fresh mount often fails — the fork child retries later.
     let new_proc = new_root.join("proc");
     fs::create_dir_all(&new_proc).ok();
     let proc_mounted = mount(
@@ -389,13 +388,24 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
         &new_proc,
         Some("proc"),
         MsFlags::empty(),
-        None::<&str>,
+        Some("hidepid=2"),
     )
-    .is_ok();
+    .is_ok()
+        || mount(
+            Some("proc"),
+            &new_proc,
+            Some("proc"),
+            MsFlags::empty(),
+            None::<&str>,
+        )
+        .is_ok();
     if !proc_mounted {
         // Bind-mount host /proc — still gives us /proc/self etc.
         // Use a direct bind without the hardening remount (nosuid/nodev
         // on procfs causes EPERM in user namespaces).
+        //
+        // If the host's /proc doesn't have hidepid=2, host PIDs are
+        // visible inside the sandbox. The fork child will try again.
         let proc_source = Path::new("/proc");
         mount(
             Some(proc_source),
@@ -405,6 +415,20 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
             None::<&str>,
         )
         .map_err(|e| format!("bind /proc: {e}"))?;
+
+        // Check if host /proc has hidepid — if not, suggest it.
+        let host_has_hidepid = fs::read_to_string("/proc/self/mountinfo")
+            .map(|s| {
+                s.lines()
+                    .any(|l| l.contains("/proc") && l.contains("hidepid"))
+            })
+            .unwrap_or(false);
+        if !host_has_hidepid {
+            eprintln!(
+                "gleisner-sandbox-init: hint: mount /proc with hidepid=2 to hide \
+                 host PIDs inside sandbox (mount -o remount,hidepid=2 /proc)"
+            );
+        }
     }
 
     setup_minimal_dev(&new_root)?;
@@ -491,8 +515,9 @@ fn setup_minimal_dev(new_root: &Path) -> Result<(), String> {
         )
         .map_err(|e| format!("bind /dev/{name}: {e}"))?;
 
-        // Remount with hardening: nosuid+nodev+noexec + any extra flags
-        let harden = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOEXEC | *extra;
+        // Remount with hardening: nosuid+noexec + any extra flags.
+        // NOT nodev — these ARE device nodes and need to function as such.
+        let harden = MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC | *extra;
         mount(
             None::<&str>,
             &target,
@@ -665,26 +690,35 @@ fn fork_and_exec(inner_command: &[String]) -> Result<(), String> {
     match unsafe { fork() } {
         Ok(ForkResult::Child) => {
             // Child: now in the new time namespace (and PID namespace if enabled).
-            // Try to replace bind-mounted /proc with fresh namespace-aware procfs.
-            // This would hide host PIDs and reflect the time namespace offset.
+            // Try to replace bind-mounted /proc with a fresh, hardened procfs.
+            //
+            // hidepid=2: hide /proc/[pid]/ entries for other users' processes.
+            // In a PID namespace where we're PID 1, this means only our own
+            // processes are visible — host PIDs are completely hidden.
             //
             // The kernel's mount_too_revealing() check may reject this (EPERM)
             // if the mount namespace was created with broader visibility than
             // the current PID namespace. In that case, keep the bind-mounted
-            // /proc — clock_gettime() still uses the correct time namespace;
-            // only /proc/uptime and /proc/[pid] entries leak host info.
-            if mount(
+            // /proc. clock_gettime() still uses the correct time namespace
+            // regardless of which procfs is mounted.
+            let proc_remounted = mount(
                 Some("proc"),
                 "/proc",
                 Some("proc"),
                 MsFlags::empty(),
-                None::<&str>,
-            ) == Ok(())
-            {
+                Some("hidepid=2"),
+            )
+            .is_ok()
+                || mount(
+                    Some("proc"),
+                    "/proc",
+                    Some("proc"),
+                    MsFlags::empty(),
+                    None::<&str>,
+                )
+                .is_ok();
+            if proc_remounted {
                 eprintln!("gleisner-sandbox-init: /proc remounted (namespace-aware)");
-            } else {
-                // Bind-mounted /proc remains. This is the common case on
-                // unprivileged setups. Host PIDs visible but read-only.
             }
 
             let program = &inner_command[0];
