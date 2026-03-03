@@ -41,6 +41,12 @@ pub struct ForgeArgs {
     #[arg(short, long, default_value = ".gleisner/composed-env.json")]
     pub output: PathBuf,
 
+    /// Evaluate and compose only — print the policy as JSON to stdout.
+    /// Does not write files or launch a sandbox. Suitable for programmatic
+    /// consumption by a management Claude reasoning about permissions.
+    #[arg(long)]
+    pub dry_run: bool,
+
     /// Also run Claude Code inside a sandbox derived from the composed environment.
     #[arg(long)]
     pub run: bool,
@@ -148,11 +154,7 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         eprintln!("forge: validated against profile '{profile_name}'");
     }
 
-    // 4. Write composed environment + bridge report
-    if let Some(parent) = output_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
+    // 4. Compose the full output
     let composed_json = serde_json::json!({
         "environment": output.environment,
         "policy": {
@@ -169,7 +171,6 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         },
     });
 
-    // 4b. Extract attestation data (materials + subjects + package metadata)
     let attestation =
         extract_attestation_with_results(&output, &composed_json, &output.package_results);
 
@@ -177,6 +178,17 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         "forge": composed_json,
         "attestation": attestation,
     });
+
+    // --dry-run: print JSON to stdout and exit (no files written, no sandbox)
+    if args.dry_run {
+        println!("{}", serde_json::to_string_pretty(&full_json)?);
+        return Ok(());
+    }
+
+    // 5. Write composed environment + bridge report
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
 
     std::fs::write(&output_path, serde_json::to_string_pretty(&full_json)?)?;
     eprintln!(
@@ -187,9 +199,13 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         attestation.package_metadata.len(),
     );
 
-    // 5. Optionally run Claude Code in the composed sandbox
+    // 6. Optionally run Claude Code in the composed sandbox
     if args.run {
-        run_in_composed_sandbox(args, &report, &project_dir)?;
+        let manifest_path = output_path
+            .parent()
+            .unwrap_or(std::path::Path::new("."))
+            .join("session-manifest.json");
+        run_in_composed_sandbox(args, &report, &project_dir, &full_json, &manifest_path)?;
     }
 
     Ok(())
@@ -224,11 +240,18 @@ fn validate_against_profile(
 }
 
 /// Run Claude Code inside a sandbox derived from the composed environment.
+///
+/// After the inner process exits, writes a session manifest to `manifest_path`
+/// capturing the sandbox configuration, exit status, timing, and a digest of
+/// the forge output. This manifest is the trust signal a management Claude
+/// uses to verify what happened.
 #[cfg(target_os = "linux")]
 fn run_in_composed_sandbox(
     args: ForgeArgs,
     report: &gleisner_forge::bridge::BridgeReport,
     project_dir: &std::path::Path,
+    forge_output: &serde_json::Value,
+    manifest_path: &std::path::Path,
 ) -> Result<()> {
     // Start with the requested base profile, or default to konishi
     let base_name = args.profile.as_deref().unwrap_or("konishi");
@@ -284,12 +307,61 @@ fn run_in_composed_sandbox(
         tracing::warn!(error = %e, "failed to apply rlimits");
     }
 
+    let session_start = std::time::Instant::now();
+    let session_start_utc = chrono::Utc::now();
+
     let status = child
         .wait()
         .map_err(|e| eyre!("failed to wait on sandboxed process: {e}"))?;
 
     drop(prepared);
-    std::process::exit(status.code().unwrap_or(1));
+
+    let session_duration = session_start.elapsed();
+    let exit_code = status.code().unwrap_or(1);
+
+    // Write session manifest — the trust signal for management Claudes
+    let forge_digest = {
+        use sha2::{Digest, Sha256};
+        let bytes = serde_json::to_string(forge_output).unwrap_or_default();
+        hex::encode(Sha256::digest(bytes.as_bytes()))
+    };
+
+    let manifest = serde_json::json!({
+        "schema": "gleisner.dev/session-manifest/v1",
+        "session": {
+            "started_at": session_start_utc.to_rfc3339(),
+            "duration_secs": session_duration.as_secs_f64(),
+            "exit_code": exit_code,
+        },
+        "sandbox": {
+            "profile": args.profile.as_deref().unwrap_or("konishi"),
+            "filesystem": {
+                "readonly_bind_count": report.filesystem.readonly_bind.len(),
+                "readwrite_bind_count": report.filesystem.readwrite_bind.len(),
+            },
+            "network": {
+                "allow_dns": report.network.allow_dns,
+                "allow_internet": report.network.allow_internet,
+            },
+            "credential_paths_excluded": report.credential_paths.len(),
+        },
+        "forge": {
+            "output_digest": forge_digest,
+            "packages": args.packages,
+        },
+        "warnings": report.warnings,
+    });
+
+    if let Some(parent) = manifest_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(manifest_path, serde_json::to_string_pretty(&manifest)?)?;
+    eprintln!(
+        "forge: session manifest written to {}",
+        manifest_path.display()
+    );
+
+    std::process::exit(exit_code);
 }
 
 /// Stub for non-Linux platforms.
