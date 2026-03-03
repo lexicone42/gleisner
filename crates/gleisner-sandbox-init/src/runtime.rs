@@ -18,8 +18,7 @@ use nix::unistd::{chdir, pivot_root, sethostname};
 /// Run the sandbox: set up namespaces, mounts, landlock, then exec.
 pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
     // ── 0. Die with parent — prevent orphaned sandboxes ──────────
-    // Equivalent to bwrap's --die-with-parent: if our parent exits,
-    // the kernel sends us SIGKILL.
+    // If our parent exits, the kernel sends us SIGKILL.
     // SAFETY: prctl(PR_SET_PDEATHSIG) is a simple kernel call with no
     // memory-safety implications — it just sets the signal to deliver
     // when this process's parent terminates.
@@ -765,7 +764,7 @@ fn fork_and_exec(inner_command: &[String]) -> Result<(), String> {
             // Close inherited file descriptors (3..max) before exec.
             // The orchestrator passes a spec tempfile and may hold other FDs.
             // Leaving them open lets the inner process read orchestrator state
-            // via /proc/self/fd — bwrap handled this with --noinherit-fds.
+            // via /proc/self/fd.
             close_inherited_fds();
 
             // Sanitize environment: start from a clean slate and only pass

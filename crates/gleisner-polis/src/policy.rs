@@ -34,7 +34,7 @@ pub struct LandlockPolicy {
 /// and `gleisner-sandbox-init` reads it to set up the full container:
 /// user namespace → mount namespace → PID namespace → bind mounts → Landlock → exec.
 ///
-/// This replaces the previous bwrap CLI flags and `LandlockPolicy` JSON tempfile.
+/// Passed to `gleisner-sandbox-init` as JSON via a tempfile.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SandboxSpec {
     /// Filesystem access rules (readonly binds, readwrite binds, deny paths, tmpfs).

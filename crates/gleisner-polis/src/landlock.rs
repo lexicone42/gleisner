@@ -359,7 +359,7 @@ fn add_rules_tracking_skips(
 ///
 /// Landlock cannot create exceptions within subtrees — if `/home` has
 /// read-write access, you cannot deny `/home/.ssh` via Landlock alone.
-/// (Bubblewrap's tmpfs overlay handles this instead.)
+/// (The mount namespace's tmpfs overlay handles this instead.)
 fn check_deny_conflicts(filesystem: &FilesystemPolicy) {
     let all_allowed: Vec<PathBuf> = filesystem
         .readonly_bind

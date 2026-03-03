@@ -1,4 +1,4 @@
-//! Direct sandbox backend — replaces bubblewrap with `gleisner-sandbox-init`.
+//! Direct sandbox backend using `gleisner-sandbox-init`.
 //!
 //! Constructs a [`SandboxSpec`] from a [`Profile`] and launches
 //! `gleisner-sandbox-init` to create the sandbox via direct syscalls
@@ -20,9 +20,8 @@ use crate::util::expand_tilde;
 
 /// Constructs and executes a sandboxed process from a [`Profile`].
 ///
-/// Replaces the previous `BwrapSandbox` — instead of shelling out to
-/// bubblewrap, it launches `gleisner-sandbox-init` with a JSON
-/// [`SandboxSpec`] piped via a tempfile.
+/// Launches `gleisner-sandbox-init` with a JSON [`SandboxSpec`] piped
+/// via a tempfile.
 pub struct DirectSandbox {
     profile: Profile,
     project_dir: PathBuf,
