@@ -1,0 +1,8 @@
+{
+  "region": "us-east-1",
+  "service": "ec2",
+  "instance_type": "c6a.xlarge",
+  "bucket": "YOUR-BUCKET-NAME",
+  "nitro_enclave": false,
+  "iam_role": null
+}
