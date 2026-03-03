@@ -2722,6 +2722,7 @@ dependencies = [
  "color-eyre",
  "directories",
  "gleisner-bridger",
+ "gleisner-forge",
  "gleisner-introdus",
  "gleisner-lacerta",
  "gleisner-polis",
@@ -2744,6 +2745,7 @@ dependencies = [
 name = "gleisner-forge"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "hex",
  "indexmap 2.13.0",
  "nickel-lang-core",

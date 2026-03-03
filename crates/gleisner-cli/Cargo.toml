@@ -36,6 +36,7 @@ gleisner-introdus.workspace = true
 gleisner-bridger.workspace = true
 gleisner-scapes.workspace = true
 gleisner-lacerta.workspace = true
+gleisner-forge.workspace = true
 
 # Linux-only
 [target.'cfg(target_os = "linux")'.dependencies]

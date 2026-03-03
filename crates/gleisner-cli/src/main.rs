@@ -36,6 +36,8 @@ enum Commands {
     Wrap(commands::wrap::WrapArgs),
     /// Run Claude Code inside a sandbox with full attestation recording.
     Record(commands::record::RecordArgs),
+    /// Evaluate Nickel packages and compose a sandbox environment.
+    Forge(commands::forge::ForgeArgs),
     /// Verify an attestation bundle's signatures, digests, and policies.
     Verify(commands::verify::VerifyArgs),
     /// Compare two attestation bundles and show what changed.
@@ -74,6 +76,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Wrap(args) => commands::wrap::execute(args).await,
         Commands::Record(args) => commands::record::execute(args).await,
+        Commands::Forge(args) => commands::forge::execute(args).await,
         Commands::Diff(args) => commands::diff::execute(&args),
         Commands::Verify(args) => commands::verify::execute(args),
         Commands::Inspect(args) => commands::inspect::execute(&args),
