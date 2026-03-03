@@ -666,6 +666,65 @@ mod tests {
     }
 
     #[test]
+    fn e2e_sandbox_no_leaked_fds() {
+        // Verify that FDs 3+ are closed inside the sandbox.
+        // The orchestrator opens a spec tempfile (FD 3+) — the inner process
+        // should not see it. We check by listing /proc/self/fd inside the
+        // sandbox and verifying only 0, 1, 2 are open.
+        let Some(output) = run_sandboxed(&["ls", "/proc/self/fd"]) else {
+            eprintln!("skipping: sandbox-init not available or no user namespace support");
+            return;
+        };
+        let fds: Vec<i32> = output
+            .lines()
+            .filter_map(|s| s.trim().parse().ok())
+            .collect();
+
+        // FD 0,1,2 (stdin/stdout/stderr) should exist.
+        // FD 3 may exist transiently (the ls command's own dirfd for reading
+        // /proc/self/fd). But no FDs from the orchestrator (spec tempfile,
+        // etc.) should leak through.
+        let leaked: Vec<i32> = fds.iter().copied().filter(|&fd| fd > 3).collect();
+        assert!(
+            leaked.is_empty(),
+            "inner process should not inherit FDs from orchestrator, got: {leaked:?}"
+        );
+    }
+
+    #[test]
+    fn e2e_sandbox_env_sanitized() {
+        // Verify that arbitrary orchestrator env vars are NOT passed through.
+        // Set a custom var in the orchestrator, check it's absent inside.
+        //
+        // We use `run_sandboxed` which calls Command::new(init_bin).
+        // The init_bin reads GLEISNER_TEST_LEAK but env_clear() should strip it.
+        //
+        // Since we can't set env vars in run_sandboxed's child, we test that
+        // well-known safe vars ARE present and a known-unsafe pattern is not.
+        let Some(output) = run_sandboxed(&["env"]) else {
+            eprintln!("skipping: sandbox-init not available or no user namespace support");
+            return;
+        };
+
+        // PATH should be present (it's in the whitelist)
+        assert!(
+            output.lines().any(|l| l.starts_with("PATH=")),
+            "sandbox should have PATH set"
+        );
+
+        // GLEISNER_ internal vars should NOT leak (the init process sets
+        // none by default, and env_clear strips the orchestrator's)
+        let leaked: Vec<&str> = output
+            .lines()
+            .filter(|l| l.starts_with("GLEISNER_"))
+            .collect();
+        assert!(
+            leaked.is_empty(),
+            "orchestrator GLEISNER_* vars should not leak: {leaked:?}"
+        );
+    }
+
+    #[test]
     fn e2e_sandbox_time_namespace() {
         // Verify the sandbox runs in a separate time namespace by comparing
         // the time namespace inode inside the sandbox with the host's.
