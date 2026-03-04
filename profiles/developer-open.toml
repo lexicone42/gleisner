@@ -1,15 +1,12 @@
-# Developer — Development-oriented profile for gleisner-in-gleisner
+# Developer Open — Same as developer but with unrestricted network
 #
-# Named to reflect its purpose: working on code inside a sandbox.
-# Allows access to the Rust toolchain, cargo registry, and crates.io
-# while keeping credential isolation and network filtering active.
-#
-# Network: Anthropic API + crates.io + GitHub (filtered via nftables)
-# Filesystem: System paths read-only, dev toolchain read-write, credentials hidden
-# Process: PID namespace isolated, limits raised for cargo builds
+# Used for debugging: isolates network filtering as a variable.
+# If g-in-g works with this profile but not "developer", the problem
+# is in the domain allowlist. If it still fails, the problem is elsewhere
+# (filesystem, TLS, sandbox runtime).
 
-name = "developer"
-description = "Development profile — Rust toolchain, crates.io, GitHub access, credentials hidden"
+name = "developer-open"
+description = "Developer profile with unrestricted network — for debugging"
 
 [filesystem]
 readonly_bind = [
@@ -43,32 +40,9 @@ deny = [
 tmpfs = ["/tmp"]
 
 [network]
-default = "deny"
-allow_domains = [
-    "api.anthropic.com",
-    "sentry.io",
-    "statsig.anthropic.com",
-    "crates.io",
-    "static.crates.io",
-    "index.crates.io",
-    "github.com",
-    "api.github.com",
-    "objects.githubusercontent.com",
-    "raw.githubusercontent.com",
-    "codeload.github.com",
-    # Package registries — MCP servers (serena, context7, playwright) install via
-    # uvx/npx which need access to npm and PyPI registries
-    "registry.npmjs.org",
-    "pypi.org",
-    "files.pythonhosted.org",
-    # Sigstore keyless signing (Fulcio + Rekor + OIDC)
-    "fulcio.sigstore.dev",
-    "rekor.sigstore.dev",
-    "oauth2.sigstore.dev",
-    "tuf-repo-cdn.sigstore.dev",
-    "sigstore.dev",
-]
-allow_ports = [443, 80]
+default = "allow"
+allow_domains = []
+allow_ports = []
 allow_dns = true
 
 [process]
@@ -87,10 +61,8 @@ max_disk_write_mb = 20480
 skip_permissions = true
 add_dirs = ["~/.claude/exo-self"]
 disallowed_tools = [
-    # Serena: block shell/file escape vectors (keep analysis tools)
     "mcp__plugin_serena_serena__execute_shell_command",
     "mcp__plugin_serena_serena__create_text_file",
-    # Playwright: entire browser automation suite — network escape vector
     "mcp__plugin_playwright_playwright__browser_close",
     "mcp__plugin_playwright_playwright__browser_resize",
     "mcp__plugin_playwright_playwright__browser_console_messages",
@@ -113,7 +85,6 @@ disallowed_tools = [
     "mcp__plugin_playwright_playwright__browser_select_option",
     "mcp__plugin_playwright_playwright__browser_tabs",
     "mcp__plugin_playwright_playwright__browser_wait_for",
-    # Greptile: code review service — not needed for g-in-g development
     "mcp__plugin_greptile_greptile__list_custom_context",
     "mcp__plugin_greptile_greptile__get_custom_context",
     "mcp__plugin_greptile_greptile__search_custom_context",
@@ -127,8 +98,4 @@ disallowed_tools = [
     "mcp__plugin_greptile_greptile__search_greptile_comments",
     "mcp__plugin_greptile_greptile__create_custom_context",
 ]
-mcp_network_domains = [
-    "context7.com",
-    "mcp.context7.com",
-    "api.greptile.com",
-]
+mcp_network_domains = []

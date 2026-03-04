@@ -69,6 +69,13 @@ pub struct SandboxSpec {
     /// After `unshare()`, the new namespaced process inherits the cgroup.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_limits: Option<crate::profile::ResourceLimits>,
+    /// Extra environment variables to pass to the inner command.
+    ///
+    /// Applied after `env_clear()` + standard passthrough, so these override
+    /// any preserved values. Used for debugging (`NODE_DEBUG`) and forge
+    /// harness build environment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra_env: Vec<(String, String)>,
 }
 
 /// The type of file access being evaluated.

@@ -95,6 +95,7 @@ mod tests {
             uid: 1000,
             gid: 1000,
             resource_limits: None,
+            extra_env: vec![],
         };
 
         let json = serde_json::to_string(&spec).unwrap();

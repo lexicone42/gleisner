@@ -484,6 +484,7 @@ fn run_in_composed_sandbox(
         extra_allow_paths: Vec::new(),
         no_landlock: false,
         no_cgroups: false,
+        extra_env: vec![],
     };
 
     let mut prepared = gleisner_polis::prepare_sandbox(config, &inner_command)?;

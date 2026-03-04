@@ -30,6 +30,8 @@ pub struct SandboxSessionConfig {
     pub no_landlock: bool,
     /// Skip cgroup resource limits inside the sandbox.
     pub no_cgroups: bool,
+    /// Extra environment variables to pass to the inner command.
+    pub extra_env: Vec<(String, String)>,
 }
 
 /// A fully prepared sandbox, ready to spawn.
@@ -117,6 +119,9 @@ pub fn prepare_sandbox(
     }
     if config.no_cgroups {
         sandbox.disable_cgroups();
+    }
+    if !config.extra_env.is_empty() {
+        sandbox.set_extra_env(config.extra_env);
     }
 
     // ── 6. Resolve network filter ─────────────────────────────────
@@ -251,6 +256,7 @@ mod tests {
             extra_allow_paths: vec![],
             no_landlock: true,
             no_cgroups: true,
+            extra_env: vec![],
         };
 
         let inner = vec!["/bin/echo".to_owned(), "hello".to_owned()];
@@ -281,6 +287,7 @@ mod tests {
             extra_allow_paths: vec![],
             no_landlock: true,
             no_cgroups: true,
+            extra_env: vec![],
         };
 
         let inner = vec!["/bin/true".to_owned()];
@@ -305,6 +312,7 @@ mod tests {
             extra_allow_paths: vec![],
             no_landlock: true,
             no_cgroups: true,
+            extra_env: vec![],
         };
 
         let inner = vec!["/bin/true".to_owned()];

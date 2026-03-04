@@ -2865,6 +2865,7 @@ dependencies = [
  "color-eyre",
  "crossterm",
  "gleisner-bridger",
+ "gleisner-forge",
  "gleisner-introdus",
  "gleisner-lacerta",
  "gleisner-polis",

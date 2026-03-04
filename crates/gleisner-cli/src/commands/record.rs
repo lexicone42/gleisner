@@ -217,6 +217,7 @@ mod linux_impl {
             extra_allow_paths: args.wrap.allow_path,
             no_landlock: args.wrap.no_landlock,
             no_cgroups: args.no_cgroups,
+            extra_env: vec![],
         };
 
         let prepared = gleisner_polis::prepare_sandbox(sandbox_config, &inner_command)?;

@@ -37,6 +37,7 @@ gleisner-polis.workspace = true
 gleisner-bridger.workspace = true
 gleisner-lacerta.workspace = true
 gleisner-introdus.workspace = true
+gleisner-forge.workspace = true
 
 # Attestation pipeline
 tokio-util.workspace = true

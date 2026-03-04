@@ -9,7 +9,7 @@
 //! TUI event loop
 //!     ↓ spawn_query()
 //! tokio::spawn → claude subprocess
-//!     ↓ stdout (NDJSON lines)
+//!     ↓ stderr (NDJSON lines — Claude Code writes stream-json to stderr)
 //! parse each line → StreamEvent
 //!     ↓ mpsc channel
 //! TUI receives events → updates app state → re-renders
@@ -55,6 +55,15 @@ pub struct SandboxConfig {
     pub extra_allow_network: Vec<String>,
     /// Additional paths to mount read-write inside the sandbox.
     pub extra_allow_paths: Vec<PathBuf>,
+    /// Forge-composed environment variables (from harness + state wiring).
+    /// Set by running the forge pipeline before spawning Claude.
+    pub forge_env_vars: Vec<(String, String)>,
+    /// Forge state directories to bind-mount read-write.
+    pub forge_extra_rw_paths: Vec<PathBuf>,
+    /// Disable Landlock enforcement (debugging only).
+    pub no_landlock: bool,
+    /// Extra environment variables to pass inside the sandbox.
+    pub extra_env: Vec<(String, String)>,
 }
 
 /// Configuration for a Claude query.
@@ -93,6 +102,10 @@ pub struct QueryConfig {
     /// If None with `use_sigstore`, falls back to ambient CI detection
     /// then interactive browser flow.
     pub sigstore_token: Option<String>,
+    /// Skip all MCP servers (diagnostic). Passes `--strict-mcp-config`
+    /// to Claude Code without any `--mcp-config`, causing it to ignore
+    /// all plugin-configured MCP servers.
+    pub no_mcp: bool,
 }
 
 impl Default for QueryConfig {
@@ -122,6 +135,7 @@ impl Default for QueryConfig {
             sandbox: None,
             use_sigstore: false,
             sigstore_token: None,
+            no_mcp: false,
         }
     }
 }
@@ -155,6 +169,7 @@ impl QueryConfig {
             sandbox: None,
             use_sigstore: false,
             sigstore_token: None,
+            no_mcp: false,
         }
     }
 }
@@ -187,6 +202,24 @@ pub struct QueryHandle {
     pub rx: mpsc::Receiver<DriverMessage>,
     /// Abort handle — dropping or calling `.abort()` kills the task.
     pub task: tokio::task::JoinHandle<()>,
+    /// PID of the child process (for forceful cleanup on quit).
+    pub child_pid: std::sync::Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl QueryHandle {
+    /// Kill the child process directly. Used during TUI shutdown to ensure
+    /// the subprocess doesn't outlive the TUI, even if tokio task abort
+    /// hasn't propagated yet.
+    pub fn force_kill(&self) {
+        let pid = self.child_pid.load(std::sync::atomic::Ordering::Relaxed);
+        if pid > 0 {
+            // Kill the entire process group rooted at the child.
+            // Negative PID sends signal to the process group.
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &format!("-{pid}")])
+                .output();
+        }
+    }
 }
 
 /// Spawn a Claude query as a background task.
@@ -195,14 +228,20 @@ pub struct QueryHandle {
 /// and a `JoinHandle` that can be aborted to kill the subprocess.
 pub fn spawn_query(config: QueryConfig, buffer_size: usize) -> QueryHandle {
     let (tx, rx) = mpsc::channel(buffer_size);
+    let child_pid = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let child_pid_clone = child_pid.clone();
 
     let task = tokio::spawn(async move {
-        if let Err(e) = run_query(&config, &tx).await {
+        if let Err(e) = run_query(&config, &tx, &child_pid_clone).await {
             let _ = tx.send(DriverMessage::Error(e.to_string())).await;
         }
     });
 
-    QueryHandle { rx, task }
+    QueryHandle {
+        rx,
+        task,
+        child_pid,
+    }
 }
 
 /// Handles to sandbox infrastructure that must outlive the subprocess.
@@ -233,6 +272,7 @@ struct SandboxHandles;
 async fn run_query(
     config: &QueryConfig,
     tx: &mpsc::Sender<DriverMessage>,
+    child_pid: &std::sync::Arc<std::sync::atomic::AtomicU32>,
 ) -> color_eyre::Result<()> {
     // ── Build claude CLI arguments ──────────────────────────────
     let mut inner_args: Vec<String> = vec![
@@ -246,6 +286,10 @@ async fn run_query(
 
     if config.skip_permissions {
         inner_args.push("--dangerously-skip-permissions".into());
+    }
+
+    if config.no_mcp {
+        inner_args.push("--strict-mcp-config".into());
     }
 
     if !config.allowed_tools.is_empty() {
@@ -318,14 +362,25 @@ async fn run_query(
 
     // Common settings for both sandboxed and unsandboxed
     cmd.env_remove("CLAUDECODE");
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    // Kill the child process when the tokio task is aborted (e.g., TUI quit).
+    // Without this, aborting the task drops the Child handle without sending
+    // SIGKILL, leaving an orphaned Claude process.
+    cmd.kill_on_drop(true);
 
-    info!(
-        claude_bin = %config.claude_bin,
-        sandboxed = config.sandbox.is_some(),
-        "spawning claude subprocess"
-    );
+    // ── Preflight diagnostics ───────────────────────────────────
+    // Quick checks before spawning to catch common issues early
+    // instead of waiting for a 3-minute timeout.
+    run_preflight_checks(config, tx).await;
+
     let mut child = cmd.spawn()?;
+
+    // Store PID for forceful cleanup on TUI quit
+    if let Some(pid) = child.id() {
+        child_pid.store(pid, std::sync::atomic::Ordering::Relaxed);
+    }
 
     // ── Start attestation monitors (needs child PID) ────────────
     #[cfg(target_os = "linux")]
@@ -338,7 +393,11 @@ async fn run_query(
         .take()
         .ok_or_else(|| color_eyre::eyre::eyre!("failed to capture claude stdout"))?;
 
-    // Forward stderr lines to the TUI as DriverMessage::Stderr
+    // Forward stderr lines — try parsing as stream-json first.
+    //
+    // Claude Code writes stream-json events to stderr (not stdout).
+    // The TUI's stdout reader only catches events from hook subprocesses
+    // that inherit stdout. The actual assistant/result events come on stderr.
     if let Some(stderr) = child.stderr.take() {
         let stderr_tx = tx.clone();
         tokio::spawn(async move {
@@ -350,7 +409,17 @@ async fn run_query(
                     debug!(line = %line, "sandbox-init status (suppressed from UI)");
                     continue;
                 }
-                if stderr_tx.send(DriverMessage::Stderr(line)).await.is_err() {
+                // Try parsing as stream-json event (Claude Code writes NDJSON to stderr)
+                if let Some(event) = stream::parse_event(&line) {
+                    debug!(event = ?std::mem::discriminant(&event), "parsed stream event from stderr");
+                    if stderr_tx
+                        .send(DriverMessage::Event(Box::new(event)))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                } else if stderr_tx.send(DriverMessage::Stderr(line)).await.is_err() {
                     break;
                 }
             }
@@ -364,6 +433,11 @@ async fn run_query(
     let mut line_count: u64 = 0;
     while let Some(line) = lines.next_line().await? {
         line_count += 1;
+        // Log first N lines at INFO for debugging (truncated to avoid flooding)
+        if line_count <= 20 {
+            let end = line.floor_char_boundary(300.min(line.len()));
+            info!(line = line_count, raw = %&line[..end], "stream-json line");
+        }
         if let Some(event) = stream::parse_event(&line) {
             debug!(line = line_count, event = ?std::mem::discriminant(&event), "parsed stream event");
             if tx
@@ -443,8 +517,9 @@ fn build_sandboxed_command(
         project_dir: sandbox_cfg.project_dir.clone(),
         extra_allow_network: sandbox_cfg.extra_allow_network.clone(),
         extra_allow_paths: extra_paths,
-        no_landlock: false, // TUI always enables Landlock when available
+        no_landlock: sandbox_cfg.no_landlock,
         no_cgroups: false,
+        extra_env: sandbox_cfg.extra_env.clone(),
     };
 
     let prepared = gleisner_polis::prepare_sandbox(session_config, &full_inner)?;
@@ -452,6 +527,23 @@ fn build_sandboxed_command(
     // Convert std::process::Command → tokio::process::Command
     let mut tcmd = Command::new(prepared.command.get_program());
     tcmd.args(prepared.command.get_args());
+
+    // Write forge env vars to a file instead of injecting into the process environment.
+    // Injecting them would cause MCP servers (rust-analyzer, cargo) to inherit
+    // CARGO_BUILD_BUILD_DIR / CARGO_HOME and rebuild everything from scratch.
+    if !sandbox_cfg.forge_env_vars.is_empty() {
+        let env_file = sandbox_cfg.project_dir.join(".gleisner/forge-env.sh");
+        let mut contents = String::from("# Forge build environment — source before building\n");
+        for (key, value) in &sandbox_cfg.forge_env_vars {
+            contents.push_str(&format!("export {key}=\"{value}\"\n"));
+        }
+        if let Err(e) = std::fs::write(&env_file, &contents) {
+            warn!(%e, "failed to write forge env file");
+        } else {
+            info!(path = %env_file.display(), vars = sandbox_cfg.forge_env_vars.len(),
+                  "forge env vars written to file (not injected into process)");
+        }
+    }
 
     Ok((
         tcmd,
@@ -469,6 +561,76 @@ fn build_sandboxed_command(
     _inner_args: Vec<String>,
 ) -> color_eyre::Result<(Command, SandboxHandles)> {
     Err(color_eyre::eyre::eyre!("sandbox mode requires Linux"))
+}
+
+// ── Preflight diagnostics ───────────────────────────────────────────
+//
+// Quick sanity checks before spawning the Claude subprocess. Catches
+// common issues (missing credentials, DNS failures, wrong binary path)
+// immediately instead of waiting for a 3-minute API timeout.
+
+/// Run preflight checks and log/send warnings for any issues found.
+///
+/// This is best-effort — failures here are logged as warnings but don't
+/// prevent the subprocess from launching. The checks run in the TUI
+/// process (not inside the sandbox), so they verify the host environment.
+async fn run_preflight_checks(config: &QueryConfig, tx: &mpsc::Sender<DriverMessage>) {
+    let has_api_key = std::env::var("ANTHROPIC_API_KEY").is_ok();
+    let has_claude_env = std::env::vars()
+        .filter(|(k, _)| k.starts_with("CLAUDE_"))
+        .count();
+
+    // Check claude binary exists
+    let claude_found = std::process::Command::new(&config.claude_bin)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok();
+
+    // Check credentials file
+    let home = std::env::var("HOME").unwrap_or_default();
+    let creds_path = format!("{home}/.claude/.credentials.json");
+    let creds_readable = std::path::Path::new(&creds_path).exists();
+
+    // Check DNS resolution (non-blocking, 5s timeout)
+    let dns_ok = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::net::lookup_host("api.anthropic.com:443"),
+    )
+    .await
+    .map(|r| r.is_ok())
+    .unwrap_or(false);
+
+    info!(
+        claude_bin = %config.claude_bin,
+        sandboxed = config.sandbox.is_some(),
+        has_api_key,
+        claude_env_count = has_claude_env,
+        claude_found,
+        creds_readable,
+        dns_ok,
+        "preflight checks complete"
+    );
+
+    // Send warnings to the TUI for user-visible issues
+    let mut warnings = Vec::new();
+    if !claude_found {
+        warnings.push(format!("claude binary not found: {}", config.claude_bin));
+    }
+    if !has_api_key && !creds_readable {
+        warnings.push("no API key and ~/.claude/.credentials.json not found".into());
+    }
+    if !dns_ok {
+        warnings.push("cannot resolve api.anthropic.com — check network/DNS".into());
+    }
+
+    for warning in warnings {
+        warn!(%warning, "preflight issue");
+        let _ = tx
+            .send(DriverMessage::Stderr(format!("⚠ preflight: {warning}")))
+            .await;
+    }
 }
 
 // ── Attestation pipeline (Linux only) ───────────────────────────────

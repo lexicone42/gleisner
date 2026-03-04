@@ -35,6 +35,8 @@ pub struct DirectSandbox {
     no_cgroups: bool,
     /// Path to the `gleisner-sandbox-init` binary.
     init_bin: PathBuf,
+    /// Extra environment variables to pass to the inner command.
+    extra_env: Vec<(String, String)>,
 }
 
 impl DirectSandbox {
@@ -62,6 +64,7 @@ impl DirectSandbox {
             enable_landlock: true,
             no_cgroups: false,
             init_bin,
+            extra_env: Vec::new(),
         })
     }
 
@@ -83,6 +86,11 @@ impl DirectSandbox {
     /// Disable rootless cgroup resource limits inside the sandbox.
     pub const fn disable_cgroups(&mut self) {
         self.no_cgroups = true;
+    }
+
+    /// Add extra environment variables to pass to the inner command.
+    pub fn set_extra_env(&mut self, env: Vec<(String, String)>) {
+        self.extra_env = env;
     }
 
     /// Build the sandbox spec and launch command.
@@ -157,6 +165,7 @@ impl DirectSandbox {
             } else {
                 Some(self.profile.resources.clone())
             },
+            extra_env: self.extra_env.clone(),
         }
     }
 
@@ -171,8 +180,14 @@ impl DirectSandbox {
 
     /// Apply resource limits to a running child process via `prlimit(1)`.
     ///
-    /// Sets `RLIMIT_NOFILE` (file descriptors), `RLIMIT_AS` (virtual memory),
-    /// `RLIMIT_NPROC` (max processes), and `RLIMIT_FSIZE` (max file size).
+    /// Sets `RLIMIT_NOFILE` (file descriptors), `RLIMIT_NPROC` (max processes),
+    /// and `RLIMIT_FSIZE` (max file size).
+    ///
+    /// NOTE: `RLIMIT_AS` (virtual address space) is intentionally NOT set.
+    /// Node.js/V8 on 64-bit systems reserves far more virtual address space
+    /// than physical memory actually used (for GC, JIT compilation, etc.).
+    /// Setting `RLIMIT_AS` causes V8's allocator to fail silently, hanging
+    /// Claude Code. Use cgroup memory limits instead.
     pub fn apply_rlimits(&self, pid: nix::unistd::Pid) -> Result<(), SandboxError> {
         let limits = &self.profile.resources;
         let pid_arg = format!("--pid={}", pid.as_raw());
@@ -183,15 +198,7 @@ impl DirectSandbox {
             debug!(pid = pid.as_raw(), max_fd = val, "applied RLIMIT_NOFILE");
         }
 
-        if limits.max_memory_mb > 0 {
-            let bytes = limits.max_memory_mb * 1024 * 1024;
-            Self::run_prlimit(&pid_arg, &format!("--as={bytes}:{bytes}"), "RLIMIT_AS")?;
-            debug!(
-                pid = pid.as_raw(),
-                memory_mb = limits.max_memory_mb,
-                "applied RLIMIT_AS"
-            );
-        }
+        // RLIMIT_AS skipped — see doc comment above.
 
         if limits.max_pids > 0 {
             let val = limits.max_pids;
@@ -311,6 +318,7 @@ mod tests {
             enable_landlock: true,
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
+            extra_env: vec![],
         };
 
         let spec = sandbox.build_spec(&["echo".to_owned(), "hello".to_owned()], false);
@@ -343,6 +351,7 @@ mod tests {
             enable_landlock: true,
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
+            extra_env: vec![],
         };
 
         let spec = sandbox.build_spec(&["true".to_owned()], false);
@@ -388,6 +397,7 @@ mod tests {
             enable_landlock: true,
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
+            extra_env: vec![],
         };
 
         let spec = sandbox.build_spec(&["true".to_owned()], true);
@@ -405,6 +415,7 @@ mod tests {
             enable_landlock: true,
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
+            extra_env: vec![],
         };
 
         sandbox.disable_landlock();
@@ -441,6 +452,7 @@ mod tests {
             uid: 1000,
             gid: 1000,
             resource_limits: None,
+            extra_env: vec![],
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");
@@ -523,6 +535,7 @@ mod tests {
             uid,
             gid,
             resource_limits: None,
+            extra_env: vec![],
         };
 
         let json = serde_json::to_string(&spec).expect("serialize spec");
@@ -720,6 +733,153 @@ mod tests {
         assert!(
             leaked.is_empty(),
             "orchestrator GLEISNER_* vars should not leak: {leaked:?}"
+        );
+    }
+
+    #[test]
+    /// E2E: full TUI sandbox path — namespace + pasta + nftables + sandbox-init
+    /// with `use_external_netns=true`.
+    ///
+    /// This replicates what the TUI does when launching an inner Claude Code:
+    /// 1. Create user+net namespace via unshare
+    /// 2. Start pasta for TAP networking
+    /// 3. Apply nftables IP allowlist + IPv6 reject
+    /// 4. Run sandbox-init via nsenter (creates nested user namespace)
+    /// 5. Inner command runs with Landlock + network filtering
+    ///
+    /// The inner command verifies network connectivity to api.anthropic.com,
+    /// which exercises the full network path: DNS → pasta → nftables → Landlock.
+    #[test]
+    fn e2e_full_tui_sandbox_path_with_network() {
+        use crate::netfilter::{self, NetworkFilter, TapHandle};
+
+        // Skip if required tools aren't available
+        if !netfilter::pasta_available()
+            || which::which("nsenter").is_err()
+            || which::which("nft").is_err()
+            || which::which("node").is_err()
+        {
+            eprintln!("skipping: required tools not available");
+            return;
+        }
+
+        let init_bin = detect_sandbox_init().or_else(|| {
+            let exe = std::env::current_exe().ok()?;
+            let parent = exe.parent()?.parent()?;
+            let candidate = parent.join("gleisner-sandbox-init");
+            candidate.is_file().then_some(candidate)
+        });
+        let Some(init_bin) = init_bin else {
+            eprintln!("skipping: sandbox-init binary not found");
+            return;
+        };
+
+        // Step 1+2: Create namespace + pasta (same as NamespaceHandle::create + TapHandle::start)
+        let Ok(ns) = crate::NamespaceHandle::create() else {
+            eprintln!("skipping: no user namespace support");
+            return;
+        };
+        let Ok(_tap) = TapHandle::start(ns.pid()) else {
+            eprintln!("skipping: pasta failed");
+            return;
+        };
+
+        // Step 3: Resolve domains and apply nftables (same as prepare_sandbox steps 6+8)
+        let policy = NetworkPolicy {
+            default: PolicyDefault::Deny,
+            allow_domains: vec!["api.anthropic.com".to_owned()],
+            allow_ports: vec![443],
+            allow_dns: true,
+        };
+        let filter = NetworkFilter::resolve(&policy, &[]).expect("resolve filter");
+        if !filter.has_endpoints() {
+            eprintln!("skipping: DNS resolution failed");
+            return;
+        }
+        filter
+            .apply_firewall_via_nsenter(&ns)
+            .expect("apply firewall");
+
+        // Step 4+5: Build sandbox spec with use_external_netns=true
+        let uid = nix::unistd::getuid().as_raw();
+        let gid = nix::unistd::getgid().as_raw();
+        let project_dir =
+            PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_owned()))
+                .join(".gleisner-sandbox-e2e");
+        std::fs::create_dir_all(&project_dir).ok();
+
+        let spec = SandboxSpec {
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![
+                    PathBuf::from("/usr"),
+                    PathBuf::from("/lib"),
+                    PathBuf::from("/lib64"),
+                    PathBuf::from("/bin"),
+                    PathBuf::from("/sbin"),
+                    PathBuf::from("/etc"),
+                ],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![PathBuf::from("/tmp")],
+            },
+            network: policy,
+            process: ProcessPolicy {
+                pid_namespace: false, // nested PID ns not needed for network test
+                no_new_privileges: true,
+                command_allowlist: vec![],
+            },
+            project_dir: project_dir.clone(),
+            extra_rw_paths: vec![],
+            work_dir: project_dir,
+            // node fetch test — verifies DNS + TCP through nftables + Landlock
+            inner_command: vec![
+                "node".to_owned(),
+                "-e".to_owned(),
+                "fetch('https://api.anthropic.com/v1/messages').then(r=>{console.log('status:'+r.status);process.exit(0)}).catch(e=>{console.error('error:'+e.message);process.exit(1)})".to_owned(),
+            ],
+            enable_landlock: true,
+            use_external_netns: true, // KEY: this is what the TUI sets
+            uid,
+            gid,
+            resource_limits: None,
+            extra_env: vec![],
+        };
+
+        // Write spec to tempfile
+        let json = serde_json::to_string(&spec).expect("serialize spec");
+        let mut tmpfile = tempfile::NamedTempFile::new().expect("create spec tempfile");
+        use std::io::Write;
+        tmpfile.write_all(json.as_bytes()).expect("write spec");
+        tmpfile.flush().expect("flush spec");
+
+        // Run sandbox-init via nsenter (same as prepare_sandbox's nsenter_command)
+        let output = Command::new("nsenter")
+            .args([
+                &format!("--user=/proc/{}/ns/user", ns.pid()),
+                &format!("--net=/proc/{}/ns/net", ns.pid()),
+                "--preserve-credentials",
+                "--no-fork",
+                "--",
+            ])
+            .arg(&init_bin)
+            .arg(tmpfile.path())
+            .output()
+            .expect("spawn nsenter + sandbox-init");
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        eprintln!("sandbox stdout: {stdout}");
+        eprintln!("sandbox stderr: {stderr}");
+
+        assert!(
+            output.status.success(),
+            "full TUI sandbox path should succeed (exit: {})\nstderr: {stderr}",
+            output.status
+        );
+        assert!(
+            stdout.contains("status:405") || stdout.contains("status:200"),
+            "node fetch should reach api.anthropic.com (stdout: {stdout})"
         );
     }
 

@@ -72,6 +72,12 @@ async fn main() -> color_eyre::Result<()> {
         .filter_map(|(i, _)| args.get(i + 1).map(PathBuf::from))
         .collect();
 
+    // Parse --no-landlock flag — disable Landlock for debugging
+    let no_landlock = args.iter().any(|a| a == "--no-landlock");
+
+    // Parse --no-mcp flag — skip all MCP servers (diagnostic for sandbox issues)
+    let no_mcp = args.iter().any(|a| a == "--no-mcp");
+
     // Parse --sigstore flag — use Sigstore keyless signing for attestations
     let use_sigstore = args.iter().any(|a| a == "--sigstore");
 
@@ -95,16 +101,57 @@ async fn main() -> color_eyre::Result<()> {
         );
     }
 
+    // Parse forge arguments (optional — enables minimal.dev package composition)
+    let forge_pkgs_dir = args
+        .iter()
+        .position(|a| a == "--pkgs-dir")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
+    let forge_stdlib_dir = args
+        .iter()
+        .position(|a| a == "--stdlib-dir")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
+    let forge_harnesses_dir = args
+        .iter()
+        .position(|a| a == "--harnesses-dir")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
+
     // Load the gleisner security profile
-    let profile = gleisner_polis::profile::resolve_profile(&profile_name)?;
+    let mut profile = gleisner_polis::profile::resolve_profile(&profile_name)?;
+
+    // Run forge pipeline if package args are provided
+    let (forge_env_vars, forge_extra_rw_paths) =
+        if let (Some(pkgs_dir), Some(stdlib_dir)) = (&forge_pkgs_dir, &forge_stdlib_dir) {
+            run_forge_pipeline(
+                pkgs_dir,
+                stdlib_dir,
+                forge_harnesses_dir.as_deref(),
+                &project_dir,
+                &mut profile,
+            )?
+        } else {
+            (Vec::new(), Vec::new())
+        };
 
     // Build sandbox config if --sandbox was passed
     let sandbox = if sandboxed {
+        // When debugging sandbox issues, pass NODE_DEBUG to see Node.js internals.
+        let extra_env: Vec<(String, String)> = std::env::var("NODE_DEBUG")
+            .ok()
+            .map(|v| vec![("NODE_DEBUG".to_owned(), v)])
+            .unwrap_or_default();
+
         Some(SandboxConfig {
             profile: profile.clone(),
             project_dir: project_dir.clone(),
             extra_allow_network: allow_network,
             extra_allow_paths: allow_path,
+            forge_env_vars,
+            forge_extra_rw_paths,
+            no_landlock,
+            extra_env,
         })
     } else {
         None
@@ -122,6 +169,7 @@ async fn main() -> color_eyre::Result<()> {
         &project_dir,
         use_sigstore,
         sigstore_token.as_deref(),
+        no_mcp,
     )
     .await;
     ratatui::restore();
@@ -144,6 +192,7 @@ async fn run(
     project_dir: &std::path::Path,
     use_sigstore: bool,
     sigstore_token: Option<&str>,
+    no_mcp: bool,
 ) -> color_eyre::Result<()> {
     let mut app = App::new(&profile.name);
     app.security.sandbox_active = sandbox.is_some();
@@ -202,6 +251,7 @@ async fn run(
                                 config.sandbox.clone_from(&sandbox);
                                 config.use_sigstore = use_sigstore;
                                 config.sigstore_token = sigstore_token.map(String::from);
+                                config.no_mcp = no_mcp;
                                 if let Some(bin) = claude_bin {
                                     bin.clone_into(&mut config.claude_bin);
                                 }
@@ -282,6 +332,7 @@ async fn run(
                             UserAction::Interrupt => {
                                 info!("user interrupt — aborting current query");
                                 if let Some(handle) = query.take() {
+                                    handle.force_kill();
                                     handle.task.abort();
                                 }
                                 app.session_state = SessionState::Idle;
@@ -426,6 +477,7 @@ async fn run(
     // run_query future (and its attestation pipeline) keeps the tokio
     // runtime alive, blocking process exit.
     if let Some(handle) = query.take() {
+        handle.force_kill();
         handle.task.abort();
     }
 
@@ -983,6 +1035,150 @@ impl sigstore_oidc::AuthCallback for TuiAuthCallback {
     fn auth_complete(&self) {}
 }
 
+/// Run the forge pipeline: evaluate packages, match harness, compose environment.
+///
+/// Returns `(env_vars, extra_rw_paths)` to inject into the sandbox.
+/// Merges the composed filesystem/network policy into the profile in-place.
+#[cfg(target_os = "linux")]
+fn run_forge_pipeline(
+    pkgs_dir: &std::path::Path,
+    stdlib_dir: &std::path::Path,
+    harnesses_dir: Option<&std::path::Path>,
+    project_dir: &std::path::Path,
+    profile: &mut gleisner_polis::profile::Profile,
+) -> color_eyre::Result<(Vec<(String, String)>, Vec<PathBuf>)> {
+    use gleisner_forge::bridge::compose_to_policy;
+    use gleisner_forge::orchestrate::{ForgeConfig, evaluate_packages};
+
+    // 1. Harness matching (optional)
+    let harness_match = if let Some(hdir) = harnesses_dir {
+        let ctx = gleisner_forge::eval::EvalContext::new(&[stdlib_dir])?;
+        let harnesses = gleisner_forge::harness::load_harnesses(hdir, &ctx)?;
+        eprintln!("forge: loaded {} harnesses", harnesses.len());
+
+        if let Some(h) = gleisner_forge::harness::match_harness(&harnesses, project_dir) {
+            eprintln!(
+                "forge: matched harness '{}' (packages: {})",
+                h.name,
+                h.build_packages.join(", "),
+            );
+            Some(h.clone())
+        } else {
+            eprintln!("forge: no harness matched project");
+            None
+        }
+    } else {
+        None
+    };
+
+    // 2. Build package filter from harness
+    let mut filter = Vec::new();
+    if let Some(ref harness) = harness_match {
+        for pkg in &harness.build_packages {
+            if !filter.contains(pkg) {
+                filter.push(pkg.clone());
+            }
+        }
+        for pkg in &harness.runtime_packages {
+            if !filter.contains(pkg) {
+                filter.push(pkg.clone());
+            }
+        }
+    }
+
+    // 3. Evaluate packages
+    let store_dir = project_dir.join(".gleisner/forge-store");
+    let config = ForgeConfig {
+        pkgs_dir: pkgs_dir.to_path_buf(),
+        stdlib_dir: stdlib_dir.to_path_buf(),
+        store_dir,
+        filter,
+    };
+
+    let output = evaluate_packages(&config)?;
+    eprintln!(
+        "forge: {}/{} packages evaluated in {:.1}s",
+        output.evaluated,
+        output.evaluated + output.failed,
+        output.elapsed.as_secs_f64(),
+    );
+
+    // 4. Compose environment and bridge to policy
+    let report = compose_to_policy(&output.environment);
+
+    // 5. Merge forge filesystem policy into profile
+    for path in &report.filesystem.readonly_bind {
+        if !profile.filesystem.readonly_bind.contains(path) {
+            profile.filesystem.readonly_bind.push(path.clone());
+        }
+    }
+    for path in &report.filesystem.readwrite_bind {
+        if !profile.filesystem.readwrite_bind.contains(path) {
+            profile.filesystem.readwrite_bind.push(path.clone());
+        }
+    }
+
+    // 6. Merge network policy
+    if report.network.allow_dns {
+        profile.network.allow_dns = true;
+    }
+    if report.network.allow_internet {
+        profile.network.default = gleisner_polis::profile::PolicyDefault::Allow;
+    }
+
+    // 7. Provision state directories and expand env vars
+    let state_root = project_dir.join(".gleisner/state");
+    let mut extra_rw_paths = Vec::new();
+
+    for wiring in &report.state_wirings {
+        let state_dir = state_root.join(&wiring.prefix);
+        std::fs::create_dir_all(&state_dir)?;
+        if !profile.filesystem.readwrite_bind.contains(&state_dir) {
+            profile.filesystem.readwrite_bind.push(state_dir.clone());
+        }
+        extra_rw_paths.push(state_dir);
+    }
+
+    // 8. Build env vars from harness + state wiring template expansion
+    let env_vars = if let Some(ref harness) = harness_match {
+        let expanded =
+            gleisner_forge::harness::expand_env_vars(harness, &report.state_wirings, &state_root);
+        if !expanded.is_empty() {
+            eprintln!(
+                "forge: {} env vars from harness '{}'",
+                expanded.len(),
+                harness.name
+            );
+        }
+        expanded
+    } else {
+        Vec::new()
+    };
+
+    eprintln!(
+        "forge: composed {} RO + {} RW dirs, {} state wirings, dns={}, internet={}",
+        report.filesystem.readonly_bind.len(),
+        report.filesystem.readwrite_bind.len(),
+        report.state_wirings.len(),
+        report.network.allow_dns,
+        report.network.allow_internet,
+    );
+
+    Ok((env_vars, extra_rw_paths))
+}
+
+/// Stub for non-Linux platforms.
+#[cfg(not(target_os = "linux"))]
+fn run_forge_pipeline(
+    _pkgs_dir: &std::path::Path,
+    _stdlib_dir: &std::path::Path,
+    _harnesses_dir: Option<&std::path::Path>,
+    _project_dir: &std::path::Path,
+    _profile: &mut gleisner_polis::profile::Profile,
+) -> color_eyre::Result<(Vec<(String, String)>, Vec<PathBuf>)> {
+    color_eyre::eyre::bail!("forge pipeline requires Linux")
+}
+
 /// Initialize file-based debug logging.
 ///
 /// Writes structured logs to `~/.local/share/gleisner/tui-debug.log`.
@@ -1005,6 +1201,7 @@ fn init_debug_logging() -> color_eyre::Result<()> {
         .with_target(true)
         .with_level(true)
         .with_thread_ids(false)
+        .with_max_level(tracing::Level::DEBUG)
         .init();
 
     info!(path = %log_path.display(), "debug logging enabled");

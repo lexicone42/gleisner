@@ -128,13 +128,19 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
     // Order matters: uid_map first, then deny setgroups, then gid_map.
     // The kernel requires setgroups to be "deny" BEFORE writing gid_map
     // when we lack CAP_SETGID in the parent user namespace.
-    write_id_map("/proc/self/uid_map", spec.uid, spec.uid)?;
+    //
+    // When use_external_netns is true, we're inside nsenter with --map-root-user,
+    // meaning the parent user namespace maps host UID → 0. The uid_map "outside"
+    // value must be the UID in the *parent* user namespace (0), not the host UID.
+    let outside_uid = if spec.use_external_netns { 0 } else { spec.uid };
+    let outside_gid = if spec.use_external_netns { 0 } else { spec.gid };
+    write_id_map("/proc/self/uid_map", spec.uid, outside_uid)?;
     fs::write("/proc/self/setgroups", "deny")
         .map_err(|e| format!("failed to write setgroups: {e}"))?;
-    write_id_map("/proc/self/gid_map", spec.gid, spec.gid)?;
+    write_id_map("/proc/self/gid_map", spec.gid, outside_gid)?;
     eprintln!(
         "gleisner-sandbox-init: uid/gid mapped ({} -> {})",
-        spec.uid, spec.uid
+        spec.uid, outside_uid
     );
 
     // ── 2b. Time namespace offset (retry after UID mapping) ──────
@@ -219,11 +225,12 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
             setrlimit(Resource::RLIMIT_NOFILE, val, val)
                 .map_err(|e| format!("setrlimit NOFILE: {e}"))?;
         }
-        if limits.max_memory_mb > 0 {
-            let bytes = limits.max_memory_mb * 1024 * 1024;
-            setrlimit(Resource::RLIMIT_AS, bytes, bytes)
-                .map_err(|e| format!("setrlimit AS: {e}"))?;
-        }
+        // NOTE: RLIMIT_AS (virtual address space) is intentionally NOT set.
+        // Node.js/V8 on 64-bit systems reserves far more virtual address
+        // space than physical memory actually used. Setting RLIMIT_AS causes
+        // V8's memory allocator to fail silently, hanging Claude Code.
+        // Use cgroup memory limits instead (already handled by CgroupScope).
+        // See: https://github.com/nodejs/node/issues/25933
         if limits.max_pids > 0 {
             setrlimit(
                 Resource::RLIMIT_NPROC,
@@ -254,7 +261,7 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
     // - /proc remount: the fork child can mount a fresh procfs that reflects
     //   both the new PID and time namespaces, preventing host PID and uptime
     //   leakage from the bind-mounted /proc fallback.
-    fork_and_exec(&spec.inner_command)
+    fork_and_exec(&spec.inner_command, &spec.extra_env)
 }
 
 /// Set up the sandbox filesystem using bind mounts and `pivot_root`.
@@ -720,7 +727,7 @@ fn close_inherited_fds() {
 /// new PID and time namespaces (preventing host uptime/PID leakage).
 ///
 /// The parent waits for the child and exits with its status.
-fn fork_and_exec(inner_command: &[String]) -> Result<(), String> {
+fn fork_and_exec(inner_command: &[String], extra_env: &[(String, String)]) -> Result<(), String> {
     use nix::sys::wait::{WaitStatus, waitpid};
     use nix::unistd::{ForkResult, fork};
 
@@ -800,6 +807,10 @@ fn fork_and_exec(inner_command: &[String]) -> Result<(), String> {
                 if key.starts_with("ANTHROPIC_") || key.starts_with("CLAUDE_") {
                     cmd.env(&key, val);
                 }
+            }
+            // Apply extra_env from the spec (overrides any preserved values).
+            for (key, val) in extra_env {
+                cmd.env(key, val);
             }
             let err = cmd.exec();
             // exec only returns on error

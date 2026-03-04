@@ -11,6 +11,8 @@ Named after the Gleisner robots in Greg Egan's *Diaspora* -- software intelligen
   engine usage, supply chain hardening, security checklist
 - [THREAT_MODEL.md](THREAT_MODEL.md) -- threat actors, attack surface analysis,
   LACERTA threat scenarios, mitigations matrix, assumptions
+- [DEBUGGING.md](DEBUGGING.md) -- sandbox-init direct debugging, binary search
+  methodology, known gotchas
 
 ---
 

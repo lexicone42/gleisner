@@ -1031,6 +1031,10 @@ fn sandbox_config_round_trips_through_query_config() {
         project_dir: PathBuf::from("/tmp/test-project"),
         extra_allow_network: vec![],
         extra_allow_paths: vec![],
+        forge_env_vars: vec![],
+        forge_extra_rw_paths: vec![],
+        no_landlock: false,
+        extra_env: vec![],
     });
 
     // Clone should work (needed for tokio::spawn)
@@ -1064,6 +1068,7 @@ fn sandboxed_query_builds_sandbox_command() {
         extra_allow_paths: vec![],
         no_landlock: true,
         no_cgroups: true,
+        extra_env: vec![],
     };
 
     let inner = vec![

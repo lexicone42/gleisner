@@ -179,6 +179,10 @@ if command -v nft >/dev/null 2>&1; then
   nft add chain inet gleisner forward '{ type filter hook forward priority 0; policy drop; }'
   nft add chain inet gleisner output '{ type filter hook output priority 0; policy drop; }'
   nft add rule inet gleisner output oifname lo accept
+  # Reject IPv6 immediately so applications fall back to IPv4 without waiting
+  # for a timeout. Our per-IP rules only cover IPv4 (ip daddr); without this
+  # rule, IPv6 SYN packets hit the default DROP policy and hang for seconds.
+  nft add rule inet gleisner output meta nfproto ipv6 counter reject
 "#,
         );
 
@@ -202,16 +206,20 @@ if command -v nft >/dev/null 2>&1; then
         // nf_log_syslog module must be loaded for nft log to work.
         // Pre-flight check: `NetworkFilter::check_log_available()`.
         script.push_str("  nft add rule inet gleisner output counter log prefix '\"[gleisner-fw-deny] \"' level warn 2>/dev/null || true\n");
+        // Explicitly reject remaining IPv4 traffic instead of relying on the chain's
+        // DROP policy. REJECT sends TCP RST / ICMP port-unreachable so applications
+        // see "Connection refused" immediately rather than hanging for ~60s waiting
+        // for a TCP timeout. The chain DROP policy remains as a safety net.
+        script.push_str("  nft add rule inet gleisner output counter reject\n");
 
         script.push_str(
             r"elif command -v iptables >/dev/null 2>&1 && iptables -L -n >/dev/null 2>&1; then
   # iptables legacy fallback (only if kernel module is available)
   # Block IPv6 entirely (ip6tables may not exist — ignore errors)
   if command -v ip6tables >/dev/null 2>&1; then
-    ip6tables -P OUTPUT DROP 2>/dev/null || true
-    ip6tables -P INPUT DROP 2>/dev/null || true
     ip6tables -P FORWARD DROP 2>/dev/null || true
     ip6tables -A OUTPUT -j LOG --log-prefix '[gleisner-fw-deny] ' 2>/dev/null || true
+    ip6tables -A OUTPUT -j REJECT 2>/dev/null || true
   fi
   # IPv4: restrict outbound
   iptables -P FORWARD DROP
@@ -235,11 +243,14 @@ if command -v nft >/dev/null 2>&1; then
             );
         }
 
-        // Log denied packets before the chain policy drops them.
+        // Log denied packets before rejecting them.
         // Best-effort: LOG target may not be available in all environments.
         script.push_str(
             "  iptables -A OUTPUT -j LOG --log-prefix '[gleisner-fw-deny] ' 2>/dev/null || true\n",
         );
+        // Explicitly reject remaining traffic so applications see "Connection refused"
+        // immediately instead of hanging for a TCP timeout.
+        script.push_str("  iptables -A OUTPUT -j REJECT\n");
 
         script.push_str(
             r#"else
@@ -666,6 +677,16 @@ mod tests {
             "nft should allow resolved IPs"
         );
 
+        // nft IPv6 reject (prevents timeout waiting for IPv6 DROP → fast fallback to IPv4)
+        assert!(
+            script.contains("meta nfproto ipv6"),
+            "nft should explicitly reject IPv6 for fast fallback"
+        );
+        assert!(
+            script.contains("ipv6 counter reject"),
+            "nft should reject (not drop) IPv6 traffic"
+        );
+
         // nft logging present (audit2allow)
         assert!(
             script.contains("gleisner-fw-deny"),
@@ -674,6 +695,12 @@ mod tests {
         assert!(
             script.contains("counter log prefix"),
             "nft should use counter + log"
+        );
+
+        // nft explicit reject for remaining IPv4 (fast failure, not 60s TCP timeout)
+        assert!(
+            script.contains("nft add rule inet gleisner output counter reject\n"),
+            "nft should reject remaining IPv4 traffic for fast failure"
         );
 
         // iptables fallback present
@@ -698,6 +725,11 @@ mod tests {
         assert!(
             script.contains("-j LOG --log-prefix"),
             "iptables should log denied packets"
+        );
+        // iptables explicit reject for remaining traffic (fast failure)
+        assert!(
+            script.contains("iptables -A OUTPUT -j REJECT"),
+            "iptables should reject remaining traffic for fast failure"
         );
     }
 
