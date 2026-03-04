@@ -119,12 +119,18 @@ pub struct VerifiedProperty {
     pub description: String,
     /// Proof system used (e.g., "lean4", "coq", "isabelle").
     pub proof_system: String,
-    /// Version of the proof kernel that verified this (e.g., "lean4/4.16.0").
+    /// Version of the proof kernel declared by the package (e.g., "leanprover/lean4:v4.29.0-rc2").
     pub kernel_version: String,
     /// SHA-256 of the specification file/module.
     pub specification_hash: String,
-    /// SHA-256 of the proof artifact (e.g., `.olean` file or proof bundle).
+    /// SHA-256 of the proof artifact. When the forge verifies the proof,
+    /// this is replaced with the forge-computed `.olean` hash.
     pub proof_hash: String,
+    /// The original `proof_hash` value declared by the package author.
+    /// Populated by the forge when it overwrites `proof_hash` with its own
+    /// computed value, allowing comparison between declared and observed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub declared_proof_hash: Option<String>,
     /// URI where the proof artifact can be retrieved for re-verification.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proof_uri: Option<String>,
@@ -132,6 +138,11 @@ pub struct VerifiedProperty {
     /// `None` means verification was not attempted (no kernel available).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verified_by_forge: Option<bool>,
+    /// The actual kernel version the forge used for verification.
+    /// Allows detecting drift between the declared `kernel_version` and
+    /// what actually ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forge_kernel_version: Option<String>,
 }
 
 /// Summary of formal verification across all packages in a forge evaluation.
@@ -371,11 +382,13 @@ fn parse_verified_property(value: &serde_json::Value) -> Option<VerifiedProperty
             .to_string(),
         specification_hash: value.get("specification_hash")?.as_str()?.to_string(),
         proof_hash: value.get("proof_hash")?.as_str()?.to_string(),
+        declared_proof_hash: None, // Set by the verify step when proof_hash is overwritten
         proof_uri: value
             .get("proof_uri")
             .and_then(|v| v.as_str())
             .map(String::from),
-        verified_by_forge: None, // Set by the verify step
+        verified_by_forge: None,    // Set by the verify step
+        forge_kernel_version: None, // Set by the verify step
     })
 }
 
@@ -667,8 +680,10 @@ mod tests {
                     kernel_version: "lean4/4.16.0".to_string(),
                     specification_hash: "sha256:aa".to_string(),
                     proof_hash: "sha256:bb".to_string(),
+                    declared_proof_hash: None,
                     proof_uri: None,
                     verified_by_forge: Some(true),
+                    forge_kernel_version: None,
                 }],
             },
             PackageMetadata {
@@ -715,8 +730,10 @@ mod tests {
             kernel_version: "lean4/4.16.0".to_string(),
             specification_hash: "sha256:abcdef".to_string(),
             proof_hash: "sha256:123456".to_string(),
+            declared_proof_hash: None,
             proof_uri: Some("https://proofs.example.com/aes-ct.olean".to_string()),
             verified_by_forge: Some(true),
+            forge_kernel_version: None,
         };
 
         let json = serde_json::to_string(&prop).unwrap();

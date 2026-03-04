@@ -58,8 +58,12 @@ impl Default for VerifyConfig {
 #[allow(missing_docs)]
 pub enum PropertyVerification {
     /// Proof checked successfully by the Lean kernel (via `lake build`).
-    /// Contains the forge-computed SHA-256 of the `.olean` artifact, if available.
-    Verified { olean_hash: Option<String> },
+    /// Contains the forge-computed SHA-256 of the `.olean` artifact and
+    /// the actual kernel version, if available.
+    Verified {
+        olean_hash: Option<String>,
+        kernel_version: Option<String>,
+    },
     /// Proof check failed (kernel returned non-zero).
     Failed { reason: String },
     /// Verification skipped (no kernel available, unsupported proof system, etc.).
@@ -238,6 +242,8 @@ pub struct RepoVerification {
     /// Path to the cloned repo's build output (`.lake/build/lib/`).
     /// Used to locate `.olean` files for per-property hashing.
     pub build_lib_dir: Option<PathBuf>,
+    /// The Lean kernel version detected from the repo's `lean-toolchain`.
+    pub kernel_version: Option<String>,
 }
 
 /// Verify a proof repository by cloning it and running `lake build`.
@@ -334,9 +340,16 @@ pub fn verify_proof_repo(
         None
     };
 
+    // Read the actual kernel version from the repo's lean-toolchain
+    let kernel_version = std::fs::read_to_string(clone_dir.join("lean-toolchain"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
     Ok(RepoVerification {
         verified: true,
         build_lib_dir: build_lib,
+        kernel_version,
     })
 }
 
@@ -402,7 +415,10 @@ pub fn verify_property(property: &VerifiedProperty, config: &VerifyConfig) -> Pr
                             }
                         }
                     });
-                    PropertyVerification::Verified { olean_hash }
+                    PropertyVerification::Verified {
+                        olean_hash,
+                        kernel_version: rv.kernel_version,
+                    }
                 }
                 Ok(_) => PropertyVerification::Failed {
                     reason: "lake build failed".to_string(),
@@ -448,9 +464,10 @@ fn check_lean_proof(lean_bin: &Path, proof_path: &Path, timeout_secs: u64) -> Pr
     let _ = timeout_secs;
 
     match result {
-        Ok(output) if output.status.success() => {
-            PropertyVerification::Verified { olean_hash: None }
-        }
+        Ok(output) if output.status.success() => PropertyVerification::Verified {
+            olean_hash: None,
+            kernel_version: None,
+        },
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             PropertyVerification::Failed {
@@ -521,10 +538,17 @@ pub fn apply_verification_results(
                     .find(|p| p.property == verified_prop.property)
                 {
                     match result {
-                        PropertyVerification::Verified { olean_hash } => {
+                        PropertyVerification::Verified {
+                            olean_hash,
+                            kernel_version,
+                        } => {
                             prop.verified_by_forge = Some(true);
                             if let Some(hash) = olean_hash {
+                                prop.declared_proof_hash = Some(prop.proof_hash.clone());
                                 prop.proof_hash = hash.clone();
+                            }
+                            if let Some(kv) = kernel_version {
+                                prop.forge_kernel_version = Some(kv.clone());
                             }
                         }
                         PropertyVerification::Failed { .. } => {
@@ -552,8 +576,10 @@ mod tests {
             kernel_version: "leanprover/lean4:v4.29.0-rc2".to_string(),
             specification_hash: "sha256:abc123".to_string(),
             proof_hash: "sha256:def456".to_string(),
+            declared_proof_hash: None,
             proof_uri: None,
             verified_by_forge: None,
+            forge_kernel_version: None,
         }
     }
 
@@ -648,7 +674,10 @@ mod tests {
             results: vec![
                 (
                     prop.clone(),
-                    PropertyVerification::Verified { olean_hash: None },
+                    PropertyVerification::Verified {
+                        olean_hash: None,
+                        kernel_version: None,
+                    },
                 ),
                 (
                     prop.clone(),
@@ -677,7 +706,10 @@ mod tests {
             package_name: "zlib".to_string(),
             results: vec![(
                 sample_property(),
-                PropertyVerification::Verified { olean_hash: None },
+                PropertyVerification::Verified {
+                    olean_hash: None,
+                    kernel_version: None,
+                },
             )],
         }];
 
@@ -750,12 +782,18 @@ mod tests {
         let rv = RepoVerification {
             verified: true,
             build_lib_dir: None,
+            kernel_version: Some("leanprover/lean4:v4.29.0-rc2".to_string()),
         };
         assert!(rv.verified);
+        assert_eq!(
+            rv.kernel_version.as_deref(),
+            Some("leanprover/lean4:v4.29.0-rc2")
+        );
 
         let rv2 = RepoVerification {
             verified: false,
             build_lib_dir: None,
+            kernel_version: None,
         };
         assert!(!rv2.verified);
     }
@@ -831,8 +869,9 @@ mod tests {
     }
 
     #[test]
-    fn apply_results_sets_olean_hash() {
+    fn apply_results_sets_olean_hash_and_kernel_version() {
         let mut metadata = vec![sample_metadata("zlib", true)];
+        let original_hash = metadata[0].verified_properties[0].proof_hash.clone();
 
         let verifications = vec![PackageVerification {
             package_name: "zlib".to_string(),
@@ -840,6 +879,7 @@ mod tests {
                 sample_property(),
                 PropertyVerification::Verified {
                     olean_hash: Some("sha256:abc123def456".to_string()),
+                    kernel_version: Some("leanprover/lean4:v4.29.0-rc2".to_string()),
                 },
             )],
         }];
@@ -849,9 +889,20 @@ mod tests {
             metadata[0].verified_properties[0].verified_by_forge,
             Some(true)
         );
+        // proof_hash is now the forge-computed value
         assert_eq!(
             metadata[0].verified_properties[0].proof_hash,
             "sha256:abc123def456"
+        );
+        // declared_proof_hash preserves the original
+        assert_eq!(
+            metadata[0].verified_properties[0].declared_proof_hash,
+            Some(original_hash)
+        );
+        // forge_kernel_version records what actually ran
+        assert_eq!(
+            metadata[0].verified_properties[0].forge_kernel_version,
+            Some("leanprover/lean4:v4.29.0-rc2".to_string())
         );
     }
 }
