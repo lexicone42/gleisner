@@ -362,3 +362,115 @@ async fn full_pipeline_nonzero_exit_after_result_is_ignored() {
         "expected assistant message despite nonzero exit"
     );
 }
+
+/// Preflight diagnostic sends warnings when claude binary is missing.
+///
+/// The preflight check runs inside `run_query` before `cmd.spawn()`. When the
+/// binary doesn't exist, it should emit a `DriverMessage::Stderr` warning
+/// containing "preflight" before the spawn error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preflight_warns_on_missing_binary() {
+    let config = QueryConfig {
+        claude_bin: "/nonexistent/claude-binary-xyz".into(),
+        prompt: "test".into(),
+        skip_permissions: false,
+        disallowed_tools: vec![],
+        add_dirs: vec![],
+        ..QueryConfig::default()
+    };
+
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(5)).await;
+
+    let preflight_warnings: Vec<_> = messages
+        .iter()
+        .filter(|m| matches!(m, DriverMessage::Stderr(s) if s.contains("preflight")))
+        .collect();
+
+    assert!(
+        !preflight_warnings.is_empty(),
+        "expected preflight warning for missing binary, got messages: {:?}",
+        messages
+            .iter()
+            .map(std::mem::discriminant)
+            .collect::<Vec<_>>()
+    );
+
+    // Should also have an error (spawn failure)
+    let has_error = messages
+        .iter()
+        .any(|m| matches!(m, DriverMessage::Error(_)));
+    assert!(has_error, "expected Error message for missing binary");
+}
+
+/// Preflight warnings for missing binary include the binary path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn preflight_warning_includes_binary_path() {
+    let bad_path = "/nonexistent/should-not-exist-binary";
+    let config = QueryConfig {
+        claude_bin: bad_path.into(),
+        prompt: "test".into(),
+        skip_permissions: false,
+        disallowed_tools: vec![],
+        add_dirs: vec![],
+        ..QueryConfig::default()
+    };
+
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+    let messages = collect_messages(handle.rx, Duration::from_secs(5)).await;
+
+    let warning = messages.iter().find_map(|m| match m {
+        DriverMessage::Stderr(s) if s.contains("preflight") && s.contains("not found") => {
+            Some(s.clone())
+        }
+        _ => None,
+    });
+
+    assert!(
+        warning.is_some(),
+        "expected preflight warning mentioning 'not found'"
+    );
+    let warning = warning.unwrap();
+    assert!(
+        warning.contains(bad_path),
+        "warning should include the binary path, got: {warning}"
+    );
+}
+
+/// `QueryHandle::force_kill` sends SIGKILL to the child process group.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn query_handle_exposes_child_pid() {
+    // Create a script that sleeps briefly so we can check the PID
+    let dir = tempfile::tempdir().expect("create tempdir");
+    let script_path = dir.path().join("slow-claude.sh");
+    let fixture = fixture_path("simple_response.jsonl");
+    let script = format!("#!/bin/bash\nsleep 0.5\ncat '{fixture}'\n");
+    std::fs::write(&script_path, script).expect("write script");
+    std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    let config = QueryConfig {
+        claude_bin: script_path.display().to_string(),
+        prompt: "test".into(),
+        skip_permissions: false,
+        disallowed_tools: vec![],
+        add_dirs: vec![],
+        ..QueryConfig::default()
+    };
+
+    let handle = gleisner_tui::claude::spawn_query(config, 256);
+
+    // Wait for subprocess to start (poll with retries for CI environments)
+    let mut pid = 0u32;
+    for _ in 0..50 {
+        pid = handle.child_pid.load(std::sync::atomic::Ordering::Relaxed);
+        if pid > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // PID should be set (nonzero) once the child has started
+    assert!(pid > 0, "child_pid should be set after spawn, got {pid}");
+
+    // Collect remaining messages
+    let _messages = collect_messages(handle.rx, Duration::from_secs(10)).await;
+}

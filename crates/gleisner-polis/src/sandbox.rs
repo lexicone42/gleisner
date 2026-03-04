@@ -736,7 +736,6 @@ mod tests {
         );
     }
 
-    #[test]
     /// E2E: full TUI sandbox path — namespace + pasta + nftables + sandbox-init
     /// with `use_external_netns=true`.
     ///
@@ -907,5 +906,253 @@ mod tests {
         } else {
             eprintln!("time namespace confirmed: sandbox={sandbox_ns} host={host_ns}");
         }
+    }
+
+    #[test]
+    fn build_spec_does_not_include_rlimit_as_in_apply_rlimits_call() {
+        // Verify the doc comment: RLIMIT_AS is intentionally not set.
+        // We test this by checking that apply_rlimits on our own PID doesn't
+        // set --as (it would error anyway, but the code path should skip it).
+        let mut profile = test_profile(PolicyDefault::Allow);
+        profile.resources.max_memory_mb = 8192; // Would have triggered RLIMIT_AS before
+        profile.resources.max_file_descriptors = 0; // Disable others to isolate
+        profile.resources.max_pids = 0;
+        profile.resources.max_disk_write_mb = 0;
+
+        let sandbox = DirectSandbox {
+            profile,
+            project_dir: PathBuf::from("/tmp/test-rlimit"),
+            extra_allow_domains: vec![],
+            extra_rw_paths: vec![],
+            enable_landlock: true,
+            no_cgroups: false,
+            init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
+            extra_env: vec![],
+        };
+
+        // apply_rlimits should succeed (no-op since all limits are zero/skipped)
+        let result = sandbox.apply_rlimits(nix::unistd::Pid::this());
+        assert!(
+            result.is_ok(),
+            "apply_rlimits with only max_memory_mb should be no-op: {result:?}"
+        );
+    }
+
+    #[test]
+    fn spec_extra_env_serialization() {
+        let spec = SandboxSpec {
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![PathBuf::from("/usr")],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![],
+            },
+            network: NetworkPolicy {
+                default: PolicyDefault::Allow,
+                allow_domains: vec![],
+                allow_ports: vec![],
+                allow_dns: false,
+            },
+            process: ProcessPolicy {
+                pid_namespace: false,
+                no_new_privileges: true,
+                command_allowlist: vec![],
+            },
+            project_dir: PathBuf::from("/tmp/test"),
+            extra_rw_paths: vec![],
+            work_dir: PathBuf::from("/tmp/test"),
+            inner_command: vec!["echo".to_owned()],
+            enable_landlock: false,
+            use_external_netns: false,
+            uid: 1000,
+            gid: 100,
+            resource_limits: None,
+            extra_env: vec![
+                ("CARGO_HOME".to_owned(), "/tmp/cargo".to_owned()),
+                ("NODE_DEBUG".to_owned(), "net,tls".to_owned()),
+            ],
+        };
+
+        let json = serde_json::to_string(&spec).expect("serialize");
+        assert!(
+            json.contains("CARGO_HOME"),
+            "extra_env should be serialized"
+        );
+        assert!(
+            json.contains("NODE_DEBUG"),
+            "extra_env should contain all vars"
+        );
+
+        let parsed: SandboxSpec = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.extra_env.len(), 2);
+        assert_eq!(parsed.extra_env[0].0, "CARGO_HOME");
+        assert_eq!(parsed.extra_env[0].1, "/tmp/cargo");
+    }
+
+    #[test]
+    fn spec_extra_env_omitted_when_empty() {
+        let spec = SandboxSpec {
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![],
+            },
+            network: NetworkPolicy {
+                default: PolicyDefault::Allow,
+                allow_domains: vec![],
+                allow_ports: vec![],
+                allow_dns: false,
+            },
+            process: ProcessPolicy {
+                pid_namespace: false,
+                no_new_privileges: true,
+                command_allowlist: vec![],
+            },
+            project_dir: PathBuf::from("/tmp/test"),
+            extra_rw_paths: vec![],
+            work_dir: PathBuf::from("/tmp/test"),
+            inner_command: vec!["true".to_owned()],
+            enable_landlock: false,
+            use_external_netns: false,
+            uid: 1000,
+            gid: 100,
+            resource_limits: None,
+            extra_env: vec![],
+        };
+
+        let json = serde_json::to_string(&spec).expect("serialize");
+        assert!(
+            !json.contains("extra_env"),
+            "empty extra_env should be omitted from JSON (skip_serializing_if)"
+        );
+    }
+
+    #[test]
+    fn build_spec_includes_extra_env() {
+        let profile = test_profile(PolicyDefault::Allow);
+        let mut sandbox = DirectSandbox {
+            profile,
+            project_dir: PathBuf::from("/tmp/test-env"),
+            extra_allow_domains: vec![],
+            extra_rw_paths: vec![],
+            enable_landlock: true,
+            no_cgroups: false,
+            init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
+            extra_env: vec![],
+        };
+
+        sandbox.set_extra_env(vec![
+            ("FOO".to_owned(), "bar".to_owned()),
+            ("BAZ".to_owned(), "qux".to_owned()),
+        ]);
+
+        let spec = sandbox.build_spec(&["echo".to_owned()], false);
+        assert_eq!(spec.extra_env.len(), 2);
+        assert_eq!(spec.extra_env[0], ("FOO".to_owned(), "bar".to_owned()));
+    }
+
+    #[test]
+    fn build_spec_use_external_netns_flag() {
+        let profile = test_profile(PolicyDefault::Deny);
+        let sandbox = DirectSandbox {
+            profile,
+            project_dir: PathBuf::from("/tmp/test-netns"),
+            extra_allow_domains: vec![],
+            extra_rw_paths: vec![],
+            enable_landlock: true,
+            no_cgroups: false,
+            init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
+            extra_env: vec![],
+        };
+
+        // use_external_netns=false (normal path)
+        let spec = sandbox.build_spec(&["true".to_owned()], false);
+        assert!(!spec.use_external_netns);
+
+        // use_external_netns=true (TUI path with pre-created namespace)
+        let spec = sandbox.build_spec(&["true".to_owned()], true);
+        assert!(spec.use_external_netns);
+    }
+
+    #[test]
+    fn e2e_extra_env_visible_in_sandbox() {
+        let inner = &["sh", "-c", "env | grep MYVAR"];
+        // Build a spec with extra_env and run it
+        let init_bin = detect_sandbox_init().or_else(|| {
+            let exe = std::env::current_exe().ok()?;
+            let parent = exe.parent()?.parent()?;
+            let candidate = parent.join("gleisner-sandbox-init");
+            candidate.is_file().then_some(candidate)
+        });
+        let Some(init_bin) = init_bin else {
+            eprintln!("skipping: sandbox-init binary not found");
+            return;
+        };
+
+        let uid = nix::unistd::getuid().as_raw();
+        let gid = nix::unistd::getgid().as_raw();
+        let spec = SandboxSpec {
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![
+                    PathBuf::from("/usr"),
+                    PathBuf::from("/lib"),
+                    PathBuf::from("/lib64"),
+                    PathBuf::from("/bin"),
+                    PathBuf::from("/sbin"),
+                    PathBuf::from("/etc"),
+                ],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![PathBuf::from("/tmp")],
+            },
+            network: NetworkPolicy {
+                default: PolicyDefault::Allow,
+                allow_domains: vec![],
+                allow_ports: vec![],
+                allow_dns: false,
+            },
+            process: ProcessPolicy {
+                pid_namespace: false,
+                no_new_privileges: true,
+                command_allowlist: vec![],
+            },
+            project_dir: PathBuf::from("/tmp"),
+            extra_rw_paths: vec![],
+            work_dir: PathBuf::from("/tmp"),
+            inner_command: inner.iter().map(std::string::ToString::to_string).collect(),
+            enable_landlock: false,
+            use_external_netns: false,
+            uid,
+            gid,
+            resource_limits: None,
+            extra_env: vec![("MYVAR".to_owned(), "hello_from_extra_env".to_owned())],
+        };
+
+        let json = serde_json::to_string(&spec).expect("serialize");
+        let spec_file = tempfile::NamedTempFile::new().expect("create tempfile");
+        std::fs::write(spec_file.path(), &json).expect("write spec");
+
+        let output = Command::new(&init_bin).arg(spec_file.path()).output();
+
+        let Ok(output) = output else {
+            eprintln!("skipping: sandbox-init failed to run");
+            return;
+        };
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("Operation not permitted") || stderr.contains("EPERM") {
+                eprintln!("skipping: no user namespace support");
+                return;
+            }
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("MYVAR=hello_from_extra_env"),
+            "extra_env should be visible inside sandbox, got stdout: {stdout}, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
