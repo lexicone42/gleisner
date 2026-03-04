@@ -369,6 +369,33 @@ fn run_in_composed_sandbox(
         }
     }
 
+    // Provision state directories from env_state_wiring declarations
+    let state_root = project_dir.join(".gleisner/state");
+    let mut state_env_vars = Vec::new();
+    for wiring in &report.state_wirings {
+        let state_dir = state_root.join(&wiring.prefix);
+        std::fs::create_dir_all(&state_dir)
+            .map_err(|e| eyre!("failed to create state dir for ${}: {e}", wiring.env_var))?;
+        // Add as rw bind mount so it's visible inside the sandbox
+        if !profile.filesystem.readwrite_bind.contains(&state_dir) {
+            profile.filesystem.readwrite_bind.push(state_dir.clone());
+        }
+        state_env_vars.push((wiring.env_var.clone(), state_dir));
+        tracing::debug!(
+            env_var = %wiring.env_var,
+            prefix = %wiring.prefix,
+            package = %wiring.package,
+            "provisioned state directory"
+        );
+    }
+    if !report.state_wirings.is_empty() {
+        eprintln!(
+            "forge: provisioned {} state dirs under {}",
+            report.state_wirings.len(),
+            state_root.display(),
+        );
+    }
+
     // Merge network policy
     if report.network.allow_dns {
         profile.network.allow_dns = true;
@@ -392,6 +419,12 @@ fn run_in_composed_sandbox(
     let mut prepared = gleisner_polis::prepare_sandbox(config, &inner_command)?;
 
     prepared.command.env_remove("CLAUDECODE");
+
+    // Set state wiring env vars so the inner process finds its cache dirs
+    for (env_var, state_dir) in &state_env_vars {
+        prepared.command.env(env_var, state_dir);
+    }
+
     prepared.command.stdin(std::process::Stdio::inherit());
     prepared.command.stdout(std::process::Stdio::inherit());
     prepared.command.stderr(std::process::Stdio::inherit());
@@ -443,6 +476,7 @@ fn run_in_composed_sandbox(
                 "allow_dns": report.network.allow_dns,
                 "allow_internet": report.network.allow_internet,
             },
+            "state_wirings": report.state_wirings,
             "credential_paths_excluded": report.credential_paths.len(),
         },
         "forge": {
