@@ -27,6 +27,22 @@ pub struct FileMapping {
     pub class: String,
 }
 
+/// A state wiring extracted from a package's `attrs.env_state_wiring`.
+///
+/// Tells the sandbox runtime to create a persistent state directory at
+/// `$STATE_ROOT/<prefix>/` and set `env_var` to point at it. This is how
+/// packages like `rust` (`CARGO_HOME`), `go` (`GOCACHE`), and `uv`
+/// (`UV_CACHE_DIR`) communicate their cache directory needs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct StateWiring {
+    /// Environment variable to set (e.g., `CARGO_HOME`).
+    pub env_var: String,
+    /// Directory prefix within the state root (e.g., `cargo`).
+    pub prefix: String,
+    /// Which package declared this wiring.
+    pub package: String,
+}
+
 /// Abstract needs declared by packages.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MergedNeeds {
@@ -43,6 +59,8 @@ pub struct ComposedEnvironment {
     pub dir_mappings: Vec<DirMapping>,
     /// All file mappings (deduplicated, conflicts resolved).
     pub file_mappings: Vec<FileMapping>,
+    /// State directory wirings (env var → prefix pairs).
+    pub state_wirings: Vec<StateWiring>,
     /// Merged abstract needs (logical OR).
     pub needs: MergedNeeds,
     /// Packages that contributed to this environment.
@@ -57,6 +75,7 @@ impl ComposedEnvironment {
         Self {
             dir_mappings: Vec::new(),
             file_mappings: Vec::new(),
+            state_wirings: Vec::new(),
             needs: MergedNeeds::default(),
             packages: Vec::new(),
             warnings: Vec::new(),
@@ -93,6 +112,25 @@ impl ComposedEnvironment {
                 if let Some(mapping) = parse_file_mapping(entry) {
                     self.add_file_mapping(name, mapping);
                 }
+            }
+        }
+
+        // Extract attrs.env_state_wiring (single object or array)
+        if let Some(wiring) = json.get("attrs").and_then(|a| a.get("env_state_wiring")) {
+            match wiring {
+                serde_json::Value::Array(entries) => {
+                    for entry in entries {
+                        if let Some(sw) = parse_state_wiring(entry, name) {
+                            self.add_state_wiring(name, sw);
+                        }
+                    }
+                }
+                serde_json::Value::Object(_) => {
+                    if let Some(sw) = parse_state_wiring(wiring, name) {
+                        self.add_state_wiring(name, sw);
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -134,6 +172,21 @@ impl ComposedEnvironment {
         }
     }
 
+    /// Add a state wiring, warning on env var conflicts.
+    fn add_state_wiring(&mut self, package: &str, new: StateWiring) {
+        if let Some(existing) = self.state_wirings.iter().find(|w| w.env_var == new.env_var) {
+            if existing.prefix != new.prefix {
+                self.warnings.push(format!(
+                    "state wiring conflict for ${}: {} wants prefix '{}', {} wants '{}' — keeping first",
+                    new.env_var, existing.package, existing.prefix, package, new.prefix,
+                ));
+            }
+            // Same env_var already wired — skip duplicate
+            return;
+        }
+        self.state_wirings.push(new);
+    }
+
     /// Add a file mapping, resolving conflicts.
     fn add_file_mapping(&mut self, package: &str, new: FileMapping) {
         if let Some(existing) = self.file_mappings.iter_mut().find(|m| m.path == new.path) {
@@ -167,6 +220,14 @@ fn parse_dir_mapping(value: &serde_json::Value) -> Option<DirMapping> {
         read_only: value.get("read_only")?.as_bool()?,
         path: value.get("path")?.as_str()?.to_string(),
         class: format_class(value.get("class")?),
+    })
+}
+
+fn parse_state_wiring(value: &serde_json::Value, package: &str) -> Option<StateWiring> {
+    Some(StateWiring {
+        env_var: value.get("env_var")?.as_str()?.to_string(),
+        prefix: value.get("prefix")?.as_str()?.to_string(),
+        package: package.to_string(),
     })
 }
 
@@ -258,5 +319,76 @@ mod tests {
         env.merge_package("b", &j2);
         assert!(env.needs.dns);
         assert!(env.needs.internet);
+    }
+
+    #[test]
+    fn state_wiring_single_object() {
+        let mut env = ComposedEnvironment::new();
+        let json = pkg_json(
+            r#"{"env_state_wiring": {"env_var": "CARGO_HOME", "prefix": "cargo"}}"#,
+            "{}",
+        );
+        env.merge_package("rust", &json);
+
+        assert_eq!(env.state_wirings.len(), 1);
+        assert_eq!(env.state_wirings[0].env_var, "CARGO_HOME");
+        assert_eq!(env.state_wirings[0].prefix, "cargo");
+        assert_eq!(env.state_wirings[0].package, "rust");
+    }
+
+    #[test]
+    fn state_wiring_array() {
+        let mut env = ComposedEnvironment::new();
+        let json = pkg_json(
+            r#"{"env_state_wiring": [
+                {"env_var": "GOCACHE", "prefix": "gocache"},
+                {"env_var": "GOPATH", "prefix": "gopath"}
+            ]}"#,
+            "{}",
+        );
+        env.merge_package("go", &json);
+
+        assert_eq!(env.state_wirings.len(), 2);
+        assert_eq!(env.state_wirings[0].env_var, "GOCACHE");
+        assert_eq!(env.state_wirings[1].env_var, "GOPATH");
+    }
+
+    #[test]
+    fn state_wiring_dedup_same_env_var() {
+        let mut env = ComposedEnvironment::new();
+        let j1 = pkg_json(
+            r#"{"env_state_wiring": {"env_var": "CARGO_HOME", "prefix": "cargo"}}"#,
+            "{}",
+        );
+        let j2 = pkg_json(
+            r#"{"env_state_wiring": {"env_var": "CARGO_HOME", "prefix": "cargo"}}"#,
+            "{}",
+        );
+        env.merge_package("rust", &j1);
+        env.merge_package("rust-src", &j2);
+
+        // Should dedup — same env_var, same prefix
+        assert_eq!(env.state_wirings.len(), 1);
+        assert!(env.warnings.is_empty());
+    }
+
+    #[test]
+    fn state_wiring_conflict_warns() {
+        let mut env = ComposedEnvironment::new();
+        let j1 = pkg_json(
+            r#"{"env_state_wiring": {"env_var": "CARGO_HOME", "prefix": "cargo"}}"#,
+            "{}",
+        );
+        let j2 = pkg_json(
+            r#"{"env_state_wiring": {"env_var": "CARGO_HOME", "prefix": "cargo2"}}"#,
+            "{}",
+        );
+        env.merge_package("rust", &j1);
+        env.merge_package("rust-alt", &j2);
+
+        // First one wins, but warning emitted
+        assert_eq!(env.state_wirings.len(), 1);
+        assert_eq!(env.state_wirings[0].prefix, "cargo");
+        assert!(env.warnings.iter().any(|w| w.contains("CARGO_HOME")));
     }
 }

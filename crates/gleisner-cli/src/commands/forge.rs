@@ -226,9 +226,10 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
     }
 
     eprintln!(
-        "forge: composed {} RO + {} RW dirs, dns={}, internet={}",
+        "forge: composed {} RO + {} RW dirs, {} state wirings, dns={}, internet={}",
         report.filesystem.readonly_bind.len(),
         report.filesystem.readwrite_bind.len(),
+        report.state_wirings.len(),
         report.network.allow_dns,
         report.network.allow_internet,
     );
@@ -246,6 +247,7 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         "policy": {
             "filesystem": report.filesystem,
             "network": report.network,
+            "state_wirings": report.state_wirings,
         },
         "credential_paths": report.credential_paths,
         "warnings": report.warnings,

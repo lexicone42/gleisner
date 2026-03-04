@@ -7,7 +7,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::compose::ComposedEnvironment;
+use crate::compose::{ComposedEnvironment, StateWiring};
 
 /// Filesystem policy derived from package declarations.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -34,6 +34,8 @@ pub struct BridgeReport {
     pub filesystem: ForgeFilesystemPolicy,
     /// Network policy for the sandbox.
     pub network: ForgeNetworkPolicy,
+    /// State wirings: env var → prefix mappings for persistent cache directories.
+    pub state_wirings: Vec<StateWiring>,
     /// Credential paths that packages declared (informational — NOT mounted).
     pub credential_paths: Vec<String>,
     /// Warnings from the composition (conflicts, degraded binds, etc.).
@@ -103,6 +105,7 @@ pub fn compose_to_policy(env: &ComposedEnvironment) -> BridgeReport {
     BridgeReport {
         filesystem: fs,
         network,
+        state_wirings: env.state_wirings.clone(),
         credential_paths,
         warnings,
     }
@@ -151,6 +154,7 @@ mod tests {
         ComposedEnvironment {
             dir_mappings: dirs,
             file_mappings: Vec::new(),
+            state_wirings: Vec::new(),
             needs: MergedNeeds::default(),
             packages: vec!["test".to_string()],
             warnings: Vec::new(),
@@ -191,6 +195,7 @@ mod tests {
                 path: "~/.claude.json".to_string(),
                 class: "State".to_string(),
             }],
+            state_wirings: Vec::new(),
             needs: MergedNeeds::default(),
             packages: vec!["test".to_string()],
             warnings: Vec::new(),
@@ -209,6 +214,7 @@ mod tests {
         let env = ComposedEnvironment {
             dir_mappings: Vec::new(),
             file_mappings: Vec::new(),
+            state_wirings: Vec::new(),
             needs: MergedNeeds {
                 dns: true,
                 internet: false,
