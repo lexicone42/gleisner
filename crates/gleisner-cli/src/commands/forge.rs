@@ -69,6 +69,11 @@ pub struct ForgeArgs {
     #[arg(long, default_value = "claude")]
     pub claude_bin: String,
 
+    /// Path to the harnesses directory (containing `<harness>/harness.ncl` subdirs).
+    /// If provided, auto-detects the project type and adds required packages.
+    #[arg(long)]
+    pub harnesses_dir: Option<PathBuf>,
+
     /// Project directory (defaults to current directory).
     #[arg(short = 'd', long)]
     pub project_dir: Option<PathBuf>,
@@ -114,12 +119,55 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         "starting forge evaluation"
     );
 
+    // 0. Harness loading and project matching (optional)
+    let harness_match = if let Some(harnesses_dir) = &args.harnesses_dir {
+        use gleisner_forge::eval::EvalContext;
+        use gleisner_forge::harness::{load_harnesses, match_harness};
+
+        let ctx = EvalContext::new(&[args.stdlib_dir.as_path()])?;
+        let harnesses = load_harnesses(harnesses_dir, &ctx)?;
+        eprintln!("forge: loaded {} harnesses", harnesses.len());
+
+        if let Some(h) = match_harness(&harnesses, &project_dir) {
+            eprintln!(
+                "forge: matched harness '{}' (packages: {}, env vars: {})",
+                h.name,
+                h.build_packages.join(", "),
+                h.build_env_vars.len(),
+            );
+            Some(h.clone())
+        } else {
+            eprintln!(
+                "forge: no harness matched project at {}",
+                project_dir.display()
+            );
+            None
+        }
+    } else {
+        None
+    };
+
+    // Build package filter: user-specified packages + harness build_packages
+    let mut filter = args.packages.clone();
+    if let Some(ref harness) = harness_match {
+        for pkg in &harness.build_packages {
+            if !filter.contains(pkg) {
+                filter.push(pkg.clone());
+            }
+        }
+        for pkg in &harness.runtime_packages {
+            if !filter.contains(pkg) {
+                filter.push(pkg.clone());
+            }
+        }
+    }
+
     // 1. Evaluate packages
     let config = ForgeConfig {
         pkgs_dir: args.pkgs_dir.clone(),
         stdlib_dir: args.stdlib_dir.clone(),
         store_dir,
-        filter: args.packages.clone(),
+        filter,
     };
 
     let output = evaluate_packages(&config)?;
@@ -211,7 +259,22 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
     }
 
     // 2. Convert to sandbox policy
-    let report = compose_to_policy(&output.environment);
+    let mut report = compose_to_policy(&output.environment);
+
+    // Apply harness env vars (with template expansion for state wiring paths)
+    if let Some(ref harness) = harness_match {
+        let state_root = project_dir.join(".gleisner/state");
+        let expanded =
+            gleisner_forge::harness::expand_env_vars(harness, &report.state_wirings, &state_root);
+        report.env.vars = expanded;
+        if !report.env.vars.is_empty() {
+            eprintln!(
+                "forge: harness '{}' provides {} env vars",
+                harness.name,
+                report.env.vars.len(),
+            );
+        }
+    }
 
     if !report.credential_paths.is_empty() {
         eprintln!(
@@ -248,7 +311,14 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
             "filesystem": report.filesystem,
             "network": report.network,
             "state_wirings": report.state_wirings,
+            "env": report.env,
         },
+        "harness": harness_match.as_ref().map(|h| serde_json::json!({
+            "name": h.name,
+            "build_packages": h.build_packages,
+            "runtime_packages": h.runtime_packages,
+            "build_env_vars": h.build_env_vars,
+        })),
         "credential_paths": report.credential_paths,
         "warnings": report.warnings,
         "stats": {

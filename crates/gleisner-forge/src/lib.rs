@@ -42,6 +42,7 @@ pub mod dag;
 pub mod diff;
 pub mod error;
 pub mod eval;
+pub mod harness;
 pub mod negotiate;
 pub mod orchestrate;
 pub mod store;

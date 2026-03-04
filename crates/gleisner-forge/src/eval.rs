@@ -253,6 +253,56 @@ pub fn eval_package(
     Ok(EvalResult { json, store_ref })
 }
 
+/// Evaluate a standalone Nickel file (not a package build.ncl).
+///
+/// Simpler than [`eval_package`] — no dependency injection, no store.
+/// Used for harness files and other non-package Nickel configs.
+pub fn eval_file(file: &Path, ctx: &EvalContext) -> Result<serde_json::Value, ForgeError> {
+    let label = file.file_name().map_or_else(
+        || "unknown".to_string(),
+        |n| n.to_string_lossy().to_string(),
+    );
+
+    let mut cache = ctx.clone_for_package();
+
+    let main_id = cache
+        .sources
+        .add_file(file.as_os_str(), InputFormat::Nickel)
+        .map_err(|e| ForgeError::NickelEval {
+            package: label.clone(),
+            message: format!("failed to load {}: {e}", file.display()),
+        })?;
+
+    let mut vm_ctx: VmContext<CacheHub, CacheImpl> =
+        VmContext::new(cache, std::io::sink(), NullReporter {});
+
+    let prepared = vm_ctx
+        .prepare_eval_only(main_id)
+        .map_err(|e| ForgeError::NickelEval {
+            package: label.clone(),
+            message: format!("{e:?}"),
+        })?;
+
+    let mut vm = VirtualMachine::new(&mut vm_ctx);
+    let result = vm
+        .eval_full_for_export(prepared)
+        .map_err(|e| ForgeError::NickelEval {
+            package: label.clone(),
+            message: format!("{e:?}"),
+        })?;
+
+    let json_str =
+        serialize::to_string(ExportFormat::Json, &result).map_err(|e| ForgeError::NickelEval {
+            package: label.clone(),
+            message: format!("serialization failed: {e:?}"),
+        })?;
+
+    serde_json::from_str(&json_str).map_err(|e| ForgeError::NickelEval {
+        package: label,
+        message: format!("JSON parse of Nickel output failed: {e}"),
+    })
+}
+
 /// Strip transitive dep trees from a result before injection.
 ///
 /// Package results recursively embed their full dep trees in `build_deps`
@@ -402,9 +452,11 @@ const MINIMAL_NCL_STUB: &str = r"
     standaloneTest = fun c__ => { class = 'Standalone, cmd = c__, ty = 'Test },
     buildTest = fun c__ => { class = 'Build, cmd = c__, ty = 'Test },
     HarnessMatcherEntry = { file_regexes | optional, .. },
+    HarnessMatcherEntry = { file_regexes | optional, .. },
     Harness = {
         ty = 'Harness, name, build_packages | optional, runtime_packages | optional,
         build_env_vars | optional, build_cmd | optional, build_cmds_cmd | optional,
+        matches_project_if_any | optional, matches_project_priority | optional,
         project_matchers | optional, ..
     },
     harness = fun spec => spec,
