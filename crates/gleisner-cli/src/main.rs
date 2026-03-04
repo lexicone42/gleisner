@@ -38,6 +38,8 @@ enum Commands {
     Record(commands::record::RecordArgs),
     /// Evaluate Nickel packages and compose a sandbox environment.
     Forge(commands::forge::ForgeArgs),
+    /// Compare two forge attestation outputs and show what changed.
+    ForgeDiff(commands::forge_diff::ForgeDiffArgs),
     /// Verify an attestation bundle's signatures, digests, and policies.
     Verify(commands::verify::VerifyArgs),
     /// Compare two attestation bundles and show what changed.
@@ -77,6 +79,7 @@ async fn main() -> Result<()> {
         Commands::Wrap(args) => commands::wrap::execute(args).await,
         Commands::Record(args) => commands::record::execute(args).await,
         Commands::Forge(args) => commands::forge::execute(args).await,
+        Commands::ForgeDiff(args) => commands::forge_diff::execute(&args),
         Commands::Diff(args) => commands::diff::execute(&args),
         Commands::Verify(args) => commands::verify::execute(args),
         Commands::Inspect(args) => commands::inspect::execute(&args),

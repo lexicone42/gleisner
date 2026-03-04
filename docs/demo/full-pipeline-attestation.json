@@ -1,0 +1,5993 @@
+{
+  "attestation": {
+    "builder_id": "gleisner-forge/0.1.0",
+    "materials": [
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/mpc"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/linux_headers"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/acl"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/make"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/findutils"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/m4"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/readline"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/attr"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/mpfr"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/lz4"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/xz"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/tar"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/file"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pcre2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/binutils"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/zlib"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gmp"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/sed"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/diffutils"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/glibc"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bash"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/grep"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/coreutils"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/resolver-quad8"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bison"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/zstd"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/llvm"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/ncurses"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gcc"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/redis"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/toolchain"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libcap"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gawk"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gzip"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bzip2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/perl"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/base"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/hwdata"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/jq"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/btop"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/dejagnu"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bash-completions"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/openblas"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/autoconf"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/automake"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/nano"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/time"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/alsa-lib"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pciutils"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gperf"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gdbm"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/strace"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/go"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/duf"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pulumi"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gh"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/syft"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/mermaid-ascii"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/minimal-sshd"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/cosign"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/lcms2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/oniguruma"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/jqfmt"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/varlock"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bzip3"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/zig"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libsodium"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/icu"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/grpcurl"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libpng"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/freetype"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/patch"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/expat"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/trivy"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/sqlite"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libunistring"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/openssl"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/socat"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/cmake"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/opencv"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libyaml"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/nginx"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/jdk"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/iana-etc"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/xtrans"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxcrypt"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/shadow"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/screen"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/openjpeg"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/less"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/terraform"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/groff"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libjpeg-turbo"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/glow"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/age"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libffi"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/flex"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/tcl"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pkgconf"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/cups"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libpipeline"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/iproute2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/tailscale"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/postgres"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/man-db"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/elfutils"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libssh2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/openssh"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/procps-ng"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/ghostscript"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/skopeo"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxml2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxslt"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gettext"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/inetutils"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/grype"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/ca-certificates"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/maven"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/util-linux"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/python"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bun"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gradle"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/boost"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/setuptools"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/cython"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/flit-core"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pyproject-hooks"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/meson"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/deno"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/expect"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/xcb-proto"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bc"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libtool"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/check"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libuv"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/node"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pnpm"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/packaging"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/build"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pyproject-metadata"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/android-sdk"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/caddy"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/ninja"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/patchelf"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/abseil-cpp"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libdrm"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pixman"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/fribidi"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/onetbb"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/protobuf"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/meson-python"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/numpy"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libfuse"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/xorgproto"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxau"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxdmcp"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxcb"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxshmfence"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libx11"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxext"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxrender"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxrandr"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxfixes"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxdamage"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/mesa"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxcomposite"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/glib"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/harfbuzz"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/atk"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/sshfs"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/dbus"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/at-spi2-core"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/clipper2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/manifold"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/nghttp2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libevent"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/tmux"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/fzf"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libidn2"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libpsl"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/curl"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/rust"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/uv"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/diffoscope"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/jaq"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/difftastic"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/prek"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/zellij"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/ut"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/nushell"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/hex-patch"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/fd"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/teamtype"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/procs"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/yazi"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/gurk"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/railway"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/weathr"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/dust"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/delta"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/biff"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/brush"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/ripgrep"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/claude-code"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/imgcatr"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/hexhog"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bottom"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/bat"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/atuin"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/eza"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/wget"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/nspr"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/nss"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/git"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/helix"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/llama.cpp"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/libxkbcommon"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/vim"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/htop"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/jnv"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/fontconfig"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/graphviz"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/ffmpeg"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/cairo"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/pango"
+      },
+      {
+        "sha256": "",
+        "uri": "pkg://minimal.dev/agent-browser"
+      }
+    ],
+    "package_metadata": [
+      {
+        "name": "mpc",
+        "purl": "pkg:gnu/mpc",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "mpc"
+        },
+        "source_urls": [
+          {
+            "sha256": "ab642492f5cf882b74aa0cb730cd410a81edcdbec895183ce930e706c1c759b8",
+            "uri": "gs://minimal-staging-archives/mpc-1.3.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/mpc"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "linux_headers",
+        "purl": "pkg:github/torvalds/linux",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "torvalds",
+          "repo": "linux"
+        },
+        "source_urls": [
+          {
+            "sha256": "0fcbbbbcd456e87bbbfc8bf37af541fda62ccfcce76903503424fd101ef7bdee",
+            "uri": "gs://minimal-staging-archives/linux-6.12.43.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/linux_headers"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "acl",
+        "purl": "pkg:generic/minimal.dev/acl",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "97203a72cae99ab89a067fe2210c1cbf052bc492b479eca7d226d9830883b0bd",
+            "uri": "gs://minimal-staging-archives/acl-2.3.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/acl"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "make",
+        "purl": "pkg:gnu/make@4.4.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "make"
+        },
+        "source_urls": [
+          {
+            "sha256": "dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3",
+            "uri": "gs://minimal-staging-archives/make-4.4.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/make"
+          }
+        ],
+        "upstream_version": "4.4.1"
+      },
+      {
+        "name": "findutils",
+        "purl": "pkg:generic/minimal.dev/findutils@4.10.0",
+        "repology_project": "findutils",
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "1387e0b67ff247d2abde998f90dfbf70c1491391a59ddfecb8ae698789f0a4f5",
+            "uri": "gs://minimal-staging-archives/findutils-4.10.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/findutils"
+          }
+        ],
+        "upstream_version": "4.10.0"
+      },
+      {
+        "name": "m4",
+        "purl": "pkg:gnu/m4@1.4.20",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "m4"
+        },
+        "source_urls": [
+          {
+            "sha256": "e236ea3a1ccf5f6c270b1c4bb60726f371fa49459a8eaaebc90b216b328daf2b",
+            "uri": "gs://minimal-staging-archives/m4-1.4.20.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/m4"
+          }
+        ],
+        "upstream_version": "1.4.20"
+      },
+      {
+        "name": "readline",
+        "purl": "pkg:gnu/readline",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "readline"
+        },
+        "source_urls": [
+          {
+            "sha256": "fe5383204467828cd495ee8d1d3c037a7eba1389c22bc6a041f627976f9061cc",
+            "uri": "gs://minimal-staging-archives/readline-8.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/readline"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "attr",
+        "purl": "pkg:generic/minimal.dev/attr",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "39bf67452fa41d0948c2197601053f48b3d78a029389734332a6309a680c6c87",
+            "uri": "gs://minimal-staging-archives/attr-2.5.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/attr"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "mpfr",
+        "purl": "pkg:gnu/mpfr",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "mpfr"
+        },
+        "source_urls": [
+          {
+            "sha256": "b67ba0383ef7e8a8563734e2e889ef5ec3c3b898a01d00fa0a6869ad81c6ce01",
+            "uri": "gs://minimal-staging-archives/mpfr-4.2.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/mpfr"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "lz4",
+        "purl": "pkg:github/lz4/lz4",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "lz4",
+          "repo": "lz4"
+        },
+        "source_urls": [
+          {
+            "sha256": "537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b",
+            "uri": "gs://minimal-staging-archives/lz4-1.10.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/lz4"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "xz",
+        "purl": "pkg:github/tukaani-project/xz",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "tukaani-project",
+          "repo": "xz"
+        },
+        "source_urls": [
+          {
+            "sha256": "0b54f79df85912504de0b14aec7971e3f964491af1812d83447005807513cd9e",
+            "uri": "gs://minimal-staging-archives/xz-5.8.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/xz"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "tar",
+        "purl": "pkg:gnu/tar@1.35",
+        "repology_project": "tar",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "tar"
+        },
+        "source_urls": [
+          {
+            "sha256": "4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16",
+            "uri": "gs://minimal-staging-archives/tar-1.35.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/tar"
+          }
+        ],
+        "upstream_version": "1.35"
+      },
+      {
+        "name": "file",
+        "purl": "pkg:github/file/file",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "file",
+          "repo": "file"
+        },
+        "source_urls": [
+          {
+            "sha256": "c9cc77c7c560c543135edc555af609d5619dbef011997e988ce40a3d75d86088",
+            "uri": "gs://minimal-staging-archives/file-5.46.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/file"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "pcre2",
+        "purl": "pkg:github/PCRE2Project/pcre2@10.47",
+        "repology_project": "pcre2",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "PCRE2Project",
+          "repo": "pcre2"
+        },
+        "source_urls": [
+          {
+            "sha256": "47fe8c99461250d42f89e6e8fdaeba9da057855d06eb7fc08d9ca03fd08d7bc7",
+            "uri": "gs://minimal-staging-archives/pcre2-10.47.tar.bz2"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pcre2"
+          }
+        ],
+        "upstream_version": "10.47"
+      },
+      {
+        "name": "binutils",
+        "purl": "pkg:gnu/binutils@2.45.1",
+        "repology_project": "binutils",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "binutils"
+        },
+        "source_urls": [
+          {
+            "sha256": "5fe101e6fe9d18fdec95962d81ed670fdee5f37e3f48f0bef87bddf862513aa5",
+            "uri": "gs://minimal-staging-archives/binutils-2.45.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/binutils"
+          }
+        ],
+        "upstream_version": "2.45.1"
+      },
+      {
+        "name": "zlib",
+        "purl": "pkg:github/madler/zlib",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "madler",
+          "repo": "zlib"
+        },
+        "source_urls": [
+          {
+            "sha256": "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+            "uri": "gs://minimal-staging-archives/zlib-1.3.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/zlib"
+          }
+        ],
+        "upstream_version": null,
+        "verified_properties": [
+          {
+            "declared_proof_hash": "sha256:41d114c4d451f5d8cd6f5f63a8d674fb4e793dec",
+            "description": "decompress(compress(data)) = data for all compression levels (RFC 1950)",
+            "forge_kernel_version": "leanprover/lean4:v4.29.0-rc2",
+            "kernel_version": "leanprover/lean4:v4.29.0-rc2",
+            "proof_hash": "sha256:dbdae4b241ca74244bcc8ce7ede302a4f7e8480a2426bc04d7e6605e767c76b9",
+            "proof_system": "lean4",
+            "proof_uri": "https://github.com/kim-em/lean-zip/blob/master/Zip/Spec/ZlibCorrect.lean",
+            "property": "zlib_roundtrip",
+            "specification_hash": "sha256:d5d9988f1fdc28c2a0a947190bc901559d54f75a",
+            "verified_by_forge": true
+          },
+          {
+            "declared_proof_hash": "sha256:41d114c4d451f5d8cd6f5f63a8d674fb4e793dec",
+            "description": "inflate(deflateRaw(data, level)) = data for all levels (RFC 1951)",
+            "forge_kernel_version": "leanprover/lean4:v4.29.0-rc2",
+            "kernel_version": "leanprover/lean4:v4.29.0-rc2",
+            "proof_hash": "sha256:9510128d435ecc7c9367319dd9daea91402f99e0d67ba96c4ce63ee08ae77fb0",
+            "proof_system": "lean4",
+            "proof_uri": "https://github.com/kim-em/lean-zip/blob/master/Zip/Spec/DeflateRoundtrip.lean",
+            "property": "deflate_roundtrip",
+            "specification_hash": "sha256:8ae13dc62582bf1e89dcffa13c3167229a447786",
+            "verified_by_forge": true
+          },
+          {
+            "declared_proof_hash": "sha256:41d114c4d451f5d8cd6f5f63a8d674fb4e793dec",
+            "description": "decompress(compress(data)) = data for gzip framing (RFC 1952)",
+            "forge_kernel_version": "leanprover/lean4:v4.29.0-rc2",
+            "kernel_version": "leanprover/lean4:v4.29.0-rc2",
+            "proof_hash": "sha256:0e4d9848711cbb040553fc2f4f03bf629a7b5269f4539fdf6af7f7bd2084d683",
+            "proof_system": "lean4",
+            "proof_uri": "https://github.com/kim-em/lean-zip/blob/master/Zip/Spec/GzipCorrect.lean",
+            "property": "gzip_roundtrip",
+            "specification_hash": "sha256:00af6b359a8739d5bbf53af936032d1563fc8eb4",
+            "verified_by_forge": true
+          }
+        ]
+      },
+      {
+        "name": "gmp",
+        "purl": "pkg:gnu/gmp",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "gmp"
+        },
+        "source_urls": [
+          {
+            "sha256": "a3c2b80201b89e68616f4ad30bc66aee4927c3ce50e33929ca819d5c43538898",
+            "uri": "gs://minimal-staging-archives/gmp-6.3.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gmp"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "sed",
+        "purl": "pkg:gnu/sed@4.9",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "sed"
+        },
+        "source_urls": [
+          {
+            "sha256": "6e226b732e1cd739464ad6862bd1a1aba42d7982922da7a53519631d24975181",
+            "uri": "gs://minimal-staging-archives/sed-4.9.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/sed"
+          }
+        ],
+        "upstream_version": "4.9"
+      },
+      {
+        "name": "diffutils",
+        "purl": "pkg:gnu/diffutils@3.12",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "diffutils"
+        },
+        "source_urls": [
+          {
+            "sha256": "7c8b7f9fc8609141fdea9cece85249d308624391ff61dedaf528fcb337727dfd",
+            "uri": "gs://minimal-staging-archives/diffutils-3.12.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/diffutils"
+          }
+        ],
+        "upstream_version": "3.12"
+      },
+      {
+        "name": "glibc",
+        "purl": "pkg:gnu/glibc@2.42",
+        "repology_project": "glibc",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "glibc"
+        },
+        "source_urls": [
+          {
+            "sha256": "d1775e32e4628e64ef930f435b67bb63af7599acb6be2b335b9f19f16509f17f",
+            "uri": "gs://minimal-staging-archives/glibc-2.42.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/glibc"
+          }
+        ],
+        "upstream_version": "2.42"
+      },
+      {
+        "name": "bash",
+        "purl": "pkg:gnu/bash@5.3",
+        "repology_project": "bash",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "bash"
+        },
+        "source_urls": [
+          {
+            "sha256": "0d5cd86965f869a26cf64f4b71be7b96f90a3ba8b3d74e27e8e9d9d5550f31ba",
+            "uri": "gs://minimal-staging-archives/bash-5.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bash"
+          }
+        ],
+        "upstream_version": "5.3"
+      },
+      {
+        "name": "grep",
+        "purl": "pkg:gnu/grep@3.12",
+        "repology_project": "grep",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "grep"
+        },
+        "source_urls": [
+          {
+            "sha256": "2649b27c0e90e632eadcd757be06c6e9a4f48d941de51e7c0f83ff76408a07b9",
+            "uri": "gs://minimal-staging-archives/grep-3.12.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/grep"
+          }
+        ],
+        "upstream_version": "3.12"
+      },
+      {
+        "name": "coreutils",
+        "purl": "pkg:gnu/coreutils@9.9",
+        "repology_project": "coreutils",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "coreutils"
+        },
+        "source_urls": [
+          {
+            "sha256": "19bcb6ca867183c57d77155eae946c5eced88183143b45ca51ad7d26c628ca75",
+            "uri": "gs://minimal-staging-archives/coreutils-9.9.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/coreutils"
+          }
+        ],
+        "upstream_version": "9.9"
+      },
+      {
+        "name": "resolver-quad8",
+        "purl": "pkg:generic/minimal.dev/resolver-quad8",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/resolver-quad8"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "bison",
+        "purl": "pkg:gnu/bison",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "bison"
+        },
+        "source_urls": [
+          {
+            "sha256": "9bba0214ccf7f1079c5d59210045227bcf619519840ebfa80cd3849cff5a5bf2",
+            "uri": "gs://minimal-staging-archives/bison-3.8.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bison"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "zstd",
+        "purl": "pkg:github/facebook/zstd@1.5.7",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "facebook",
+          "repo": "zstd"
+        },
+        "source_urls": [
+          {
+            "sha256": "eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3",
+            "uri": "gs://minimal-staging-archives/zstd-1.5.7.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/zstd"
+          }
+        ],
+        "upstream_version": "1.5.7"
+      },
+      {
+        "name": "llvm",
+        "purl": "pkg:github/llvm/llvm-project",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "llvm",
+          "repo": "llvm-project"
+        },
+        "source_urls": [
+          {
+            "sha256": "b7a1b7b0af7b9c7596af6bd46e36d11321926eaa66a7a7dc957ab0a1375ee4b0",
+            "uri": "gs://minimal-staging-archives/clang-20.1.8.src.tar.xz"
+          },
+          {
+            "sha256": "3319203cfd1172bbac50f06fa68e318af84dcb5d65353310c0586354069d6634",
+            "uri": "gs://minimal-staging-archives/cmake-20.1.8.src.tar.xz"
+          },
+          {
+            "sha256": "15277402f6fd63397c0917a5c7171cda82d16d226094b828c1ed0f58f73b9c69",
+            "uri": "gs://minimal-staging-archives/compiler-rt-20.1.8.src.tar.xz"
+          },
+          {
+            "sha256": "e1363888216b455184dbb8a74a347bf5612f56a3f982369e1cba6c7e0726cde1",
+            "uri": "gs://minimal-staging-archives/llvm-20.1.8.src.tar.xz"
+          },
+          {
+            "sha256": "9a4e452a8163732d417db067a89190fcda823cb3aa33199e834ac7c028923f4b",
+            "uri": "gs://minimal-staging-archives/third-party-20.1.8.src.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/llvm"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "ncurses",
+        "purl": "pkg:gnu/ncurses@6.5-20250830",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "ncurses"
+        },
+        "source_urls": [
+          {
+            "sha256": "519ec9f748d7f2873cf763394fc766a701967439610125ad0fbf76ab2c7510a5",
+            "uri": "gs://minimal-staging-archives/ncurses-6.5-20250830.tgz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/ncurses"
+          }
+        ],
+        "upstream_version": "6.5-20250830"
+      },
+      {
+        "name": "gcc",
+        "purl": "pkg:gnu/gcc@15.2.0",
+        "repology_project": "gcc",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "gcc"
+        },
+        "source_urls": [
+          {
+            "sha256": "438fd996826b0c82485a29da03a72d71d6e3541a83ec702df4271f6fe025d24e",
+            "uri": "gs://minimal-staging-archives/gcc-15.2.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gcc"
+          }
+        ],
+        "upstream_version": "15.2.0"
+      },
+      {
+        "name": "redis",
+        "purl": "pkg:github/redis/redis@8.6.0",
+        "repology_project": "redis",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "redis",
+          "repo": "redis"
+        },
+        "source_urls": [
+          {
+            "sha256": "74261ece988fd2e1526e5aea9f8b9853217d71e2ef2dafaa624ed9579b5f4317",
+            "uri": "gs://minimal-staging-archives/redis/redis/8.6.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/redis"
+          }
+        ],
+        "upstream_version": "8.6.0"
+      },
+      {
+        "name": "toolchain",
+        "purl": "pkg:generic/minimal.dev/toolchain",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/toolchain"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "libcap",
+        "purl": "pkg:generic/minimal.dev/libcap@2.77",
+        "repology_project": "libcap",
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "5e339f5ab434bf5b7979f65437ca24942ddcd6e6a3e57347370cd791bc0ea51c",
+            "uri": "gs://minimal-staging-archives/libcap-2.77.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libcap"
+          }
+        ],
+        "upstream_version": "2.77"
+      },
+      {
+        "name": "gawk",
+        "purl": "pkg:gnu/gawk@5.3.2",
+        "repology_project": "gawk",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "gawk"
+        },
+        "source_urls": [
+          {
+            "sha256": "f8c3486509de705192138b00ef2c00bbbdd0e84c30d5c07d23fc73a9dc4cc9cc",
+            "uri": "gs://minimal-staging-archives/gawk-5.3.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gawk"
+          }
+        ],
+        "upstream_version": "5.3.2"
+      },
+      {
+        "name": "gzip",
+        "purl": "pkg:gnu/gzip@1.14",
+        "repology_project": "gzip",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "gzip"
+        },
+        "source_urls": [
+          {
+            "sha256": "01a7b881bd220bfdf615f97b8718f80bdfd3f6add385b993dcf6efd14e8c0ac6",
+            "uri": "gs://minimal-staging-archives/gzip-1.14.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gzip"
+          }
+        ],
+        "upstream_version": "1.14"
+      },
+      {
+        "name": "bzip2",
+        "purl": "pkg:github/libarchive/bzip2",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libarchive",
+          "repo": "bzip2"
+        },
+        "source_urls": [
+          {
+            "sha256": "ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269",
+            "uri": "gs://minimal-staging-archives/bzip2-1.0.8.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bzip2"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "perl",
+        "purl": "pkg:github/Perl/perl5@5.42.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "Perl",
+          "repo": "perl5"
+        },
+        "source_urls": [
+          {
+            "sha256": "73cf6cc1ea2b2b1c110a18c14bbbc73a362073003893ffcedc26d22ebdbdd0c3",
+            "uri": "gs://minimal-staging-archives/perl-5.42.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/perl"
+          }
+        ],
+        "upstream_version": "5.42.0"
+      },
+      {
+        "name": "base",
+        "purl": "pkg:generic/minimal.dev/base",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/base"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "hwdata",
+        "purl": "pkg:github/vcrhonek/hwdata@0.404",
+        "repology_project": "hwdata",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "vcrhonek",
+          "repo": "hwdata"
+        },
+        "source_urls": [
+          {
+            "sha256": "5c14fc99bf193faad1ccc267ccfff14ee4e4550a582b17a76aec72178539f837",
+            "uri": "gs://minimal-staging-archives/vcrhonek/hwdata/v0.404.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/hwdata"
+          }
+        ],
+        "upstream_version": "0.404"
+      },
+      {
+        "name": "jq",
+        "purl": "pkg:github/jqlang/jq@1.8.1",
+        "repology_project": "jq",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "jqlang",
+          "repo": "jq"
+        },
+        "source_urls": [
+          {
+            "sha256": "2be64e7129cecb11d5906290eba10af694fb9e3e7f9fc208a311dc33ca837eb0",
+            "uri": "gs://minimal-staging-archives/jq-1.8.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/jq"
+          }
+        ],
+        "upstream_version": "1.8.1"
+      },
+      {
+        "name": "btop",
+        "purl": "pkg:github/aristocratos/btop@1.4.6",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "aristocratos",
+          "repo": "btop"
+        },
+        "source_urls": [
+          {
+            "sha256": "4beb90172c6acaac08c1b4a5112fb616772e214a7ef992bcbd461453295a58be",
+            "uri": "gs://minimal-staging-archives/aristocratos/btop/v1.4.6.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/btop"
+          }
+        ],
+        "upstream_version": "1.4.6"
+      },
+      {
+        "name": "dejagnu",
+        "purl": "pkg:gnu/dejagnu",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "dejagnu"
+        },
+        "source_urls": [
+          {
+            "sha256": "87daefacd7958b4a69f88c6856dbd1634261963c414079d0c371f589cd66a2e3",
+            "uri": "gs://minimal-staging-archives/dejagnu-1.6.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/dejagnu"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "bash-completions",
+        "purl": "pkg:github/scop/bash-completion@2.16.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "scop",
+          "repo": "bash-completion"
+        },
+        "source_urls": [
+          {
+            "sha256": "3369bd5e418a75fb990863925aed5b420398acebb320ec4c0306b3eae23f107a",
+            "uri": "https://github.com/scop/bash-completion/releases/download/2.16.0/bash-completion-2.16.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bash-completions"
+          }
+        ],
+        "upstream_version": "2.16.0"
+      },
+      {
+        "name": "openblas",
+        "purl": "pkg:github/OpenMathLib/OpenBLAS@0.3.31",
+        "repology_project": "openblas",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "OpenMathLib",
+          "repo": "OpenBLAS"
+        },
+        "source_urls": [
+          {
+            "sha256": "6dd2a63ac9d32643b7cc636eab57bf4e57d0ed1fff926dfbc5d3d97f2d2be3a6",
+            "uri": "gs://minimal-staging-archives/OpenMathLib/OpenBLAS/v0.3.31.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/openblas"
+          }
+        ],
+        "upstream_version": "0.3.31"
+      },
+      {
+        "name": "autoconf",
+        "purl": "pkg:gnu/autoconf@2.72",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "autoconf"
+        },
+        "source_urls": [
+          {
+            "sha256": "ba885c1319578d6c94d46e9b0dceb4014caafe2490e437a0dbca3f270a223f5a",
+            "uri": "gs://minimal-staging-archives/autoconf-2.72.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/autoconf"
+          }
+        ],
+        "upstream_version": "2.72"
+      },
+      {
+        "name": "automake",
+        "purl": "pkg:gnu/automake@1.18.1",
+        "repology_project": "automake",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "automake"
+        },
+        "source_urls": [
+          {
+            "sha256": "168aa363278351b89af56684448f525a5bce5079d0b6842bd910fdd3f1646887",
+            "uri": "gs://minimal-staging-archives/automake-1.18.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/automake"
+          }
+        ],
+        "upstream_version": "1.18.1"
+      },
+      {
+        "name": "nano",
+        "purl": "pkg:gnu/nano@8.7",
+        "repology_project": "nano",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "nano"
+        },
+        "source_urls": [
+          {
+            "sha256": "afd287aa672c48b8e1a93fdb6c6588453d527510d966822b687f2835f0d986e9",
+            "uri": "gs://minimal-staging-archives/nano-8.7.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/nano"
+          }
+        ],
+        "upstream_version": "8.7"
+      },
+      {
+        "name": "time",
+        "purl": "pkg:gnu/time@1.9",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "time"
+        },
+        "source_urls": [
+          {
+            "sha256": "fbacf0c81e62429df3e33bda4cee38756604f18e01d977338e23306a3e3b521e",
+            "uri": "gs://minimal-staging-archives/time-1.9.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/time"
+          }
+        ],
+        "upstream_version": "1.9"
+      },
+      {
+        "name": "alsa-lib",
+        "purl": "pkg:generic/minimal.dev/alsa-lib@1.2.15.3",
+        "repology_project": "alsa-lib",
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "7b079d614d582cade7ab8db2364e65271d0877a37df8757ac4ac0c8970be861e",
+            "uri": "gs://minimal-staging-archives/alsa-lib-1.2.15.3.tar.bz2"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/alsa-lib"
+          }
+        ],
+        "upstream_version": "1.2.15.3"
+      },
+      {
+        "name": "pciutils",
+        "purl": "pkg:github/pciutils/pciutils",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pciutils",
+          "repo": "pciutils"
+        },
+        "source_urls": [
+          {
+            "sha256": "e31c79722dbbe9d2906b92996ce295268e54d4342fefe3ff476caa613e51be2a",
+            "uri": "gs://minimal-staging-archives/pciutils-3.14.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pciutils"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "gperf",
+        "purl": "pkg:gnu/gperf@3.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "gperf"
+        },
+        "source_urls": [
+          {
+            "sha256": "588546b945bba4b70b6a3a616e80b4ab466e3f33024a352fc2198112cdbb3ae2",
+            "uri": "gs://minimal-staging-archives/gperf-3.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gperf"
+          }
+        ],
+        "upstream_version": "3.1"
+      },
+      {
+        "name": "gdbm",
+        "purl": "pkg:gnu/gdbm@1.26",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "gdbm"
+        },
+        "source_urls": [
+          {
+            "sha256": "6a24504a14de4a744103dcb936be976df6fbe88ccff26065e54c1c47946f4a5e",
+            "uri": "gs://minimal-staging-archives/gdbm-1.26.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gdbm"
+          }
+        ],
+        "upstream_version": "1.26"
+      },
+      {
+        "name": "strace",
+        "purl": "pkg:github/strace/strace",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "strace",
+          "repo": "strace"
+        },
+        "source_urls": [
+          {
+            "sha256": "0a7c7bedc7efc076f3242a0310af2ae63c292a36dd4236f079e88a93e98cb9c0",
+            "uri": "gs://minimal-staging-archives/strace-6.17.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/strace"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "go",
+        "purl": "pkg:github/golang/go@1.25.5",
+        "repology_project": "go",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "golang",
+          "repo": "go"
+        },
+        "source_urls": [
+          {
+            "sha256": "9e9b755d63b36acf30c12a9a3fc379243714c1c6d3dd72861da637f336ebb35b",
+            "uri": "https://go.dev/dl/go1.25.5.linux-amd64.tar.gz"
+          },
+          {
+            "sha256": "22a5fd0a91efcd28a1b0537106b9959b2804b61f59c3758b51e8e5429c1a954f",
+            "uri": "https://go.dev/dl/go1.25.5.src.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/go"
+          }
+        ],
+        "upstream_version": "1.25.5"
+      },
+      {
+        "name": "duf",
+        "purl": "pkg:github/muesli/duf@0.9.1",
+        "repology_project": "duf",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "muesli",
+          "repo": "duf"
+        },
+        "source_urls": [
+          {
+            "sha256": "1334d8c1a7957d0aceebe651e3af9e1c1e0c6f298f1feb39643dd0bd8ad1e955",
+            "uri": "gs://minimal-staging-archives/muesli/duf/v0.9.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/duf"
+          }
+        ],
+        "upstream_version": "0.9.1"
+      },
+      {
+        "name": "pulumi",
+        "purl": "pkg:github/pulumi/pulumi@3.220.0",
+        "repology_project": "pulumi",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pulumi",
+          "repo": "pulumi"
+        },
+        "source_urls": [
+          {
+            "sha256": "6a48a7cd6747f503b009a0bfdfd257a96288db5c264042c1465a32eb0f0feab9",
+            "uri": "gs://minimal-staging-archives/pulumi/pulumi/v3.220.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pulumi"
+          }
+        ],
+        "upstream_version": "3.220.0"
+      },
+      {
+        "name": "gh",
+        "purl": "pkg:github/cli/cli@2.86.0",
+        "repology_project": "gh",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "cli",
+          "repo": "cli"
+        },
+        "source_urls": [
+          {
+            "sha256": "cd2998310e81727af5c2056e9936e6541a20f968d6e3a4891f7fedbc0b336008",
+            "uri": "gs://minimal-staging-archives/cli/cli/v2.86.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gh"
+          }
+        ],
+        "upstream_version": "2.86.0"
+      },
+      {
+        "name": "syft",
+        "purl": "pkg:github/anchore/syft@1.42.0",
+        "repology_project": "syft",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "anchore",
+          "repo": "syft"
+        },
+        "source_urls": [
+          {
+            "sha256": "ed946fd7a485573e5e7784bb5691d60a9cffffebd330e3e2b487afbf11d30102",
+            "uri": "gs://minimal-staging-archives/anchore/syft/v1.42.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/syft"
+          }
+        ],
+        "upstream_version": "1.42.0"
+      },
+      {
+        "name": "mermaid-ascii",
+        "purl": "pkg:github/AlexanderGrooff/mermaid-ascii@1.1.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "AlexanderGrooff",
+          "repo": "mermaid-ascii"
+        },
+        "source_urls": [
+          {
+            "sha256": "28c8b9a5ff1e475518d2054384a08bf23bb372f2f21cd3a7a3a5ba97eecd552a",
+            "uri": "gs://minimal-staging-archives/AlexanderGrooff/mermaid-ascii/1.1.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/mermaid-ascii"
+          }
+        ],
+        "upstream_version": "1.1.0"
+      },
+      {
+        "name": "minimal-sshd",
+        "purl": "pkg:generic/minimal.dev/minimal-sshd",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/minimal-sshd"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "cosign",
+        "purl": "pkg:github/sigstore/cosign@3.0.4",
+        "repology_project": "cosign",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "sigstore",
+          "repo": "cosign"
+        },
+        "source_urls": [
+          {
+            "sha256": "8096c07e9a3ae21fa600c19cc8ff8c6f15b027184858d0bc0edde5f74589a01a",
+            "uri": "gs://minimal-staging-archives/sigstore/cosign/v3.0.4.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/cosign"
+          }
+        ],
+        "upstream_version": "3.0.4"
+      },
+      {
+        "name": "lcms2",
+        "purl": "pkg:github/mm2/Little-CMS@2.17",
+        "repology_project": "lcms",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "mm2",
+          "repo": "Little-CMS"
+        },
+        "source_urls": [
+          {
+            "sha256": "d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074",
+            "uri": "gs://minimal-staging-archives/lcms2-2.17.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/lcms2"
+          }
+        ],
+        "upstream_version": "2.17"
+      },
+      {
+        "name": "oniguruma",
+        "purl": "pkg:github/kkos/oniguruma@6.9.10",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "kkos",
+          "repo": "oniguruma"
+        },
+        "source_urls": [
+          {
+            "sha256": "2a5cfc5ae259e4e97f86b68dfffc152cdaffe94e2060b770cb827238d769fc05",
+            "uri": "https://github.com/kkos/oniguruma/releases/download/v6.9.10/onig-6.9.10.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/oniguruma"
+          }
+        ],
+        "upstream_version": "6.9.10"
+      },
+      {
+        "name": "jqfmt",
+        "purl": "pkg:github/noperator/jqfmt@0.1.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "noperator",
+          "repo": "jqfmt"
+        },
+        "source_urls": [
+          {
+            "sha256": "5435c3166921ea103513d516c4d56ee00755d6b0b798f3edbdabfc06a1d98268",
+            "uri": "gs://minimal-staging-archives/noperator/jqfmt/v0.1.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/jqfmt"
+          }
+        ],
+        "upstream_version": "0.1.0"
+      },
+      {
+        "name": "varlock",
+        "purl": "pkg:github/dmno-dev/varlock@0.2.3",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "dmno-dev",
+          "repo": "varlock"
+        },
+        "source_urls": [
+          {
+            "sha256": "b7a6cb07507105cac70e847adbf8fbe462f3a91f5376f564458e5c0d77bf0f96",
+            "uri": "gs://minimal-staging-archives/dmno-dev/varlock/varlock-linux-x64-0.2.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/varlock"
+          }
+        ],
+        "upstream_version": "0.2.3"
+      },
+      {
+        "name": "bzip3",
+        "purl": "pkg:github/iczelia/bzip3@1.5.3",
+        "repology_project": "bzip3",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "iczelia",
+          "repo": "bzip3"
+        },
+        "source_urls": [
+          {
+            "sha256": "58a53d002eb80c6f74c292ddf37d4f53604f6e2126cb3ae2bff738971302aa85",
+            "uri": "https://github.com/iczelia/bzip3/releases/download/1.5.3/bzip3-1.5.3.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bzip3"
+          }
+        ],
+        "upstream_version": "1.5.3"
+      },
+      {
+        "name": "zig",
+        "purl": "pkg:generic/minimal.dev/zig@0.15.1",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "c61c5da6edeea14ca51ecd5e4520c6f4189ef5250383db33d01848293bfafe05",
+            "uri": "https://ziglang.org/download/0.15.1/zig-x86_64-linux-0.15.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/zig"
+          }
+        ],
+        "upstream_version": "0.15.1"
+      },
+      {
+        "name": "libsodium",
+        "purl": "pkg:github/jedisct1/libsodium@1.0.21",
+        "repology_project": "libsodium",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "jedisct1",
+          "repo": "libsodium"
+        },
+        "source_urls": [
+          {
+            "sha256": "9e4285c7a419e82dedb0be63a72eea357d6943bc3e28e6735bf600dd4883feaf",
+            "uri": "https://github.com/jedisct1/libsodium/releases/download/1.0.21-RELEASE/libsodium-1.0.21.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libsodium"
+          }
+        ],
+        "upstream_version": "1.0.21"
+      },
+      {
+        "name": "icu",
+        "purl": "pkg:github/unicode-org/icu@78.1",
+        "repology_project": "icu",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "unicode-org",
+          "repo": "icu"
+        },
+        "source_urls": [
+          {
+            "sha256": "6217f58ca39b23127605cfc6c7e0d3475fe4b0d63157011383d716cb41617886",
+            "uri": "https://github.com/unicode-org/icu/releases/download/release-78.1/icu4c-78.1-sources.tgz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/icu"
+          }
+        ],
+        "upstream_version": "78.1"
+      },
+      {
+        "name": "grpcurl",
+        "purl": "pkg:github/fullstorydev/grpcurl@1.9.3",
+        "repology_project": "grpcurl",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "fullstorydev",
+          "repo": "grpcurl"
+        },
+        "source_urls": [
+          {
+            "sha256": "bb555087f279af156159c86d4d3d5dd3f2991129e4cd6b09114e6851a679340d",
+            "uri": "gs://minimal-staging-archives/fullstorydev/grpcurl/v1.9.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/grpcurl"
+          }
+        ],
+        "upstream_version": "1.9.3"
+      },
+      {
+        "name": "libpng",
+        "purl": "pkg:github/pnggroup/libpng@1.6.53",
+        "repology_project": "libpng",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pnggroup",
+          "repo": "libpng"
+        },
+        "source_urls": [
+          {
+            "sha256": "1d3fb8ccc2932d04aa3663e22ef5ef490244370f4e568d7850165068778d98d4",
+            "uri": "gs://minimal-staging-archives/libpng-1.6.53.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libpng"
+          }
+        ],
+        "upstream_version": "1.6.53"
+      },
+      {
+        "name": "freetype",
+        "purl": "pkg:generic/minimal.dev/freetype@2.14.1",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "32427e8c471ac095853212a37aef816c60b42052d4d9e48230bab3bdf2936ccc",
+            "uri": "gs://minimal-staging-archives/freetype-2.14.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/freetype"
+          }
+        ],
+        "upstream_version": "2.14.1"
+      },
+      {
+        "name": "patch",
+        "purl": "pkg:gnu/patch@2.8",
+        "repology_project": "patch",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "patch"
+        },
+        "source_urls": [
+          {
+            "sha256": "f87cee69eec2b4fcbf60a396b030ad6aa3415f192aa5f7ee84cad5e11f7f5ae3",
+            "uri": "gs://minimal-staging-archives/patch-2.8.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/patch"
+          }
+        ],
+        "upstream_version": "2.8"
+      },
+      {
+        "name": "expat",
+        "purl": "pkg:github/libexpat/libexpat@2.7.3",
+        "repology_project": "expat",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libexpat",
+          "repo": "libexpat"
+        },
+        "source_urls": [
+          {
+            "sha256": "71df8f40706a7bb0a80a5367079ea75d91da4f8c65c58ec59bcdfbf7decdab9f",
+            "uri": "gs://minimal-staging-archives/expat-2.7.3.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/expat"
+          }
+        ],
+        "upstream_version": "2.7.3"
+      },
+      {
+        "name": "trivy",
+        "purl": "pkg:github/aquasecurity/trivy@0.69.1",
+        "repology_project": "trivy",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "aquasecurity",
+          "repo": "trivy"
+        },
+        "source_urls": [
+          {
+            "sha256": "997f7b744e93bd2faa9f0c2f86345ab142d50d42a6ed2b3a35dc8b65676355ee",
+            "uri": "gs://minimal-staging-archives/aquasecurity/trivy/v0.69.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/trivy"
+          }
+        ],
+        "upstream_version": "0.69.1"
+      },
+      {
+        "name": "sqlite",
+        "purl": "pkg:github/sqlite/sqlite",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "sqlite",
+          "repo": "sqlite"
+        },
+        "source_urls": [
+          {
+            "sha256": "a3db587a1b92ee5ddac2f66b3edb41b26f9c867275782d46c3a088977d6a5b18",
+            "uri": "gs://minimal-staging-archives/sqlite-autoconf-3500400.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/sqlite"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "libunistring",
+        "purl": "pkg:gnu/libunistring@1.4.1",
+        "repology_project": "libunistring",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "libunistring"
+        },
+        "source_urls": [
+          {
+            "sha256": "67d88430892527861903788868c77802a217b0959990f7449f2976126a307763",
+            "uri": "gs://minimal-staging-archives/libunistring-1.4.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libunistring"
+          }
+        ],
+        "upstream_version": "1.4.1"
+      },
+      {
+        "name": "openssl",
+        "purl": "pkg:github/openssl/openssl@3.6.1",
+        "repology_project": "openssl",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "openssl",
+          "repo": "openssl"
+        },
+        "source_urls": [
+          {
+            "sha256": "f68e6e3a19902c0487d684a4122d4127bc649b4f8f51c15324bb36e0e4dc0bfa",
+            "uri": "gs://minimal-staging-archives/openssl/openssl/openssl-3.6.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/openssl"
+          }
+        ],
+        "upstream_version": "3.6.1"
+      },
+      {
+        "name": "socat",
+        "purl": "pkg:generic/minimal.dev/socat@1.8.1.1",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "f68b602c80e94b4b7498d74ec408785536fe33534b39467977a82ab2f7f01ddb",
+            "uri": "http://www.dest-unreach.org/socat/download/socat-1.8.1.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/socat"
+          }
+        ],
+        "upstream_version": "1.8.1.1"
+      },
+      {
+        "name": "cmake",
+        "purl": "pkg:github/Kitware/CMake@4.2.3",
+        "repology_project": "cmake",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "Kitware",
+          "repo": "CMake"
+        },
+        "source_urls": [
+          {
+            "sha256": "803186734800e1e8b2a242154ba1ed7bda4e77643e77e12477c71f3cdc7ede1d",
+            "uri": "gs://minimal-staging-archives/Kitware/CMake/v4.2.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/cmake"
+          }
+        ],
+        "upstream_version": "4.2.3"
+      },
+      {
+        "name": "opencv",
+        "purl": "pkg:github/opencv/opencv@4.12.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "opencv",
+          "repo": "opencv"
+        },
+        "source_urls": [
+          {
+            "sha256": "44c106d5bb47efec04e531fd93008b3fcd1d27138985c5baf4eafac0e1ec9e9d",
+            "uri": "gs://minimal-staging-archives/opencv-4.12.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/opencv"
+          }
+        ],
+        "upstream_version": "4.12.0"
+      },
+      {
+        "name": "libyaml",
+        "purl": "pkg:github/yaml/libyaml@0.2.5",
+        "repology_project": "libyaml",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "yaml",
+          "repo": "libyaml"
+        },
+        "source_urls": [
+          {
+            "sha256": "fa240dbf262be053f3898006d502d514936c818e422afdcf33921c63bed9bf2e",
+            "uri": "https://github.com/yaml/libyaml/archive/refs/tags/0.2.5.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libyaml"
+          }
+        ],
+        "upstream_version": "0.2.5"
+      },
+      {
+        "name": "nginx",
+        "purl": "pkg:github/nginx/nginx@1.28.1",
+        "repology_project": "nginx",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "nginx",
+          "repo": "nginx"
+        },
+        "source_urls": [
+          {
+            "sha256": "40e7a0916d121e8905ef50f2a738b675599e42b2224a582dd938603fed15788e",
+            "uri": "https://nginx.org/download/nginx-1.28.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/nginx"
+          }
+        ],
+        "upstream_version": "1.28.1"
+      },
+      {
+        "name": "jdk",
+        "purl": "pkg:github/adoptium/temurin21-binaries@21.0.10",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "adoptium",
+          "repo": "temurin21-binaries"
+        },
+        "source_urls": [
+          {
+            "sha256": "ea3b9bd464d6dd253e9a7accf59f7ccd2a36e4aa69640b7251e3370caef896a4",
+            "uri": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.10+7/OpenJDK21U-jdk_x64_linux_hotspot_21.0.10_7.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/jdk"
+          }
+        ],
+        "upstream_version": "21.0.10"
+      },
+      {
+        "name": "iana-etc",
+        "purl": "pkg:github/Mic92/iana-etc",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "Mic92",
+          "repo": "iana-etc"
+        },
+        "source_urls": [
+          {
+            "sha256": "432d475ea36aa3f18fe709878e6f1e4e894efc5e92a8ee0bee0756b792ac2160",
+            "uri": "gs://minimal-staging-archives/iana-etc-20250618.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/iana-etc"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "xtrans",
+        "purl": "pkg:generic/minimal.dev/xtrans@1.6.0",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "faafea166bf2451a173d9d593352940ec6404145c5d1da5c213423ce4d359e92",
+            "uri": "gs://minimal-staging-archives/xtrans-1.6.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/xtrans"
+          }
+        ],
+        "upstream_version": "1.6.0"
+      },
+      {
+        "name": "libxcrypt",
+        "purl": "pkg:github/besser82/libxcrypt@4.5.2",
+        "repology_project": "libxcrypt",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "besser82",
+          "repo": "libxcrypt"
+        },
+        "source_urls": [
+          {
+            "sha256": "71513a31c01a428bccd5367a32fd95f115d6dac50fb5b60c779d5c7942aec071",
+            "uri": "gs://minimal-staging-archives/libxcrypt-4.5.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxcrypt"
+          }
+        ],
+        "upstream_version": "4.5.2"
+      },
+      {
+        "name": "shadow",
+        "purl": "pkg:github/shadow-maint/shadow@4.18.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "shadow-maint",
+          "repo": "shadow"
+        },
+        "source_urls": [
+          {
+            "sha256": "add4604d3bc410344433122a819ee4154b79dd8316a56298c60417e637c07608",
+            "uri": "gs://minimal-staging-archives/shadow-4.18.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/shadow"
+          }
+        ],
+        "upstream_version": "4.18.0"
+      },
+      {
+        "name": "screen",
+        "purl": "pkg:gnu/screen@5.0.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "screen"
+        },
+        "source_urls": [
+          {
+            "sha256": "2dae36f4db379ffcd14b691596ba6ec18ac3a9e22bc47ac239789ab58409869d",
+            "uri": "gs://minimal-staging-archives/screen-5.0.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/screen"
+          }
+        ],
+        "upstream_version": "5.0.1"
+      },
+      {
+        "name": "openjpeg",
+        "purl": "pkg:github/uclouvain/openjpeg@2.5.4",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "uclouvain",
+          "repo": "openjpeg"
+        },
+        "source_urls": [
+          {
+            "sha256": "a695fbe19c0165f295a8531b1e4e855cd94d0875d2f88ec4b61080677e27188a",
+            "uri": "https://github.com/uclouvain/openjpeg/archive/v2.5.4/openjpeg-2.5.4.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/openjpeg"
+          }
+        ],
+        "upstream_version": "2.5.4"
+      },
+      {
+        "name": "less",
+        "purl": "pkg:github/gwsw/less",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "gwsw",
+          "repo": "less"
+        },
+        "source_urls": [
+          {
+            "sha256": "9b68820c34fa8a0af6b0e01b74f0298bcdd40a0489c61649b47058908a153d78",
+            "uri": "gs://minimal-staging-archives/less-679.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/less"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "terraform",
+        "purl": "pkg:github/hashicorp/terraform@1.14.5",
+        "repology_project": "terraform",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "hashicorp",
+          "repo": "terraform"
+        },
+        "source_urls": [
+          {
+            "sha256": "ac3faee7b1d301a4d12fe6b7f33b1ba57a183e080a2442f6f1466a30f257ba45",
+            "uri": "gs://minimal-staging-archives/hashicorp/terraform/v1.14.5.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/terraform"
+          }
+        ],
+        "upstream_version": "1.14.5"
+      },
+      {
+        "name": "groff",
+        "purl": "pkg:gnu/groff@1.23.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "groff"
+        },
+        "source_urls": [
+          {
+            "sha256": "6b9757f592b7518b4902eb6af7e54570bdccba37a871fddb2d30ae3863511c13",
+            "uri": "gs://minimal-staging-archives/groff-1.23.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/groff"
+          }
+        ],
+        "upstream_version": "1.23.0"
+      },
+      {
+        "name": "libjpeg-turbo",
+        "purl": "pkg:github/libjpeg-turbo/libjpeg-turbo@3.0.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libjpeg-turbo",
+          "repo": "libjpeg-turbo"
+        },
+        "source_urls": [
+          {
+            "sha256": "22429507714ae147b3acacd299e82099fce5d9f456882fc28e252e4579ba2a75",
+            "uri": "gs://minimal-staging-archives/libjpeg-turbo-3.0.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libjpeg-turbo"
+          }
+        ],
+        "upstream_version": "3.0.1"
+      },
+      {
+        "name": "glow",
+        "purl": "pkg:github/charmbracelet/glow@2.1.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "charmbracelet",
+          "repo": "glow"
+        },
+        "source_urls": [
+          {
+            "sha256": "f13e1d6be1ab4baf725a7fedc4cd240fc7e5c7276af2d92f199e590e1ef33967",
+            "uri": "gs://minimal-staging-archives/charmbracelet/glow/v2.1.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/glow"
+          }
+        ],
+        "upstream_version": "2.1.1"
+      },
+      {
+        "name": "age",
+        "purl": "pkg:github/FiloSottile/age@1.3.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "FiloSottile",
+          "repo": "age"
+        },
+        "source_urls": [
+          {
+            "sha256": "396007bc0bc53de253391493bda1252757ba63af1a19db86cfb60a35cb9d290a",
+            "uri": "gs://minimal-staging-archives/FiloSottile/age/v1.3.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/age"
+          }
+        ],
+        "upstream_version": "1.3.1"
+      },
+      {
+        "name": "libffi",
+        "purl": "pkg:github/libffi/libffi",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libffi",
+          "repo": "libffi"
+        },
+        "source_urls": [
+          {
+            "sha256": "f3a3082a23b37c293a4fcd1053147b371f2ff91fa7ea1b2a52e335676bac82dc",
+            "uri": "gs://minimal-staging-archives/libffi-3.5.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libffi"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "flex",
+        "purl": "pkg:github/westes/flex",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "westes",
+          "repo": "flex"
+        },
+        "source_urls": [
+          {
+            "sha256": "e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995",
+            "uri": "gs://minimal-staging-archives/flex-2.6.4.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/flex"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "tcl",
+        "purl": "pkg:github/tcltk/tcl",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "tcltk",
+          "repo": "tcl"
+        },
+        "source_urls": [
+          {
+            "sha256": "91cb8fa61771c63c262efb553059b7c7ad6757afa5857af6265e4b0bdc2a14a5",
+            "uri": "gs://minimal-staging-archives/tcl8.6.16-src.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/tcl"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "pkgconf",
+        "purl": "pkg:github/pkgconf/pkgconf@2.5.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pkgconf",
+          "repo": "pkgconf"
+        },
+        "source_urls": [
+          {
+            "sha256": "cd05c9589b9f86ecf044c10a2269822bc9eb001eced2582cfffd658b0a50c243",
+            "uri": "gs://minimal-staging-archives/pkgconf-2.5.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pkgconf"
+          }
+        ],
+        "upstream_version": "2.5.1"
+      },
+      {
+        "name": "cups",
+        "purl": "pkg:github/OpenPrinting/cups@2.4.13",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "OpenPrinting",
+          "repo": "cups"
+        },
+        "source_urls": [
+          {
+            "sha256": "8255ecf037be72660de24a73bcada042fc5bf509fc87bc8ad16cd0675735c1a8",
+            "uri": "gs://minimal-staging-archives/cups-2.4.13-source.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/cups"
+          }
+        ],
+        "upstream_version": "2.4.13"
+      },
+      {
+        "name": "libpipeline",
+        "purl": "pkg:generic/minimal.dev/libpipeline",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "1b1203ca152ccd63983c3f2112f7fe6fa5afd453218ede5153d1b31e11bb8405",
+            "uri": "gs://minimal-staging-archives/libpipeline-1.5.8.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libpipeline"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "iproute2",
+        "purl": "pkg:generic/minimal.dev/iproute2@6.18.0",
+        "repology_project": "iproute2",
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "6ba520e1975e4c50dc931eeae91ea37c198b8a173744885f8895b84325f9d456",
+            "uri": "gs://minimal-staging-archives/iproute2-6.18.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/iproute2"
+          }
+        ],
+        "upstream_version": "6.18.0"
+      },
+      {
+        "name": "tailscale",
+        "purl": "pkg:github/tailscale/tailscale@1.94.1",
+        "repology_project": "tailscale",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "tailscale",
+          "repo": "tailscale"
+        },
+        "source_urls": [
+          {
+            "sha256": "80eec367cabd6012a668233b11ca5c6df29b0dd24c7cfd74b71958c93ec9b644",
+            "uri": "https://github.com/tailscale/tailscale/archive/refs/tags/v1.94.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/tailscale"
+          }
+        ],
+        "upstream_version": "1.94.1"
+      },
+      {
+        "name": "postgres",
+        "purl": "pkg:github/postgres/postgres@18.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "postgres",
+          "repo": "postgres"
+        },
+        "source_urls": [
+          {
+            "sha256": "30e97fc1f1594a7226580ea51080d3d883f4a0fb6ff716dbf7ad09e9f7e93ab2",
+            "uri": "gs://minimal-staging-archives/postgresql-18.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/postgres"
+          }
+        ],
+        "upstream_version": "18.0"
+      },
+      {
+        "name": "man-db",
+        "purl": "pkg:generic/minimal.dev/man-db",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "8afebb6f7eb6bb8542929458841f5c7e6f240e30c86358c1fbcefbea076c87d9",
+            "uri": "gs://minimal-staging-archives/man-db-2.13.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/man-db"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "elfutils",
+        "purl": "pkg:generic/minimal.dev/elfutils@0.194",
+        "repology_project": "elfutils",
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "09e2ff033d39baa8b388a2d7fbc5390bfde99ae3b7c67c7daaf7433fbcf0f01e",
+            "uri": "gs://minimal-staging-archives/elfutils-0.194.tar.bz2"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/elfutils"
+          }
+        ],
+        "upstream_version": "0.194"
+      },
+      {
+        "name": "libssh2",
+        "purl": "pkg:github/libssh2/libssh2@1.11.1",
+        "repology_project": "libssh2",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libssh2",
+          "repo": "libssh2"
+        },
+        "source_urls": [
+          {
+            "sha256": "82b35c61c78b475647bdc981a183c5b5ab0d979e1caee94186e8f9150f2b0d0d",
+            "uri": "https://github.com/libssh2/libssh2/archive/refs/tags/libssh2-1.11.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libssh2"
+          }
+        ],
+        "upstream_version": "1.11.1"
+      },
+      {
+        "name": "openssh",
+        "purl": "pkg:github/openssh/openssh-portable@10.2p1",
+        "repology_project": "openssh",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "openssh",
+          "repo": "openssh-portable"
+        },
+        "source_urls": [
+          {
+            "sha256": "ccc42c0419937959263fa1dbd16dafc18c56b984c03562d2937ce56a60f798b2",
+            "uri": "gs://minimal-staging-archives/openssh-10.2p1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/openssh"
+          }
+        ],
+        "upstream_version": "10.2p1"
+      },
+      {
+        "name": "procps-ng",
+        "purl": "pkg:generic/minimal.dev/procps-ng",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "c2e6d193cc78f84cd6ddb72aaf6d5c6a9162f0470e5992092057f5ff518562fa",
+            "uri": "gs://minimal-staging-archives/procps-ng-4.0.5.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/procps-ng"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "ghostscript",
+        "purl": "pkg:github/ArtifexSoftware/ghostpdl-downloads@10.06.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "ArtifexSoftware",
+          "repo": "ghostpdl-downloads"
+        },
+        "source_urls": [
+          {
+            "sha256": "64352648c2c081c8a9fb1a12dc1965e01ead7c57f58b72d1b54f6ef1cef3c561",
+            "uri": "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10060/ghostscript-10.06.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/ghostscript"
+          }
+        ],
+        "upstream_version": "10.06.0"
+      },
+      {
+        "name": "skopeo",
+        "purl": "pkg:github/containers/skopeo@1.22.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "containers",
+          "repo": "skopeo"
+        },
+        "source_urls": [
+          {
+            "sha256": "dc9aa749973b10d3c2672d2839e61bac75cf32d5e5106463420b83653c9df3ff",
+            "uri": "gs://minimal-staging-archives/containers/skopeo/v1.22.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/skopeo"
+          }
+        ],
+        "upstream_version": "1.22.0"
+      },
+      {
+        "name": "libxml2",
+        "purl": "pkg:github/GNOME/libxml2@2.15.1",
+        "repology_project": "libxml2",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "GNOME",
+          "repo": "libxml2"
+        },
+        "source_urls": [
+          {
+            "sha256": "23b1ebd74cc562cd592cd2618c2bd88dc06fa0dfdbcd56e03cb26d6ff6b7e373",
+            "uri": "https://github.com/GNOME/libxml2/archive/refs/tags/v2.15.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxml2"
+          }
+        ],
+        "upstream_version": "2.15.1"
+      },
+      {
+        "name": "libxslt",
+        "purl": "pkg:github/GNOME/libxslt@1.1.45",
+        "repology_project": "libxslt",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "GNOME",
+          "repo": "libxslt"
+        },
+        "source_urls": [
+          {
+            "sha256": "023900618fbf789dba364f38f184a0fe2d3ebad2b2ab06003ffd2d1ee2d5461c",
+            "uri": "https://github.com/GNOME/libxslt/archive/refs/tags/v1.1.45.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxslt"
+          }
+        ],
+        "upstream_version": "1.1.45"
+      },
+      {
+        "name": "gettext",
+        "purl": "pkg:gnu/gettext@0.26",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "gettext"
+        },
+        "source_urls": [
+          {
+            "sha256": "d1fb86e260cfe7da6031f94d2e44c0da55903dbae0a2fa0fae78c91ae1b56f00",
+            "uri": "gs://minimal-staging-archives/gettext-0.26.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gettext"
+          }
+        ],
+        "upstream_version": "0.26"
+      },
+      {
+        "name": "inetutils",
+        "purl": "pkg:gnu/inetutils",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "inetutils"
+        },
+        "source_urls": [
+          {
+            "sha256": "68bedbfeaf73f7d86be2a7d99bcfbd4093d829f52770893919ae174c0b2357ca",
+            "uri": "gs://minimal-staging-archives/inetutils-2.6.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/inetutils"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "grype",
+        "purl": "pkg:github/anchore/grype@0.108.0",
+        "repology_project": "grype",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "anchore",
+          "repo": "grype"
+        },
+        "source_urls": [
+          {
+            "sha256": "831a9d2e10e43c42974b21364f2f9bc29535d7c447f5ab6677790aa09d9c8d14",
+            "uri": "gs://minimal-staging-archives/anchore/grype/v0.108.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/grype"
+          }
+        ],
+        "upstream_version": "0.108.0"
+      },
+      {
+        "name": "ca-certificates",
+        "purl": "pkg:generic/minimal.dev/ca-certificates",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "4b080b63089e05eede8f2f653c6b8329d2a8332285b393bb7844dc8c8d9d062d",
+            "uri": "gs://minimal-staging-archives/ssl-certs-complete.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/ca-certificates"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "maven",
+        "purl": "pkg:generic/minimal.dev/maven@3.9.12",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "fa2c9948729296c23afd18fd01a90f62cdda09a46191b54a8bc3764c2eee812e",
+            "uri": "https://archive.apache.org/dist/maven/maven-3/3.9.12/binaries/apache-maven-3.9.12-bin.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/maven"
+          }
+        ],
+        "upstream_version": "3.9.12"
+      },
+      {
+        "name": "util-linux",
+        "purl": "pkg:github/util-linux/util-linux@2.41.2",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "util-linux",
+          "repo": "util-linux"
+        },
+        "source_urls": [
+          {
+            "sha256": "6062a1d89b571a61932e6fc0211f36060c4183568b81ee866cf363bce9f6583e",
+            "uri": "gs://minimal-staging-archives/util-linux-2.41.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/util-linux"
+          }
+        ],
+        "upstream_version": "2.41.2"
+      },
+      {
+        "name": "python",
+        "purl": "pkg:github/python/cpython@3.13.7",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "python",
+          "repo": "cpython"
+        },
+        "source_urls": [
+          {
+            "sha256": "5462f9099dfd30e238def83c71d91897d8caa5ff6ebc7a50f14d4802cdaaa79a",
+            "uri": "gs://minimal-staging-archives/Python-3.13.7.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/python"
+          }
+        ],
+        "upstream_version": "3.13.7"
+      },
+      {
+        "name": "bun",
+        "purl": "pkg:github/oven-sh/bun@1.3.9",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "oven-sh",
+          "repo": "bun"
+        },
+        "source_urls": [
+          {
+            "sha256": "4680e80e44e32aa718560ceae85d22ecfbf2efb8f3641782e35e4b7efd65a1aa",
+            "uri": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.9/bun-linux-x64.zip"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bun"
+          }
+        ],
+        "upstream_version": "1.3.9"
+      },
+      {
+        "name": "gradle",
+        "purl": "pkg:github/gradle/gradle@9.3.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "gradle",
+          "repo": "gradle"
+        },
+        "source_urls": [
+          {
+            "sha256": "b266d5ff6b90eada6dc3b20cb090e3731302e553a27c5d3e4df1f0d76beaff06",
+            "uri": "https://services.gradle.org/distributions/gradle-9.3.1-bin.zip"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gradle"
+          }
+        ],
+        "upstream_version": "9.3.1"
+      },
+      {
+        "name": "boost",
+        "purl": "pkg:github/boostorg/boost",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "boostorg",
+          "repo": "boost"
+        },
+        "source_urls": [
+          {
+            "sha256": "875cc413afa6b86922b6df3b2ad23dec4511c8a741753e57c1129e7fa753d700",
+            "uri": "gs://minimal-staging-archives/boost-1.89.0-b2-nodocs.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/boost"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "setuptools",
+        "purl": "pkg:github/pypa/setuptools",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pypa",
+          "repo": "setuptools"
+        },
+        "source_urls": [
+          {
+            "sha256": "f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c",
+            "uri": "gs://minimal-staging-archives/setuptools-80.9.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/setuptools"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "cython",
+        "purl": "pkg:github/cython/cython@3.2.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "cython",
+          "repo": "cython"
+        },
+        "source_urls": [
+          {
+            "sha256": "2be1e4d0cbdf7f4cd4d9b8284a034e1989b59fd060f6bd4d24bf3729394d2ed8",
+            "uri": "https://github.com/cython/cython/releases/download/3.2.1/cython-3.2.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/cython"
+          }
+        ],
+        "upstream_version": "3.2.1"
+      },
+      {
+        "name": "flit-core",
+        "purl": "pkg:github/pypa/flit@3.12.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pypa",
+          "repo": "flit"
+        },
+        "source_urls": [
+          {
+            "sha256": "18f63100d6f94385c6ed57a72073443e1a71a4acb4339491615d0f16d6ff01b2",
+            "uri": "https://pypi.org/packages/source/f/flit-core/flit_core-3.12.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/flit-core"
+          }
+        ],
+        "upstream_version": "3.12.0"
+      },
+      {
+        "name": "pyproject-hooks",
+        "purl": "pkg:github/pypa/pyproject-hooks@1.2.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pypa",
+          "repo": "pyproject-hooks"
+        },
+        "source_urls": [
+          {
+            "sha256": "1e859bd5c40fae9448642dd871adf459e5e2084186e8d2c2a79a824c970da1f8",
+            "uri": "https://files.pythonhosted.org/packages/source/p/pyproject-hooks/pyproject_hooks-1.2.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pyproject-hooks"
+          }
+        ],
+        "upstream_version": "1.2.0"
+      },
+      {
+        "name": "meson",
+        "purl": "pkg:github/mesonbuild/meson@1.10.1",
+        "repology_project": "meson",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "mesonbuild",
+          "repo": "meson"
+        },
+        "source_urls": [
+          {
+            "sha256": "3d4768a76fc63dc4c562edc7892de17b54dfaa7309d148e805b0d763bc085e00",
+            "uri": "gs://minimal-staging-archives/mesonbuild/meson/1.10.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/meson"
+          }
+        ],
+        "upstream_version": "1.10.1"
+      },
+      {
+        "name": "deno",
+        "purl": "pkg:github/denoland/deno@2.6.9",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "denoland",
+          "repo": "deno"
+        },
+        "source_urls": [
+          {
+            "sha256": "8a677a4b0cea1a25aaecfc70d6c6a288f9ad69af0a92e9e9d513cabaaf3c688f",
+            "uri": "https://github.com/denoland/deno/releases/download/v2.6.9/deno-x86_64-unknown-linux-gnu.zip"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/deno"
+          }
+        ],
+        "upstream_version": "2.6.9"
+      },
+      {
+        "name": "expect",
+        "purl": "pkg:generic/minimal.dev/expect",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "49a7da83b0bdd9f46d04a04deec19c7767bb9a323e40c4781f89caf760b92c34",
+            "uri": "gs://minimal-staging-archives/expect5.45.4.tar.gz"
+          },
+          {
+            "sha256": "ab5fc0af9e2e0f80d7623c1a3a3dbeb1da3d8c9134276792199df401f9eb2cec",
+            "uri": "gs://minimal-staging-archives/expect-5.45.4-gcc15-1.patch"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/expect"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "xcb-proto",
+        "purl": "pkg:generic/minimal.dev/xcb-proto@1.17.0",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "2c1bacd2110f4799f74de6ebb714b94cf6f80fb112316b1219480fd22562148c",
+            "uri": "gs://minimal-staging-archives/xcb-proto-1.17.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/xcb-proto"
+          }
+        ],
+        "upstream_version": "1.17.0"
+      },
+      {
+        "name": "bc",
+        "purl": "pkg:gnu/bc@7.0.3",
+        "repology_project": "bc-gh",
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "bc"
+        },
+        "source_urls": [
+          {
+            "sha256": "91eb74caed0ee6655b669711a4f350c25579778694df248e28363318e03c7fc4",
+            "uri": "gs://minimal-staging-archives/bc-7.0.3.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bc"
+          }
+        ],
+        "upstream_version": "7.0.3"
+      },
+      {
+        "name": "libtool",
+        "purl": "pkg:gnu/libtool@2.5.4",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "libtool"
+        },
+        "source_urls": [
+          {
+            "sha256": "f81f5860666b0bc7d84baddefa60d1cb9fa6fceb2398cc3baca6afaa60266675",
+            "uri": "gs://minimal-staging-archives/libtool-2.5.4.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libtool"
+          }
+        ],
+        "upstream_version": "2.5.4"
+      },
+      {
+        "name": "check",
+        "purl": "pkg:github/libcheck/check",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libcheck",
+          "repo": "check"
+        },
+        "source_urls": [
+          {
+            "sha256": "a8de4e0bacfb4d76dd1c618ded263523b53b85d92a146d8835eb1a52932fa20a",
+            "uri": "gs://minimal-staging-archives/check-0.15.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/check"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "libuv",
+        "purl": "pkg:github/libuv/libuv@1.52.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libuv",
+          "repo": "libuv"
+        },
+        "source_urls": [
+          {
+            "sha256": "eee139c05f7c868f5ae7a54b1e155fd5b6ed13a22329958d2ba711faad016353",
+            "uri": "gs://minimal-staging-archives/libuv/libuv/v1.52.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libuv"
+          }
+        ],
+        "upstream_version": "1.52.0"
+      },
+      {
+        "name": "node",
+        "purl": "pkg:github/nodejs/node@24.9.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "nodejs",
+          "repo": "node"
+        },
+        "source_urls": [
+          {
+            "sha256": "f17bc4cb01f59098c34a288c1bb109a778867c14eeb0ebbd608d0617b1193bbf",
+            "uri": "gs://minimal-staging-archives/node-v24.9.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/node"
+          }
+        ],
+        "upstream_version": "24.9.0"
+      },
+      {
+        "name": "pnpm",
+        "purl": "pkg:github/pnpm/pnpm@10.15.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pnpm",
+          "repo": "pnpm"
+        },
+        "source_urls": [
+          {
+            "sha256": "8c53af02ae3ec1fb0ae75377f8d4d6217c2d7cbe6f03c16350cabf7493de6eff",
+            "uri": "https://registry.npmjs.org/pnpm/-/pnpm-10.15.1.tgz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pnpm"
+          }
+        ],
+        "upstream_version": "10.15.1"
+      },
+      {
+        "name": "packaging",
+        "purl": "pkg:github/pypa/packaging@25.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pypa",
+          "repo": "packaging"
+        },
+        "source_urls": [
+          {
+            "sha256": "d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f",
+            "uri": "https://files.pythonhosted.org/packages/source/p/packaging/packaging-25.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/packaging"
+          }
+        ],
+        "upstream_version": "25.0"
+      },
+      {
+        "name": "build",
+        "purl": "pkg:github/pypa/build@1.3.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pypa",
+          "repo": "build"
+        },
+        "source_urls": [
+          {
+            "sha256": "698edd0ea270bde950f53aed21f3a0135672206f3911e0176261a31e0e07b397",
+            "uri": "https://files.pythonhosted.org/packages/source/b/build/build-1.3.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/build"
+          }
+        ],
+        "upstream_version": "1.3.0"
+      },
+      {
+        "name": "pyproject-metadata",
+        "purl": "pkg:github/pypa/pyproject-metadata@0.9.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "pypa",
+          "repo": "pyproject-metadata"
+        },
+        "source_urls": [
+          {
+            "sha256": "b8b2253dd1b7062b78cf949a115f02ba7fa4114aabe63fa10528e9e1a954a816",
+            "uri": "https://files.pythonhosted.org/packages/source/p/pyproject-metadata/pyproject_metadata-0.9.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pyproject-metadata"
+          }
+        ],
+        "upstream_version": "0.9.1"
+      },
+      {
+        "name": "android-sdk",
+        "purl": "pkg:generic/minimal.dev/android-sdk@11076708",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "2d2d50857e4eb553af5a6dc3ad507a17adf43d115264b1afc116f95c92e5e258",
+            "uri": "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/android-sdk"
+          }
+        ],
+        "upstream_version": "11076708"
+      },
+      {
+        "name": "caddy",
+        "purl": "pkg:github/caddyserver/caddy@2.10.2",
+        "repology_project": "caddy",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "caddyserver",
+          "repo": "caddy"
+        },
+        "source_urls": [
+          {
+            "sha256": "f63f46b7ae68ced0a5c2e31df1b6dfc7656117d162a1bc7fed4bd4afd14ddc8f",
+            "uri": "gs://minimal-staging-archives/caddyserver/caddy/v2.10.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/caddy"
+          }
+        ],
+        "upstream_version": "2.10.2"
+      },
+      {
+        "name": "ninja",
+        "purl": "pkg:github/ninja-build/ninja@1.13.2",
+        "repology_project": "ninja",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "ninja-build",
+          "repo": "ninja"
+        },
+        "source_urls": [
+          {
+            "sha256": "974d6b2f4eeefa25625d34da3cb36bdcebe7fbce40f4c16ac0835fd1c0cbae17",
+            "uri": "gs://minimal-staging-archives/ninja-build/ninja/v1.13.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/ninja"
+          }
+        ],
+        "upstream_version": "1.13.2"
+      },
+      {
+        "name": "patchelf",
+        "purl": "pkg:github/NixOS/patchelf",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "NixOS",
+          "repo": "patchelf"
+        },
+        "source_urls": [
+          {
+            "sha256": "8ed5382f1ac423328b1d50b2c89d96dbab156de0285d003ff51940975db66572",
+            "uri": "https://github.com/NixOS/patchelf/archive/b49de1b3384e7928bf0df9a889fe5a4e7b3fbddf.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/patchelf"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "abseil-cpp",
+        "purl": "pkg:github/abseil/abseil-cpp",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "abseil",
+          "repo": "abseil-cpp"
+        },
+        "source_urls": [
+          {
+            "sha256": "1692f77d1739bacf3f94337188b78583cf09bab7e420d2dc6c5605a4f86785a1",
+            "uri": "https://github.com/abseil/abseil-cpp/releases/download/20250814.1/abseil-cpp-20250814.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/abseil-cpp"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "libdrm",
+        "purl": "pkg:generic/minimal.dev/libdrm@2.4.131",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "45ba9983b51c896406a3d654de81d313b953b76e6391e2797073d543c5f617d5",
+            "uri": "gs://minimal-staging-archives/libdrm-2.4.131.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libdrm"
+          }
+        ],
+        "upstream_version": "2.4.131"
+      },
+      {
+        "name": "pixman",
+        "purl": "pkg:generic/minimal.dev/pixman@0.46.4",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "d09c44ebc3bd5bee7021c79f922fe8fb2fb57f7320f55e97ff9914d2346a591c",
+            "uri": "gs://minimal-staging-archives/pixman-0.46.4.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pixman"
+          }
+        ],
+        "upstream_version": "0.46.4"
+      },
+      {
+        "name": "fribidi",
+        "purl": "pkg:github/fribidi/fribidi@1.0.16",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "fribidi",
+          "repo": "fribidi"
+        },
+        "source_urls": [
+          {
+            "sha256": "1b1cde5b235d40479e91be2f0e88a309e3214c8ab470ec8a2744d82a5a9ea05c",
+            "uri": "gs://minimal-staging-archives/fribidi-1.0.16.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/fribidi"
+          }
+        ],
+        "upstream_version": "1.0.16"
+      },
+      {
+        "name": "onetbb",
+        "purl": "pkg:github/uxlfoundation/oneTBB@2022.3.0",
+        "repology_project": "onetbb",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "uxlfoundation",
+          "repo": "oneTBB"
+        },
+        "source_urls": [
+          {
+            "sha256": "01598a46c1162c27253a0de0236f520fd8ee8166e9ebb84a4243574f88e6e50a",
+            "uri": "gs://minimal-staging-archives/uxlfoundation/oneTBB/v2022.3.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/onetbb"
+          }
+        ],
+        "upstream_version": "2022.3.0"
+      },
+      {
+        "name": "protobuf",
+        "purl": "pkg:github/protocolbuffers/protobuf",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "protocolbuffers",
+          "repo": "protobuf"
+        },
+        "source_urls": [
+          {
+            "sha256": "9dfdf08129f025a6c5802613b8ee1395044fecb71d38210ca59ecad283ef68bb",
+            "uri": "https://github.com/protocolbuffers/protobuf/releases/download/v32.0/protobuf-32.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/protobuf"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "meson-python",
+        "purl": "pkg:github/mesonbuild/meson-python@0.18.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "mesonbuild",
+          "repo": "meson-python"
+        },
+        "source_urls": [
+          {
+            "sha256": "c56a99ec9df669a40662fe46960321af6e4b14106c14db228709c1628e23848d",
+            "uri": "https://files.pythonhosted.org/packages/source/m/meson_python/meson_python-0.18.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/meson-python"
+          }
+        ],
+        "upstream_version": "0.18.0"
+      },
+      {
+        "name": "numpy",
+        "purl": "pkg:github/numpy/numpy@2.3.5",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "numpy",
+          "repo": "numpy"
+        },
+        "source_urls": [
+          {
+            "sha256": "784db1dcdab56bf0517743e746dfb0f885fc68d948aba86eeec2cba234bdf1c0",
+            "uri": "https://files.pythonhosted.org/packages/source/n/numpy/numpy-2.3.5.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/numpy"
+          }
+        ],
+        "upstream_version": "2.3.5"
+      },
+      {
+        "name": "libfuse",
+        "purl": "pkg:github/libfuse/libfuse@3.18.1",
+        "repology_project": "libfuse",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libfuse",
+          "repo": "libfuse"
+        },
+        "source_urls": [
+          {
+            "sha256": "dd395c88f29c7540bbdd0b830260ab8092ccb241bb6e66f603643f715fb9322c",
+            "uri": "gs://minimal-staging-archives/libfuse/libfuse/fuse-3.18.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libfuse"
+          }
+        ],
+        "upstream_version": "3.18.1"
+      },
+      {
+        "name": "xorgproto",
+        "purl": "pkg:generic/minimal.dev/xorgproto@2025.1",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "56898c716c0578df8a2d828c9c3e5c528277705c0484381a81960fe1a67668e8",
+            "uri": "gs://minimal-staging-archives/xorgproto-2025.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/xorgproto"
+          }
+        ],
+        "upstream_version": "2025.1"
+      },
+      {
+        "name": "libxau",
+        "purl": "pkg:generic/minimal.dev/libxau@1.0.12",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "74d0e4dfa3d39ad8939e99bda37f5967aba528211076828464d2777d477fc0fb",
+            "uri": "gs://minimal-staging-archives/libXau-1.0.12.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxau"
+          }
+        ],
+        "upstream_version": "1.0.12"
+      },
+      {
+        "name": "libxdmcp",
+        "purl": "pkg:generic/minimal.dev/libxdmcp@1.1.5",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "d8a5222828c3adab70adf69a5583f1d32eb5ece04304f7f8392b6a353aa2228c",
+            "uri": "gs://minimal-staging-archives/libXdmcp-1.1.5.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxdmcp"
+          }
+        ],
+        "upstream_version": "1.1.5"
+      },
+      {
+        "name": "libxcb",
+        "purl": "pkg:generic/minimal.dev/libxcb@1.17.0",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "599ebf9996710fea71622e6e184f3a8ad5b43d0e5fa8c4e407123c88a59a6d55",
+            "uri": "gs://minimal-staging-archives/libxcb-1.17.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxcb"
+          }
+        ],
+        "upstream_version": "1.17.0"
+      },
+      {
+        "name": "libxshmfence",
+        "purl": "pkg:generic/minimal.dev/libxshmfence@1.3.3",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "d4a4df096aba96fea02c029ee3a44e11a47eb7f7213c1a729be83e85ec3fde10",
+            "uri": "gs://minimal-staging-archives/libxshmfence-1.3.3.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxshmfence"
+          }
+        ],
+        "upstream_version": "1.3.3"
+      },
+      {
+        "name": "libx11",
+        "purl": "pkg:generic/minimal.dev/libx11@1.8.12",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "fa026f9bb0124f4d6c808f9aef4057aad65e7b35d8ff43951cef0abe06bb9a9a",
+            "uri": "gs://minimal-staging-archives/libX11-1.8.12.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libx11"
+          }
+        ],
+        "upstream_version": "1.8.12"
+      },
+      {
+        "name": "libxext",
+        "purl": "pkg:generic/minimal.dev/libxext@1.3.6",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "edb59fa23994e405fdc5b400afdf5820ae6160b94f35e3dc3da4457a16e89753",
+            "uri": "gs://minimal-staging-archives/libXext-1.3.6.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxext"
+          }
+        ],
+        "upstream_version": "1.3.6"
+      },
+      {
+        "name": "libxrender",
+        "purl": "pkg:generic/minimal.dev/libxrender@0.9.12",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "b832128da48b39c8d608224481743403ad1691bf4e554e4be9c174df171d1b97",
+            "uri": "gs://minimal-staging-archives/libXrender-0.9.12.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxrender"
+          }
+        ],
+        "upstream_version": "0.9.12"
+      },
+      {
+        "name": "libxrandr",
+        "purl": "pkg:generic/minimal.dev/libxrandr@1.5.4",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "1ad5b065375f4a85915aa60611cc6407c060492a214d7f9daf214be752c3b4d3",
+            "uri": "gs://minimal-staging-archives/libXrandr-1.5.4.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxrandr"
+          }
+        ],
+        "upstream_version": "1.5.4"
+      },
+      {
+        "name": "libxfixes",
+        "purl": "pkg:generic/minimal.dev/libxfixes@6.0.1",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "b695f93cd2499421ab02d22744458e650ccc88c1d4c8130d60200213abc02d58",
+            "uri": "gs://minimal-staging-archives/libXfixes-6.0.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxfixes"
+          }
+        ],
+        "upstream_version": "6.0.1"
+      },
+      {
+        "name": "libxdamage",
+        "purl": "pkg:generic/minimal.dev/libxdamage@1.1.6",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "52733c1f5262fca35f64e7d5060c6fcd81a880ba8e1e65c9621cf0727afb5d11",
+            "uri": "gs://minimal-staging-archives/libXdamage-1.1.6.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxdamage"
+          }
+        ],
+        "upstream_version": "1.1.6"
+      },
+      {
+        "name": "mesa",
+        "purl": "pkg:generic/minimal.dev/mesa@25.3.5",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "be472413475082df945e0f9be34f5af008baa03eb357e067ce5a611a2d44c44b",
+            "uri": "gs://minimal-staging-archives/mesa-25.3.5.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/mesa"
+          }
+        ],
+        "upstream_version": "25.3.5"
+      },
+      {
+        "name": "libxcomposite",
+        "purl": "pkg:generic/minimal.dev/libxcomposite@0.4.6",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "fe40bcf0ae1a09070eba24088a5eb9810efe57453779ec1e20a55080c6dc2c87",
+            "uri": "gs://minimal-staging-archives/libXcomposite-0.4.6.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxcomposite"
+          }
+        ],
+        "upstream_version": "0.4.6"
+      },
+      {
+        "name": "glib",
+        "purl": "pkg:generic/minimal.dev/glib@2.86.4",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "d4e2b5d791d5015ffd8c6971ad8e975a0a55c1a14926cdb25cf843ff00682260",
+            "uri": "gs://minimal-staging-archives/glib-2.86.4.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/glib"
+          }
+        ],
+        "upstream_version": "2.86.4"
+      },
+      {
+        "name": "harfbuzz",
+        "purl": "pkg:github/harfbuzz/harfbuzz@12.3.2",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "harfbuzz",
+          "repo": "harfbuzz"
+        },
+        "source_urls": [
+          {
+            "sha256": "6f6db164359a2da5a84ef826615b448b33e6306067ad829d85d5b0bf936f1bb8",
+            "uri": "gs://minimal-staging-archives/harfbuzz-12.3.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/harfbuzz"
+          }
+        ],
+        "upstream_version": "12.3.2"
+      },
+      {
+        "name": "atk",
+        "purl": "pkg:generic/minimal.dev/atk@2.38.0",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "ac4de2a4ef4bd5665052952fe169657e65e895c5057dffb3c2a810f6191a0c36",
+            "uri": "gs://minimal-staging-archives/atk-2.38.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/atk"
+          }
+        ],
+        "upstream_version": "2.38.0"
+      },
+      {
+        "name": "sshfs",
+        "purl": "pkg:github/libfuse/sshfs@3.7.5",
+        "repology_project": "sshfs",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libfuse",
+          "repo": "sshfs"
+        },
+        "source_urls": [
+          {
+            "sha256": "0e45db63c2d00919db3174134fa234c6e0682d6fe573c46312d1d53d1d61a8bb",
+            "uri": "gs://minimal-staging-archives/libfuse/sshfs/sshfs-3.7.5.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/sshfs"
+          }
+        ],
+        "upstream_version": "3.7.5"
+      },
+      {
+        "name": "dbus",
+        "purl": "pkg:generic/minimal.dev/dbus@1.16.2",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "0ba2a1a4b16afe7bceb2c07e9ce99a8c2c3508e5dec290dbb643384bd6beb7e2",
+            "uri": "gs://minimal-staging-archives/dbus-1.16.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/dbus"
+          }
+        ],
+        "upstream_version": "1.16.2"
+      },
+      {
+        "name": "at-spi2-core",
+        "purl": "pkg:generic/minimal.dev/at-spi2-core@2.54.2",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "510e1760a27ce9ce27a300f116d9b8a7dc8eac1f78714915685833643cb36236",
+            "uri": "gs://minimal-staging-archives/at-spi2-core-2.54.2.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/at-spi2-core"
+          }
+        ],
+        "upstream_version": "2.54.2"
+      },
+      {
+        "name": "clipper2",
+        "purl": "pkg:github/AngusJohnson/Clipper2@2.0.1",
+        "repology_project": "clipper2",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "AngusJohnson",
+          "repo": "Clipper2"
+        },
+        "source_urls": [
+          {
+            "sha256": "2a3693aceab4aed3e39b743e038d87701acc53cf05ed7b2013aab3e0aec5287e",
+            "uri": "gs://minimal-staging-archives/AngusJohnson/Clipper2/Clipper2_2.0.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/clipper2"
+          }
+        ],
+        "upstream_version": "2.0.1"
+      },
+      {
+        "name": "manifold",
+        "purl": "pkg:github/elalish/manifold@3.4.0",
+        "repology_project": "manifold-geometry-library",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "elalish",
+          "repo": "manifold"
+        },
+        "source_urls": [
+          {
+            "sha256": "03fb429c2080363cadc6e9a34ecd6ba7948c74d99baffb3df381546effaa6907",
+            "uri": "gs://minimal-staging-archives/elalish/manifold/manifold-3.4.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/manifold"
+          }
+        ],
+        "upstream_version": "3.4.0"
+      },
+      {
+        "name": "nghttp2",
+        "purl": "pkg:github/nghttp2/nghttp2@1.68.0",
+        "repology_project": "nghttp2",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "nghttp2",
+          "repo": "nghttp2"
+        },
+        "source_urls": [
+          {
+            "sha256": "07dfdadf670193baa7d6c23a007afa6ff2d3e4301b2a701c41dfd053e3468f09",
+            "uri": "https://github.com/nghttp2/nghttp2/archive/refs/tags/v1.68.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/nghttp2"
+          }
+        ],
+        "upstream_version": "1.68.0"
+      },
+      {
+        "name": "libevent",
+        "purl": "pkg:github/libevent/libevent@2.1.12-stable",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "libevent",
+          "repo": "libevent"
+        },
+        "source_urls": [
+          {
+            "sha256": "92e6de1be9ec176428fd2367677e61ceffc2ee1cb119035037a27d346b0403bb",
+            "uri": "https://github.com/libevent/libevent/releases/download/release-2.1.12-stable/libevent-2.1.12-stable.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libevent"
+          }
+        ],
+        "upstream_version": "2.1.12-stable"
+      },
+      {
+        "name": "tmux",
+        "purl": "pkg:github/tmux/tmux@3.6a",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "tmux",
+          "repo": "tmux"
+        },
+        "source_urls": [
+          {
+            "sha256": "cd8d97f344cd2faa89e41358428b3ada883e4c72fd7d4f43ccac93daec1442eb",
+            "uri": "gs://minimal-staging-archives/tmux/tmux/3.6a.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/tmux"
+          }
+        ],
+        "upstream_version": "3.6a"
+      },
+      {
+        "name": "fzf",
+        "purl": "pkg:github/junegunn/fzf@0.67.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "junegunn",
+          "repo": "fzf"
+        },
+        "source_urls": [
+          {
+            "sha256": "da72936dd23045346769dbf233a7a1fa6b4cfe4f0e856b279821598ce8f692af",
+            "uri": "gs://minimal-staging-archives/junegunn/fzf/v0.67.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/fzf"
+          }
+        ],
+        "upstream_version": "0.67.0"
+      },
+      {
+        "name": "libidn2",
+        "purl": "pkg:gnu/libidn2",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "libidn2"
+        },
+        "source_urls": [
+          {
+            "sha256": "f557911bf6171621e1f72ff35f5b1825bb35b52ed45325dcdee931e5d3c0787a",
+            "uri": "gs://minimal-staging-archives/libidn2-2.3.8.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libidn2"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "libpsl",
+        "purl": "pkg:github/rockdaboot/libpsl",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "rockdaboot",
+          "repo": "libpsl"
+        },
+        "source_urls": [
+          {
+            "sha256": "1dcc9ceae8b128f3c0b3f654decd0e1e891afc6ff81098f227ef260449dae208",
+            "uri": "gs://minimal-staging-archives/libpsl-0.21.5.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libpsl"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "curl",
+        "purl": "pkg:github/curl/curl@8.17.0",
+        "repology_project": "curl",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "curl",
+          "repo": "curl"
+        },
+        "source_urls": [
+          {
+            "sha256": "955f6e729ad6b3566260e8fef68620e76ba3c31acf0a18524416a185acf77992",
+            "uri": "gs://minimal-staging-archives/curl-8.17.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/curl"
+          }
+        ],
+        "upstream_version": "8.17.0"
+      },
+      {
+        "name": "rust",
+        "purl": "pkg:github/rust-lang/rust@1.93.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "rust-lang",
+          "repo": "rust"
+        },
+        "source_urls": [
+          {
+            "sha256": "848c9171212c998c069e6979a205a1a44fa3235a463696d62e24701c83596ce0",
+            "uri": "gs://minimal-staging-archives/rustc-1.93.1-src.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/rust"
+          }
+        ],
+        "upstream_version": "1.93.1"
+      },
+      {
+        "name": "uv",
+        "purl": "pkg:github/astral-sh/uv",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "astral-sh",
+          "repo": "uv"
+        },
+        "source_urls": [
+          {
+            "sha256": "79246789f62f62886815d647af39760c8fe9ab0724f149e02f397b85cf35428b",
+            "uri": "gs://minimal-staging-archives/uv-0.9.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/uv"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "diffoscope",
+        "purl": "pkg:generic/minimal.dev/diffoscope",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "eeaadcb5547edbb52045b0617be5ab5eda77a63d9a72ad1437b14ee84480c19f",
+            "uri": "gs://minimal-staging-archives/diffoscope-306.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/diffoscope"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "jaq",
+        "purl": "pkg:github/01mf02/jaq@2.3.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "01mf02",
+          "repo": "jaq"
+        },
+        "source_urls": [
+          {
+            "sha256": "80fae7c5bbbc244580ca77d3e5a4fc6e9c3ea08a5526d562e3c5300edd44fe8b",
+            "uri": "gs://minimal-staging-archives/01mf02/jaq/v2.3.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/jaq"
+          }
+        ],
+        "upstream_version": "2.3.0"
+      },
+      {
+        "name": "difftastic",
+        "purl": "pkg:github/Wilfred/difftastic@0.67.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "Wilfred",
+          "repo": "difftastic"
+        },
+        "source_urls": [
+          {
+            "sha256": "a6a15d6ca9f9ab7c034d1770417d1829deb3fbe9dcf4731b9cba867e50e78437",
+            "uri": "gs://minimal-staging-archives/Wilfred/difftastic/0.67.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/difftastic"
+          }
+        ],
+        "upstream_version": "0.67.0"
+      },
+      {
+        "name": "prek",
+        "purl": "pkg:github/j178/prek@0.3.2",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "j178",
+          "repo": "prek"
+        },
+        "source_urls": [
+          {
+            "sha256": "1e17e690d65b8d84b9d23adff8189a6b0667e3484d65f5add0acf7e8a787beec",
+            "uri": "gs://minimal-staging-archives/j178/prek/v0.3.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/prek"
+          }
+        ],
+        "upstream_version": "0.3.2"
+      },
+      {
+        "name": "zellij",
+        "purl": "pkg:github/zellij-org/zellij@0.43.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "zellij-org",
+          "repo": "zellij"
+        },
+        "source_urls": [
+          {
+            "sha256": "e9fd24190869be6e9e8d731df2ccd0b3b1dd368ae9dbb9d620ec905b83e325ec",
+            "uri": "gs://minimal-staging-archives/zellij-org/zellij/v0.43.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/zellij"
+          }
+        ],
+        "upstream_version": "0.43.1"
+      },
+      {
+        "name": "ut",
+        "purl": "pkg:github/ksdme/ut@0.6.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "ksdme",
+          "repo": "ut"
+        },
+        "source_urls": [
+          {
+            "sha256": "f9fd00d8913d15cae4f0124507cfdf95375be98a0d14522b5d58204dca0a0e69",
+            "uri": "gs://minimal-staging-archives/ksdme/ut/v0.6.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/ut"
+          }
+        ],
+        "upstream_version": "0.6.0"
+      },
+      {
+        "name": "nushell",
+        "purl": "pkg:github/nushell/nushell@0.110.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "nushell",
+          "repo": "nushell"
+        },
+        "source_urls": [
+          {
+            "sha256": "e4c95f743cea3d985ab90e03fd35707a46eef926d407ed363f994155c1ca5055",
+            "uri": "gs://minimal-staging-archives/nushell/nushell/0.110.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/nushell"
+          }
+        ],
+        "upstream_version": "0.110.0"
+      },
+      {
+        "name": "hex-patch",
+        "purl": "pkg:github/Etto48/HexPatch@1.12.5",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "Etto48",
+          "repo": "HexPatch"
+        },
+        "source_urls": [
+          {
+            "sha256": "089a87c1128483507bef4f89df5ea4e0a7ffe09210b3a9cfa687705f86ea621f",
+            "uri": "gs://minimal-staging-archives/Etto48/HexPatch/v1.12.5.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/hex-patch"
+          }
+        ],
+        "upstream_version": "1.12.5"
+      },
+      {
+        "name": "fd",
+        "purl": "pkg:github/sharkdp/fd@10.3.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "sharkdp",
+          "repo": "fd"
+        },
+        "source_urls": [
+          {
+            "sha256": "2edbc917a533053855d5b635dff368d65756ce6f82ddefd57b6c202622d791e9",
+            "uri": "gs://minimal-staging-archives/sharkdp/fd/v10.3.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/fd"
+          }
+        ],
+        "upstream_version": "10.3.0"
+      },
+      {
+        "name": "teamtype",
+        "purl": "pkg:github/teamtype/teamtype@0.9.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "teamtype",
+          "repo": "teamtype"
+        },
+        "source_urls": [
+          {
+            "sha256": "8503411b340f00456ac6c1d586637de35a35886b7addbf2cec06816e05bc9873",
+            "uri": "gs://minimal-staging-archives/teamtype/teamtype/v0.9.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/teamtype"
+          }
+        ],
+        "upstream_version": "0.9.1"
+      },
+      {
+        "name": "procs",
+        "purl": "pkg:github/dalance/procs@0.14.10",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "dalance",
+          "repo": "procs"
+        },
+        "source_urls": [
+          {
+            "sha256": "7b287ac253fd1d202b0ea6a9a8ba2ed97598cf8e7dfd539bd40e382c6dc6d350",
+            "uri": "gs://minimal-staging-archives/dalance/procs/v0.14.10.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/procs"
+          }
+        ],
+        "upstream_version": "0.14.10"
+      },
+      {
+        "name": "yazi",
+        "purl": "pkg:github/sxyazi/yazi@26.1.22",
+        "repology_project": "yazi",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "sxyazi",
+          "repo": "yazi"
+        },
+        "source_urls": [
+          {
+            "sha256": "83b8a1bf166bfcb54b44b966fa3f34afa7c55584bf81d29275a1cdd99d1c9c4c",
+            "uri": "gs://minimal-staging-archives/sxyazi/yazi/v26.1.22.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/yazi"
+          }
+        ],
+        "upstream_version": "26.1.22"
+      },
+      {
+        "name": "gurk",
+        "purl": "pkg:github/boxdot/gurk-rs@0.8.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "boxdot",
+          "repo": "gurk-rs"
+        },
+        "source_urls": [
+          {
+            "sha256": "08077c44f4cee3b5f2f31a0cc90d978e052a51677ed73af61419093ca154163f",
+            "uri": "gs://minimal-staging-archives/boxdot/gurk-rs/v0.8.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/gurk"
+          }
+        ],
+        "upstream_version": "0.8.1"
+      },
+      {
+        "name": "railway",
+        "purl": "pkg:github/railwayapp/cli@4.30.2",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "railwayapp",
+          "repo": "cli"
+        },
+        "source_urls": [
+          {
+            "sha256": "6bf10cdc6b57d025ee846c948633d9f596ea7d5842ed8edaa4e7af9fd58efd31",
+            "uri": "gs://minimal-staging-archives/railwayapp/cli/v4.30.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/railway"
+          }
+        ],
+        "upstream_version": "4.30.2"
+      },
+      {
+        "name": "weathr",
+        "purl": "pkg:github/Veirt/weathr@1.3.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "Veirt",
+          "repo": "weathr"
+        },
+        "source_urls": [
+          {
+            "sha256": "88eebe264fc874be24b0f250d19b48eaecf050b268af6f333ec1ce6da13a30f0",
+            "uri": "gs://minimal-staging-archives/Veirt/weathr/v1.3.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/weathr"
+          }
+        ],
+        "upstream_version": "1.3.0"
+      },
+      {
+        "name": "dust",
+        "purl": "pkg:github/bootandy/dust@1.2.4",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "bootandy",
+          "repo": "dust"
+        },
+        "source_urls": [
+          {
+            "sha256": "2f6768534bd01727234e67f1dd3754c9547aa18c715f6ee52094e881ebac50e3",
+            "uri": "gs://minimal-staging-archives/bootandy/dust/v1.2.4.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/dust"
+          }
+        ],
+        "upstream_version": "1.2.4"
+      },
+      {
+        "name": "delta",
+        "purl": "pkg:github/dandavison/delta@0.18.2",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "dandavison",
+          "repo": "delta"
+        },
+        "source_urls": [
+          {
+            "sha256": "64717c3b3335b44a252b8e99713e080cbf7944308b96252bc175317b10004f02",
+            "uri": "gs://minimal-staging-archives/dandavison/delta/0.18.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/delta"
+          }
+        ],
+        "upstream_version": "0.18.2"
+      },
+      {
+        "name": "biff",
+        "purl": "pkg:github/BurntSushi/biff@0.1.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "BurntSushi",
+          "repo": "biff"
+        },
+        "source_urls": [
+          {
+            "sha256": "459a9d4e085b1545e8974ed16a49f161f6efad2a7b14a4292fa28b49e6ef9292",
+            "uri": "gs://minimal-staging-archives/BurntSushi/biff/0.1.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/biff"
+          }
+        ],
+        "upstream_version": "0.1.1"
+      },
+      {
+        "name": "brush",
+        "purl": "pkg:github/reubeno/brush@0.3.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "reubeno",
+          "repo": "brush"
+        },
+        "source_urls": [
+          {
+            "sha256": "a0dac5cf7e9d8bced9bf28ed400955750ed6b7320d1154522a14f4a74e75a056",
+            "uri": "gs://minimal-staging-archives/reubeno/brush/brush-shell-v0.3.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/brush"
+          }
+        ],
+        "upstream_version": "0.3.0"
+      },
+      {
+        "name": "ripgrep",
+        "purl": "pkg:github/BurntSushi/ripgrep@15.1.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "BurntSushi",
+          "repo": "ripgrep"
+        },
+        "source_urls": [
+          {
+            "sha256": "046fa01a216793b8bd2750f9d68d4ad43986eb9c0d6122600f993906012972e8",
+            "uri": "gs://minimal-staging-archives/BurntSushi/ripgrep/15.1.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/ripgrep"
+          }
+        ],
+        "upstream_version": "15.1.0"
+      },
+      {
+        "name": "claude-code",
+        "purl": "pkg:generic/minimal.dev/claude-code",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "f967a4d06e16a32436b6329e2dbed459a9fa4d34f07635a1fb271b74f706c91f",
+            "uri": "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/2.1.37/linux-x64/claude"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/claude-code"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "imgcatr",
+        "purl": "pkg:github/SilinMeng0510/imgcatr@0.1.4",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "SilinMeng0510",
+          "repo": "imgcatr"
+        },
+        "source_urls": [
+          {
+            "sha256": "8e59a4ad83d1b474372fb8c5c1f11f07c742ea9443c26a9f02a4465140026f0e",
+            "uri": "gs://minimal-staging-archives/SilinMeng0510/imgcatr/v0.1.4.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/imgcatr"
+          }
+        ],
+        "upstream_version": "0.1.4"
+      },
+      {
+        "name": "hexhog",
+        "purl": "pkg:github/DVDTSB/hexhog@0.1.3",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "DVDTSB",
+          "repo": "hexhog"
+        },
+        "source_urls": [
+          {
+            "sha256": "5858dcb32b3f12647784c9a6ba2e107e157b9a82884bcfed3e994a70c7584b29",
+            "uri": "gs://minimal-staging-archives/DVDTSB/hexhog/v0.1.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/hexhog"
+          }
+        ],
+        "upstream_version": "0.1.3"
+      },
+      {
+        "name": "bottom",
+        "purl": "pkg:github/ClementTsang/bottom@0.12.3",
+        "repology_project": "bottom",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "ClementTsang",
+          "repo": "bottom"
+        },
+        "source_urls": [
+          {
+            "sha256": "1c70894f0eceb7034075959ff3080cf4706c11d7c012912c24e777abe4e62b70",
+            "uri": "gs://minimal-staging-archives/ClementTsang/bottom/0.12.3.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bottom"
+          }
+        ],
+        "upstream_version": "0.12.3"
+      },
+      {
+        "name": "bat",
+        "purl": "pkg:github/sharkdp/bat@0.26.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "sharkdp",
+          "repo": "bat"
+        },
+        "source_urls": [
+          {
+            "sha256": "4474de87e084953eefc1120cf905a79f72bbbf85091e30cf37c9214eafcaa9c9",
+            "uri": "gs://minimal-staging-archives/sharkdp/bat/v0.26.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/bat"
+          }
+        ],
+        "upstream_version": "0.26.1"
+      },
+      {
+        "name": "atuin",
+        "purl": "pkg:github/atuinsh/atuin@18.12.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "atuinsh",
+          "repo": "atuin"
+        },
+        "source_urls": [
+          {
+            "sha256": "8643a7df1e366e9ad3134514b9bcaf4d6440accb13c64340ec9ec1923d58eb6e",
+            "uri": "gs://minimal-staging-archives/atuinsh/atuin/v18.12.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/atuin"
+          }
+        ],
+        "upstream_version": "18.12.1"
+      },
+      {
+        "name": "eza",
+        "purl": "pkg:github/eza-community/eza@0.23.4",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "eza-community",
+          "repo": "eza"
+        },
+        "source_urls": [
+          {
+            "sha256": "9fbcad518b8a2095206ac385329ca62d216bf9fdc652dde2d082fcb37c309635",
+            "uri": "gs://minimal-staging-archives/eza-community/eza/v0.23.4.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/eza"
+          }
+        ],
+        "upstream_version": "0.23.4"
+      },
+      {
+        "name": "wget",
+        "purl": "pkg:gnu/wget@1.25.0",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GnuProject",
+          "name": "wget"
+        },
+        "source_urls": [
+          {
+            "sha256": "766e48423e79359ea31e41db9e5c289675947a7fcf2efdcedb726ac9d0da3784",
+            "uri": "gs://minimal-staging-archives/wget-1.25.0.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/wget"
+          }
+        ],
+        "upstream_version": "1.25.0"
+      },
+      {
+        "name": "nspr",
+        "purl": "pkg:generic/minimal.dev/nspr@4.38.2",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "e4092faeab77bdc9b32db1113e4215948ee768e26c4666db3b5a60b35f2c9105",
+            "uri": "gs://minimal-staging-archives/nspr-4.38.2.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/nspr"
+          }
+        ],
+        "upstream_version": "4.38.2"
+      },
+      {
+        "name": "nss",
+        "purl": "pkg:generic/minimal.dev/nss@3.121",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "cb3a8f8781bea78b7b8edd3afb7a2cb58e4881bb0160d189a39b98216ba7632e",
+            "uri": "gs://minimal-staging-archives/nss-3.121.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/nss"
+          }
+        ],
+        "upstream_version": "3.121"
+      },
+      {
+        "name": "git",
+        "purl": "pkg:github/git/git@2.52.0",
+        "repology_project": "git",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "git",
+          "repo": "git"
+        },
+        "source_urls": [
+          {
+            "sha256": "3cd8fee86f69a949cb610fee8cd9264e6873d07fa58411f6060b3d62729ed7c5",
+            "uri": "gs://minimal-staging-archives/git-2.52.0.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/git"
+          }
+        ],
+        "upstream_version": "2.52.0"
+      },
+      {
+        "name": "helix",
+        "purl": "pkg:github/helix-editor/helix@25.07.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "helix-editor",
+          "repo": "helix"
+        },
+        "source_urls": [
+          {
+            "sha256": "27c8bc3eba46bc7bab1e3629c6b28ff94882eeff17366b3ea69cd8ceffba7541",
+            "uri": "gs://minimal-staging-archives/helix-editor/helix/25.07.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/helix"
+          }
+        ],
+        "upstream_version": "25.07.1"
+      },
+      {
+        "name": "llama.cpp",
+        "purl": "pkg:github/ggml-org/llama.cpp@b8041",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "ggml-org",
+          "repo": "llama.cpp"
+        },
+        "source_urls": [
+          {
+            "sha256": "3d3015ce8326b22024e8d833be996f82c6444b232a804b2b983bf6e57ba65a2e",
+            "uri": "gs://minimal-staging-archives/ggml-org/llama.cpp/b8041.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/llama.cpp"
+          }
+        ],
+        "upstream_version": "b8041"
+      },
+      {
+        "name": "libxkbcommon",
+        "purl": "pkg:github/xkbcommon/libxkbcommon@1.13.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "xkbcommon",
+          "repo": "libxkbcommon"
+        },
+        "source_urls": [
+          {
+            "sha256": "aeb951964c2f7ecc08174cb5517962d157595e9e3f38fc4a130b91dc2f9fec18",
+            "uri": "gs://minimal-staging-archives/xkbcommon/libxkbcommon/xkbcommon-1.13.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/libxkbcommon"
+          }
+        ],
+        "upstream_version": "1.13.1"
+      },
+      {
+        "name": "vim",
+        "purl": "pkg:github/vim/vim",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "vim",
+          "repo": "vim"
+        },
+        "source_urls": [
+          {
+            "sha256": "d92c6550e8eca741085fce94e5b0d3d13d2c62fcb5b69bf5a6010d3114de4828",
+            "uri": "gs://minimal-staging-archives/vim-9.1.1629.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/vim"
+          }
+        ],
+        "upstream_version": null
+      },
+      {
+        "name": "htop",
+        "purl": "pkg:github/htop-dev/htop@3.4.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "htop-dev",
+          "repo": "htop"
+        },
+        "source_urls": [
+          {
+            "sha256": "af9ec878f831b7c27d33e775c668ec79d569aa781861c995a0fbadc1bdb666cf",
+            "uri": "gs://minimal-staging-archives/htop-dev/htop/3.4.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/htop"
+          }
+        ],
+        "upstream_version": "3.4.1"
+      },
+      {
+        "name": "jnv",
+        "purl": "pkg:github/ynqa/jnv@0.6.1",
+        "repology_project": "jnv",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "ynqa",
+          "repo": "jnv"
+        },
+        "source_urls": [
+          {
+            "sha256": "03223fb20a4c65c2610b94e6208b65098e6b3fe836d3deea75931a5c808f4869",
+            "uri": "gs://minimal-staging-archives/ynqa/jnv/v0.6.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/jnv"
+          }
+        ],
+        "upstream_version": "0.6.1"
+      },
+      {
+        "name": "fontconfig",
+        "purl": "pkg:generic/minimal.dev/fontconfig@2.17.1",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "9f5cae93f4fffc1fbc05ae99cdfc708cd60dfd6612ffc0512827025c026fa541",
+            "uri": "gs://minimal-staging-archives/fontconfig-2.17.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/fontconfig"
+          }
+        ],
+        "upstream_version": "2.17.1"
+      },
+      {
+        "name": "graphviz",
+        "purl": "pkg:generic/minimal.dev/graphviz@14.1.1",
+        "repology_project": "graphviz",
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "975f4b9a7a7a7b614900ecd12919ccbd36a680818cc6fc527389b93e919410f0",
+            "uri": "gs://minimal-staging-archives//graphviz-14.1.1.tar.bz2"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/graphviz"
+          }
+        ],
+        "upstream_version": "14.1.1"
+      },
+      {
+        "name": "ffmpeg",
+        "purl": "pkg:github/FFmpeg/FFmpeg@8.0.1",
+        "repology_project": "ffmpeg",
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "FFmpeg",
+          "repo": "FFmpeg"
+        },
+        "source_urls": [
+          {
+            "sha256": "05ee0b03119b45c0bdb4df654b96802e909e0a752f72e4fe3794f487229e5a41",
+            "uri": "https://ffmpeg.org/releases/ffmpeg-8.0.1.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/ffmpeg"
+          }
+        ],
+        "upstream_version": "8.0.1"
+      },
+      {
+        "name": "cairo",
+        "purl": "pkg:generic/minimal.dev/cairo@1.18.4",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "445ed8208a6e4823de1226a74ca319d3600e83f6369f99b14265006599c32ccb",
+            "uri": "gs://minimal-staging-archives/cairo-1.18.4.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/cairo"
+          }
+        ],
+        "upstream_version": "1.18.4"
+      },
+      {
+        "name": "pango",
+        "purl": "pkg:generic/minimal.dev/pango@1.56.4",
+        "repology_project": null,
+        "source_provenance": null,
+        "source_urls": [
+          {
+            "sha256": "17065e2fcc5f5a5bdbffc884c956bfc7c451a96e8c4fb2f8ad837c6413cb5a01",
+            "uri": "gs://minimal-staging-archives/pango-1.56.4.tar.xz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/pango"
+          }
+        ],
+        "upstream_version": "1.56.4"
+      },
+      {
+        "name": "agent-browser",
+        "purl": "pkg:github/vercel-labs/agent-browser@0.15.1",
+        "repology_project": null,
+        "source_provenance": {
+          "category": "GithubRepo",
+          "owner": "vercel-labs",
+          "repo": "agent-browser"
+        },
+        "source_urls": [
+          {
+            "sha256": "c30724a5fba1beb217ca5ce5ce9eee43b596dc72efe9ac29adb9af717795b6c9",
+            "uri": "gs://minimal-staging-archives/vercel-labs/agent-browser/v0.15.1.tar.gz"
+          },
+          {
+            "sha256": "",
+            "uri": "pkg://minimal.dev/agent-browser"
+          }
+        ],
+        "upstream_version": "0.15.1"
+      }
+    ],
+    "packages": [
+      "mpc",
+      "linux_headers",
+      "acl",
+      "make",
+      "findutils",
+      "m4",
+      "readline",
+      "attr",
+      "mpfr",
+      "lz4",
+      "xz",
+      "tar",
+      "file",
+      "pcre2",
+      "binutils",
+      "zlib",
+      "gmp",
+      "sed",
+      "diffutils",
+      "glibc",
+      "bash",
+      "grep",
+      "coreutils",
+      "resolver-quad8",
+      "bison",
+      "zstd",
+      "llvm",
+      "ncurses",
+      "gcc",
+      "redis",
+      "toolchain",
+      "libcap",
+      "gawk",
+      "gzip",
+      "bzip2",
+      "perl",
+      "base",
+      "hwdata",
+      "jq",
+      "btop",
+      "dejagnu",
+      "bash-completions",
+      "openblas",
+      "autoconf",
+      "automake",
+      "nano",
+      "time",
+      "alsa-lib",
+      "pciutils",
+      "gperf",
+      "gdbm",
+      "strace",
+      "go",
+      "duf",
+      "pulumi",
+      "gh",
+      "syft",
+      "mermaid-ascii",
+      "minimal-sshd",
+      "cosign",
+      "lcms2",
+      "oniguruma",
+      "jqfmt",
+      "varlock",
+      "bzip3",
+      "zig",
+      "libsodium",
+      "icu",
+      "grpcurl",
+      "libpng",
+      "freetype",
+      "patch",
+      "expat",
+      "trivy",
+      "sqlite",
+      "libunistring",
+      "openssl",
+      "socat",
+      "cmake",
+      "opencv",
+      "libyaml",
+      "nginx",
+      "jdk",
+      "iana-etc",
+      "xtrans",
+      "libxcrypt",
+      "shadow",
+      "screen",
+      "openjpeg",
+      "less",
+      "terraform",
+      "groff",
+      "libjpeg-turbo",
+      "glow",
+      "age",
+      "libffi",
+      "flex",
+      "tcl",
+      "pkgconf",
+      "cups",
+      "libpipeline",
+      "iproute2",
+      "tailscale",
+      "postgres",
+      "man-db",
+      "elfutils",
+      "libssh2",
+      "openssh",
+      "procps-ng",
+      "ghostscript",
+      "skopeo",
+      "libxml2",
+      "libxslt",
+      "gettext",
+      "inetutils",
+      "grype",
+      "ca-certificates",
+      "maven",
+      "util-linux",
+      "python",
+      "bun",
+      "gradle",
+      "boost",
+      "setuptools",
+      "cython",
+      "flit-core",
+      "pyproject-hooks",
+      "meson",
+      "deno",
+      "expect",
+      "xcb-proto",
+      "bc",
+      "libtool",
+      "check",
+      "libuv",
+      "node",
+      "pnpm",
+      "packaging",
+      "build",
+      "pyproject-metadata",
+      "android-sdk",
+      "caddy",
+      "ninja",
+      "patchelf",
+      "abseil-cpp",
+      "libdrm",
+      "pixman",
+      "fribidi",
+      "onetbb",
+      "protobuf",
+      "meson-python",
+      "numpy",
+      "libfuse",
+      "xorgproto",
+      "libxau",
+      "libxdmcp",
+      "libxcb",
+      "libxshmfence",
+      "libx11",
+      "libxext",
+      "libxrender",
+      "libxrandr",
+      "libxfixes",
+      "libxdamage",
+      "mesa",
+      "libxcomposite",
+      "glib",
+      "harfbuzz",
+      "atk",
+      "sshfs",
+      "dbus",
+      "at-spi2-core",
+      "clipper2",
+      "manifold",
+      "nghttp2",
+      "libevent",
+      "tmux",
+      "fzf",
+      "libidn2",
+      "libpsl",
+      "curl",
+      "rust",
+      "uv",
+      "diffoscope",
+      "jaq",
+      "difftastic",
+      "prek",
+      "zellij",
+      "ut",
+      "nushell",
+      "hex-patch",
+      "fd",
+      "teamtype",
+      "procs",
+      "yazi",
+      "gurk",
+      "railway",
+      "weathr",
+      "dust",
+      "delta",
+      "biff",
+      "brush",
+      "ripgrep",
+      "claude-code",
+      "imgcatr",
+      "hexhog",
+      "bottom",
+      "bat",
+      "atuin",
+      "eza",
+      "wget",
+      "nspr",
+      "nss",
+      "git",
+      "helix",
+      "llama.cpp",
+      "libxkbcommon",
+      "vim",
+      "htop",
+      "jnv",
+      "fontconfig",
+      "graphviz",
+      "ffmpeg",
+      "cairo",
+      "pango",
+      "agent-browser"
+    ],
+    "subjects": [
+      {
+        "name": "composed-env.json",
+        "sha256": "0efc81e4a51d8bc7ca97d15229b079c38190ebcb6cc73721c41c985b402a6605"
+      },
+      {
+        "name": "forge-store:/datar/workspace/claude_code_experiments/gleisner/.gleisner/forge-store",
+        "sha256": "0aa6ad97f92e3d253143c25542064286c4587c15bf6ba4e504d48db1738c8738"
+      }
+    ],
+    "verification": {
+      "forge_verified": 3,
+      "packages_with_proofs": 1,
+      "packages_without_proofs": 225,
+      "total_properties": 3,
+      "unchecked": 0
+    }
+  },
+  "forge": {
+    "credential_paths": [
+      "~/.claude.json"
+    ],
+    "environment": {
+      "dir_mappings": [
+        {
+          "class": "State",
+          "path": "~/.railway",
+          "read_only": false
+        },
+        {
+          "class": "State",
+          "path": "~/.claude",
+          "read_only": false
+        }
+      ],
+      "file_mappings": [
+        {
+          "class": "Credential",
+          "path": "~/.claude.json",
+          "read_only": false
+        }
+      ],
+      "needs": {
+        "dns": true,
+        "internet": true
+      },
+      "packages": [
+        "mpc",
+        "linux_headers",
+        "acl",
+        "make",
+        "findutils",
+        "m4",
+        "readline",
+        "attr",
+        "mpfr",
+        "lz4",
+        "xz",
+        "tar",
+        "file",
+        "pcre2",
+        "binutils",
+        "zlib",
+        "gmp",
+        "sed",
+        "diffutils",
+        "glibc",
+        "bash",
+        "grep",
+        "coreutils",
+        "resolver-quad8",
+        "bison",
+        "zstd",
+        "llvm",
+        "ncurses",
+        "gcc",
+        "redis",
+        "toolchain",
+        "libcap",
+        "gawk",
+        "gzip",
+        "bzip2",
+        "perl",
+        "base",
+        "hwdata",
+        "jq",
+        "btop",
+        "dejagnu",
+        "bash-completions",
+        "openblas",
+        "autoconf",
+        "automake",
+        "nano",
+        "time",
+        "alsa-lib",
+        "pciutils",
+        "gperf",
+        "gdbm",
+        "strace",
+        "go",
+        "duf",
+        "pulumi",
+        "gh",
+        "syft",
+        "mermaid-ascii",
+        "minimal-sshd",
+        "cosign",
+        "lcms2",
+        "oniguruma",
+        "jqfmt",
+        "varlock",
+        "bzip3",
+        "zig",
+        "libsodium",
+        "icu",
+        "grpcurl",
+        "libpng",
+        "freetype",
+        "patch",
+        "expat",
+        "trivy",
+        "sqlite",
+        "libunistring",
+        "openssl",
+        "socat",
+        "cmake",
+        "opencv",
+        "libyaml",
+        "nginx",
+        "jdk",
+        "iana-etc",
+        "xtrans",
+        "libxcrypt",
+        "shadow",
+        "screen",
+        "openjpeg",
+        "less",
+        "terraform",
+        "groff",
+        "libjpeg-turbo",
+        "glow",
+        "age",
+        "libffi",
+        "flex",
+        "tcl",
+        "pkgconf",
+        "cups",
+        "libpipeline",
+        "iproute2",
+        "tailscale",
+        "postgres",
+        "man-db",
+        "elfutils",
+        "libssh2",
+        "openssh",
+        "procps-ng",
+        "ghostscript",
+        "skopeo",
+        "libxml2",
+        "libxslt",
+        "gettext",
+        "inetutils",
+        "grype",
+        "ca-certificates",
+        "maven",
+        "util-linux",
+        "python",
+        "bun",
+        "gradle",
+        "boost",
+        "setuptools",
+        "cython",
+        "flit-core",
+        "pyproject-hooks",
+        "meson",
+        "deno",
+        "expect",
+        "xcb-proto",
+        "bc",
+        "libtool",
+        "check",
+        "libuv",
+        "node",
+        "pnpm",
+        "packaging",
+        "build",
+        "pyproject-metadata",
+        "android-sdk",
+        "caddy",
+        "ninja",
+        "patchelf",
+        "abseil-cpp",
+        "libdrm",
+        "pixman",
+        "fribidi",
+        "onetbb",
+        "protobuf",
+        "meson-python",
+        "numpy",
+        "libfuse",
+        "xorgproto",
+        "libxau",
+        "libxdmcp",
+        "libxcb",
+        "libxshmfence",
+        "libx11",
+        "libxext",
+        "libxrender",
+        "libxrandr",
+        "libxfixes",
+        "libxdamage",
+        "mesa",
+        "libxcomposite",
+        "glib",
+        "harfbuzz",
+        "atk",
+        "sshfs",
+        "dbus",
+        "at-spi2-core",
+        "clipper2",
+        "manifold",
+        "nghttp2",
+        "libevent",
+        "tmux",
+        "fzf",
+        "libidn2",
+        "libpsl",
+        "curl",
+        "rust",
+        "uv",
+        "diffoscope",
+        "jaq",
+        "difftastic",
+        "prek",
+        "zellij",
+        "ut",
+        "nushell",
+        "hex-patch",
+        "fd",
+        "teamtype",
+        "procs",
+        "yazi",
+        "gurk",
+        "railway",
+        "weathr",
+        "dust",
+        "delta",
+        "biff",
+        "brush",
+        "ripgrep",
+        "claude-code",
+        "imgcatr",
+        "hexhog",
+        "bottom",
+        "bat",
+        "atuin",
+        "eza",
+        "wget",
+        "nspr",
+        "nss",
+        "git",
+        "helix",
+        "llama.cpp",
+        "libxkbcommon",
+        "vim",
+        "htop",
+        "jnv",
+        "fontconfig",
+        "graphviz",
+        "ffmpeg",
+        "cairo",
+        "pango",
+        "agent-browser"
+      ],
+      "warnings": []
+    },
+    "policy": {
+      "filesystem": {
+        "readonly_bind": [],
+        "readwrite_bind": [
+          "/home/bryan/.railway",
+          "/home/bryan/.claude"
+        ]
+      },
+      "network": {
+        "allow_dns": true,
+        "allow_internet": true
+      }
+    },
+    "stats": {
+      "elapsed_secs": 46.738775991,
+      "evaluated": 226,
+      "failed": 0,
+      "failed_packages": []
+    },
+    "warnings": []
+  }
+}
