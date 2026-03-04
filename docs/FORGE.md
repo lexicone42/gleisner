@@ -5,7 +5,7 @@ Incremental Nickel package evaluator for [minimal.dev](https://minimal.dev) buil
 **Related documents:**
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- overall gleisner architecture
 - [SECURITY.md](SECURITY.md) -- attestation and verification design
-- [VERIFIED-PROPERTIES-SUMMARY.md](../VERIFIED-PROPERTIES-SUMMARY.md) -- proof verification end-to-end walkthrough
+- [LEAN-INTEGRATION-RESEARCH.md](LEAN-INTEGRATION-RESEARCH.md) -- research notes on Lean formal verification integration
 
 ---
 
@@ -152,12 +152,45 @@ Build artifacts           <-- content-addressed in Nix store
 
 ## Proof Verification
 
-Packages can declare `verified_properties` in their `attrs`, linking to formal proofs checked by an external proof kernel. When `gleisner forge --verify` is passed, the forge:
+Packages can declare `verified_properties` in their `attrs`, linking to formal proofs checked by an external proof kernel:
+
+```nickel
+attrs = {
+  verified_properties = [
+    {
+      property = "zlib_roundtrip",
+      description = "decompress(compress(data)) = data for all compression levels (RFC 1950)",
+      proof_system = "lean4",
+      kernel_version = "leanprover/lean4:v4.29.0-rc2",
+      specification_hash = "sha256:d5d9988f...",
+      proof_hash = "sha256:41d114c4...",
+      proof_uri = "https://github.com/kim-em/lean-zip/blob/master/Zip/Spec/ZlibCorrect.lean",
+    },
+  ],
+} | Attrs,
+```
+
+When `gleisner forge --verify` is passed, the forge:
 
 1. Identifies packages with `verified_properties` in their evaluated output
 2. Clones proof repositories from `proof_uri` fields
 3. Runs `lake build` to type-check all proofs via the Lean 4 kernel
-4. Records per-property results in the attestation output
+4. Hashes the compiled `.olean` artifact per property (SHA-256)
+5. Records per-property results in the attestation output
+
+### zlib: First Verified Package
+
+[lean-zip](https://github.com/kim-em/lean-zip) provides the first real-world
+test case -- three roundtrip properties verified end-to-end:
+
+| Property | Lean Theorem | RFC |
+|----------|-------------|-----|
+| `zlib_roundtrip` | `zlib_decompressSingle_compress` | 1950 |
+| `deflate_roundtrip` | `inflate_deflateRaw` | 1951 |
+| `gzip_roundtrip` | `gzip_decompressSingle_compress` | 1952 |
+
+The full 226-package pipeline reports: `zlib — 3/3 verified, 0 failed`.
+Packages without proofs are reported as `unchecked` rather than failed.
 
 ### Verification Results
 
@@ -167,16 +200,20 @@ Results flow into the attestation as `VerifiedProperty` structs with:
 |---|---|
 | `property` | Property name (e.g., `zlib_roundtrip`) |
 | `proof_system` | Proof system used (e.g., `lean4`) |
-| `kernel_version` | Kernel version string |
+| `kernel_version` | Declared kernel version from the package |
 | `specification_hash` | SHA-256 of the specification |
-| `proof_hash` | SHA-256 of the proof artifact |
+| `proof_hash` | Forge-computed SHA-256 of the compiled `.olean` artifact |
+| `declared_proof_hash` | Original hash declared by the package author |
+| `forge_kernel_version` | Actual Lean version used (read from `lean-toolchain`) |
 | `verified_by_forge` | `true` (verified), `false` (failed), or `null` (unchecked) |
 
-A `VerificationSummary` reports aggregate counts: total, verified, failed, and unchecked.
+The `proof_hash` / `declared_proof_hash` separation lets the forge independently
+verify what the package author claimed. A `VerificationSummary` reports aggregate
+counts: total, verified, failed, and unchecked.
 
 ### Graceful Degradation
 
-If the Lean binary is not available, verification is skipped with a warning. If `--strict-verify` is passed, any failure is a hard error.
+If the Lean binary is not available, verification is skipped with a warning. If `--strict-verify` is passed, any failure is a hard error. The schema supports arbitrary proof systems -- Lean 4 is the first.
 
 ## Performance
 

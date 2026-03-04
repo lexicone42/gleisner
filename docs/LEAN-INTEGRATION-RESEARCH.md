@@ -72,7 +72,7 @@ Together they form a complete trust chain.
 
 ### Near Term: Schema Ready -- IMPLEMENTED
 
-**Status:** Shipped in `gleisner-forge`. See [VERIFIED-PROPERTIES-SUMMARY.md](VERIFIED-PROPERTIES-SUMMARY.md).
+**Status:** Shipped in `gleisner-forge`. See [FORGE.md](FORGE.md#proof-verification).
 
 `verified_properties` is now part of the attestation `package_metadata`. The
 `VerifiedProperty` struct includes `property`, `description`, `proof_system`,

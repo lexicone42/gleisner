@@ -289,6 +289,7 @@ All rules are opt-in. Absent fields are skipped, not failed.
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Threat actors, attack surfaces, LACERTA scenarios, mitigations matrix |
 | [docs/FORGE.md](docs/FORGE.md) | Forge: Nickel package evaluation, proof verification, minimal.dev integration |
 | [docs/RUST_PATTERNS.md](docs/RUST_PATTERNS.md) | Rust patterns and idioms in the codebase (learning guide) |
+| [docs/LEAN-INTEGRATION-RESEARCH.md](docs/LEAN-INTEGRATION-RESEARCH.md) | Research notes on Lean formal verification integration |
 
 ## Contributing
 
