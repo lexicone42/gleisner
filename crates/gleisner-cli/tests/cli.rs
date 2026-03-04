@@ -284,7 +284,7 @@ checksum = "abc123"
 
     let json: serde_json::Value = serde_json::from_slice(&output).expect("valid JSON");
     assert_eq!(json["bomFormat"], "CycloneDX");
-    assert_eq!(json["specVersion"], "1.5");
+    assert_eq!(json["specVersion"], "1.6");
     assert!(json["components"].is_array());
     assert_eq!(json["components"][0]["purl"], "pkg:cargo/example@2.0.0");
 }

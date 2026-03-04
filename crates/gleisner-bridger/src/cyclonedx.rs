@@ -143,7 +143,7 @@ pub fn to_cyclonedx(packages: &[CargoPackage]) -> CycloneDxBom {
 
     CycloneDxBom {
         bom_format: "CycloneDX",
-        spec_version: "1.5",
+        spec_version: "1.6",
         version: 1,
         serial_number: generate_serial_number(packages),
         metadata: Metadata {
@@ -209,7 +209,7 @@ mod tests {
     fn cyclonedx_structure() {
         let bom = to_cyclonedx(&sample_packages());
         assert_eq!(bom.bom_format, "CycloneDX");
-        assert_eq!(bom.spec_version, "1.5");
+        assert_eq!(bom.spec_version, "1.6");
         assert_eq!(bom.version, 1);
         assert!(bom.serial_number.starts_with("urn:uuid:"));
         assert_eq!(bom.components.len(), 2);

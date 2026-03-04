@@ -48,7 +48,7 @@ pub struct ForgeMaterial {
 /// A subject (output artifact) for attestation.
 ///
 /// Compatible with `gleisner_introdus::statement::Subject`.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ForgeSubject {
     /// Artifact name or path.
     pub name: String,
@@ -57,7 +57,7 @@ pub struct ForgeSubject {
 }
 
 /// Attestation data extracted from a forge evaluation run.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ForgeAttestation {
     /// Input materials: source tarballs declared in packages + Nickel source files.
     pub materials: Vec<ForgeMaterial>,

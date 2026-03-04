@@ -22,7 +22,7 @@ fn find_cargo_lock(dir: &Path) -> Option<PathBuf> {
     }
 }
 
-/// Generate a `CycloneDX` 1.5 SBOM for the project at `project_dir`.
+/// Generate a `CycloneDX` 1.6 SBOM for the project at `project_dir`.
 ///
 /// Finds and parses `Cargo.lock`, then converts to `CycloneDX` format.
 /// Walks up from `project_dir` to find the lockfile if it isn't in
