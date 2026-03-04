@@ -61,6 +61,15 @@ pub struct ForgeArgs {
     #[arg(long)]
     pub strict_verify: bool,
 
+    /// Generate a CycloneDX 1.6 SBOM from the evaluated packages.
+    /// Includes proof-carrying declarations for formally verified components.
+    #[arg(long)]
+    pub sbom: bool,
+
+    /// Output path for the CycloneDX 1.6 SBOM (used with --sbom).
+    #[arg(long, default_value = ".gleisner/sbom.cdx.json")]
+    pub sbom_output: PathBuf,
+
     /// Also run Claude Code inside a sandbox derived from the composed environment.
     #[arg(long)]
     pub run: bool,
@@ -367,6 +376,31 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         attestation.subjects.len(),
         attestation.package_metadata.len(),
     );
+
+    // 5b. Generate CycloneDX 1.6 SBOM (optional)
+    if args.sbom {
+        let bom = gleisner_forge::sbom::forge_to_cyclonedx(&attestation);
+        let sbom_path = if args.sbom_output.is_relative() {
+            project_dir.join(&args.sbom_output)
+        } else {
+            args.sbom_output.clone()
+        };
+        if let Some(parent) = sbom_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&sbom_path, serde_json::to_string_pretty(&bom)?)?;
+
+        let proof_count = bom
+            .declarations
+            .as_ref()
+            .map_or(0, |d| d.attestations.iter().map(|a| a.map.len()).sum());
+        eprintln!(
+            "forge: wrote CycloneDX 1.6 SBOM to {} ({} components, {} proof declarations)",
+            sbom_path.display(),
+            bom.components.len(),
+            proof_count,
+        );
+    }
 
     // 6. Optionally run Claude Code in the composed sandbox
     if args.run {

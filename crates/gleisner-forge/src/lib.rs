@@ -45,5 +45,6 @@ pub mod eval;
 pub mod harness;
 pub mod negotiate;
 pub mod orchestrate;
+pub mod sbom;
 pub mod store;
 pub mod verify;
