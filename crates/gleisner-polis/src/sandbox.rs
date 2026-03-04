@@ -1120,7 +1120,7 @@ mod tests {
             project_dir: PathBuf::from("/tmp"),
             extra_rw_paths: vec![],
             work_dir: PathBuf::from("/tmp"),
-            inner_command: inner.iter().map(std::string::ToString::to_string).collect(),
+            inner_command: inner.iter().map(|s| (*s).to_string()).collect(),
             enable_landlock: false,
             use_external_netns: false,
             uid,

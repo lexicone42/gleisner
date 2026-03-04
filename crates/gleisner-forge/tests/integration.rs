@@ -489,3 +489,112 @@ fn invalid_package_doesnt_crash_run() {
     assert_eq!(output.failed, 1);
     assert_eq!(output.failed_packages, vec!["bad"]);
 }
+
+// ---------------------------------------------------------------------------
+// Orchestrate: auto-detect packages/ subdirectory
+// ---------------------------------------------------------------------------
+
+/// `evaluate_packages` should auto-detect a `packages/` subdirectory.
+/// If `pkgs_dir` points to a parent dir that contains `packages/`, it uses that.
+#[test]
+fn orchestrate_auto_detects_packages_subdir() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Write packages inside a `packages/` subdirectory
+    let pkgs = tmp.path().join("packages");
+    write_packages(
+        &pkgs,
+        &[
+            ("alpha", r#"{ name = "alpha", value = 1 }"#),
+            ("beta", r#"{ name = "beta", value = 2 }"#),
+        ],
+    );
+
+    // Point pkgs_dir at the parent (not the packages/ subdir directly)
+    let config = ForgeConfig {
+        pkgs_dir: tmp.path().to_path_buf(),
+        stdlib_dir: tmp.path().join("std"),
+        store_dir: tmp.path().join("store"),
+        filter: vec![],
+    };
+
+    let output = evaluate_packages(&config).unwrap();
+    assert_eq!(output.evaluated, 2);
+    assert!(output.environment.packages.contains(&"alpha".to_string()));
+    assert!(output.environment.packages.contains(&"beta".to_string()));
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrate: package_results populated
+// ---------------------------------------------------------------------------
+
+/// Verify that `ForgeOutput::package_results` contains the evaluated JSON
+/// for each successful package, and excludes failed packages.
+#[test]
+fn orchestrate_package_results_populated() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkgs = tmp.path().join("packages");
+    write_packages(
+        &pkgs,
+        &[
+            ("ok", r#"{ name = "ok", version = "1.0" }"#),
+            ("broken", r#"{ name = "broken", value = ??? }"#), // invalid
+        ],
+    );
+
+    let config = ForgeConfig {
+        pkgs_dir: pkgs,
+        stdlib_dir: tmp.path().join("std"),
+        store_dir: tmp.path().join("store"),
+        filter: vec![],
+    };
+
+    let output = evaluate_packages(&config).unwrap();
+
+    // Successful package should be in package_results
+    assert!(output.package_results.contains_key("ok"));
+    let ok_json = &output.package_results["ok"];
+    assert_eq!(ok_json["name"], "ok");
+    assert_eq!(ok_json["version"], "1.0");
+
+    // Failed package should NOT be in package_results
+    assert!(!output.package_results.contains_key("broken"));
+    assert_eq!(output.failed_packages, vec!["broken"]);
+}
+
+// ---------------------------------------------------------------------------
+// Orchestrate: dependency injection between packages
+// ---------------------------------------------------------------------------
+
+/// Verify that a package can consume a dependency's evaluated result.
+/// The dep result is flattened and injected via the import mechanism.
+#[test]
+fn orchestrate_dependency_injection() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkgs = tmp.path().join("packages");
+    write_packages(
+        &pkgs,
+        &[
+            ("lib", r#"{ name = "lib", version = "2.0" }"#),
+            (
+                "app",
+                r#"let lib = import "../lib/build.ncl" in
+                { name = "app", lib_name = lib.name }"#,
+            ),
+        ],
+    );
+
+    let config = ForgeConfig {
+        pkgs_dir: pkgs,
+        stdlib_dir: tmp.path().join("std"),
+        store_dir: tmp.path().join("store"),
+        filter: vec![],
+    };
+
+    let output = evaluate_packages(&config).unwrap();
+    assert_eq!(output.evaluated, 2);
+    assert_eq!(output.failed, 0);
+
+    // app should have resolved lib.name
+    let app_json = &output.package_results["app"];
+    assert_eq!(app_json["lib_name"], "lib");
+}
