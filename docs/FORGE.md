@@ -26,7 +26,7 @@ Incremental Nickel package evaluator for [minimal.dev](https://minimal.dev) buil
 
 minimal.dev uses [Nickel](https://nickel-lang.org) as its package definition language. Each package is a `build.ncl` file that declares sources, dependencies, build commands, required capabilities, and typed outputs -- all within Nickel's contract system.
 
-The key insight driving this integration: **minimal.dev's Nickel specs are already a declarative security policy.** They just weren't designed as one.
+The key insight driving this integration: **minimal.dev's Nickel specs are already a declarative security policy.**
 
 Every `Source.sha256` is a supply chain integrity anchor. Every `needs = { dns }` is a network capability grant. Every typed `OutputData` with `allow_executable | optional` defaulting to false is a file permission constraint. The gap between "what this build requires" and "what this build is allowed to do" is the enforcement layer -- and that's what gleisner provides.
 
