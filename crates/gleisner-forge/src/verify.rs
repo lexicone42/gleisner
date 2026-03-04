@@ -19,6 +19,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use sha2::{Digest, Sha256};
+
 use crate::attest::{PackageMetadata, VerifiedProperty};
 
 /// Configuration for the proof verification step.
@@ -56,7 +58,8 @@ impl Default for VerifyConfig {
 #[allow(missing_docs)]
 pub enum PropertyVerification {
     /// Proof checked successfully by the Lean kernel (via `lake build`).
-    Verified,
+    /// Contains the forge-computed SHA-256 of the `.olean` artifact, if available.
+    Verified { olean_hash: Option<String> },
     /// Proof check failed (kernel returned non-zero).
     Failed { reason: String },
     /// Verification skipped (no kernel available, unsupported proof system, etc.).
@@ -84,7 +87,7 @@ impl PackageVerification {
     pub fn verified_count(&self) -> usize {
         self.results
             .iter()
-            .filter(|(_, v)| matches!(v, PropertyVerification::Verified))
+            .filter(|(_, v)| matches!(v, PropertyVerification::Verified { .. }))
             .count()
     }
 
@@ -156,11 +159,85 @@ fn extract_github_repo_url(uri: &str) -> Option<String> {
     }
 }
 
+/// Extract the in-repo `.lean` path from a GitHub blob URL.
+///
+/// Given `https://github.com/owner/repo/blob/branch/path/to/File.lean`,
+/// returns `Some("path/to/File.lean")`.
+fn extract_lean_path_from_uri(uri: &str) -> Option<String> {
+    // Pattern: https://github.com/{owner}/{repo}/blob/{branch}/{path}
+    let path = uri.strip_prefix("https://github.com/")?;
+    let parts: Vec<&str> = path.splitn(5, '/').collect();
+    // parts: [owner, repo, "blob", branch, rest-of-path]
+    if parts.len() == 5 && parts[2] == "blob" {
+        Some(parts[4].to_string())
+    } else {
+        None
+    }
+}
+
+/// Map a `.lean` source path to its corresponding `.olean` build artifact.
+///
+/// Lean's `lake build` places `.olean` files under `.lake/build/lib/{pkg_name}/`,
+/// mirroring the source directory structure. The package name in the lakefile
+/// determines the intermediate directory.
+///
+/// This function searches `build_lib_dir` for a matching `.olean` file by
+/// trying the path directly and with common package prefixes.
+fn find_olean_for_lean_path(build_lib_dir: &Path, lean_path: &str) -> Option<PathBuf> {
+    let olean_name = lean_path.replace(".lean", ".olean");
+
+    // Try direct path (some projects have flat layouts)
+    let direct = build_lib_dir.join(&olean_name);
+    if direct.exists() {
+        return Some(direct);
+    }
+
+    // Try with a `lean/` prefix (lake's default package layout)
+    let with_lean_prefix = build_lib_dir.join("lean").join(&olean_name);
+    if with_lean_prefix.exists() {
+        return Some(with_lean_prefix);
+    }
+
+    // Scan one level of subdirectories for the matching olean
+    if let Ok(entries) = std::fs::read_dir(build_lib_dir) {
+        for entry in entries.flatten() {
+            if entry.path().is_dir() {
+                let candidate = entry.path().join(&olean_name);
+                if candidate.exists() {
+                    return Some(candidate);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// SHA-256 hash of a file's contents, returned as `sha256:{hex}`.
+fn hash_file_sha256(path: &Path) -> Result<String, std::io::Error> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    Ok(format!("sha256:{digest:x}"))
+}
+
 /// Result of verifying a proof repository.
 #[derive(Debug)]
 pub struct RepoVerification {
     /// Whether the Lean kernel (lake build) succeeded.
     pub verified: bool,
+    /// Path to the cloned repo's build output (`.lake/build/lib/`).
+    /// Used to locate `.olean` files for per-property hashing.
+    pub build_lib_dir: Option<PathBuf>,
 }
 
 /// Verify a proof repository by cloning it and running `lake build`.
@@ -249,7 +326,18 @@ pub fn verify_proof_repo(
 
     tracing::info!("lake build succeeded — proofs verified by Lean kernel");
 
-    Ok(RepoVerification { verified: true })
+    let build_lib_dir = clone_dir.join(".lake/build/lib");
+    let build_lib = if build_lib_dir.is_dir() {
+        Some(build_lib_dir)
+    } else {
+        tracing::warn!("no .lake/build/lib/ found — cannot hash .olean artifacts");
+        None
+    };
+
+    Ok(RepoVerification {
+        verified: true,
+        build_lib_dir: build_lib,
+    })
 }
 
 /// Verify a proof artifact using the Lean kernel.
@@ -289,7 +377,33 @@ pub fn verify_property(property: &VerifiedProperty, config: &VerifyConfig) -> Pr
                 }
             };
             return match verify_proof_repo(&repo_url, config) {
-                Ok(rv) if rv.verified => PropertyVerification::Verified,
+                Ok(rv) if rv.verified => {
+                    // Try to hash the specific .olean for this property
+                    let olean_hash = rv.build_lib_dir.as_ref().and_then(|lib_dir| {
+                        let lean_path = extract_lean_path_from_uri(uri)?;
+                        let olean_path = find_olean_for_lean_path(lib_dir, &lean_path)?;
+                        match hash_file_sha256(&olean_path) {
+                            Ok(hash) => {
+                                tracing::info!(
+                                    property = %property.property,
+                                    olean = %olean_path.display(),
+                                    hash = %hash,
+                                    "computed .olean hash"
+                                );
+                                Some(hash)
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    property = %property.property,
+                                    error = %e,
+                                    "failed to hash .olean file"
+                                );
+                                None
+                            }
+                        }
+                    });
+                    PropertyVerification::Verified { olean_hash }
+                }
                 Ok(_) => PropertyVerification::Failed {
                     reason: "lake build failed".to_string(),
                 },
@@ -334,7 +448,9 @@ fn check_lean_proof(lean_bin: &Path, proof_path: &Path, timeout_secs: u64) -> Pr
     let _ = timeout_secs;
 
     match result {
-        Ok(output) if output.status.success() => PropertyVerification::Verified,
+        Ok(output) if output.status.success() => {
+            PropertyVerification::Verified { olean_hash: None }
+        }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             PropertyVerification::Failed {
@@ -387,7 +503,8 @@ pub fn verify_packages(
 }
 
 /// Apply verification results back to package metadata, setting
-/// `verified_by_forge` on each property.
+/// `verified_by_forge` on each property and updating `proof_hash` with
+/// the forge-computed `.olean` hash when available.
 pub fn apply_verification_results(
     metadata: &mut [PackageMetadata],
     verifications: &[PackageVerification],
@@ -403,11 +520,20 @@ pub fn apply_verification_results(
                     .iter_mut()
                     .find(|p| p.property == verified_prop.property)
                 {
-                    prop.verified_by_forge = match result {
-                        PropertyVerification::Verified => Some(true),
-                        PropertyVerification::Failed { .. } => Some(false),
-                        PropertyVerification::Skipped { .. } => None,
-                    };
+                    match result {
+                        PropertyVerification::Verified { olean_hash } => {
+                            prop.verified_by_forge = Some(true);
+                            if let Some(hash) = olean_hash {
+                                prop.proof_hash = hash.clone();
+                            }
+                        }
+                        PropertyVerification::Failed { .. } => {
+                            prop.verified_by_forge = Some(false);
+                        }
+                        PropertyVerification::Skipped { .. } => {
+                            prop.verified_by_forge = None;
+                        }
+                    }
                 }
             }
         }
@@ -520,7 +646,10 @@ mod tests {
         let ver = PackageVerification {
             package_name: "zlib".to_string(),
             results: vec![
-                (prop.clone(), PropertyVerification::Verified),
+                (
+                    prop.clone(),
+                    PropertyVerification::Verified { olean_hash: None },
+                ),
                 (
                     prop.clone(),
                     PropertyVerification::Failed {
@@ -546,7 +675,10 @@ mod tests {
 
         let verifications = vec![PackageVerification {
             package_name: "zlib".to_string(),
-            results: vec![(sample_property(), PropertyVerification::Verified)],
+            results: vec![(
+                sample_property(),
+                PropertyVerification::Verified { olean_hash: None },
+            )],
         }];
 
         apply_verification_results(&mut metadata, &verifications);
@@ -615,10 +747,111 @@ mod tests {
 
     #[test]
     fn repo_verification_logic() {
-        let rv = RepoVerification { verified: true };
+        let rv = RepoVerification {
+            verified: true,
+            build_lib_dir: None,
+        };
         assert!(rv.verified);
 
-        let rv2 = RepoVerification { verified: false };
+        let rv2 = RepoVerification {
+            verified: false,
+            build_lib_dir: None,
+        };
         assert!(!rv2.verified);
+    }
+
+    #[test]
+    fn extract_lean_path_from_blob_url() {
+        let url = "https://github.com/kim-em/lean-zip/blob/master/Zip/Spec/ZlibCorrect.lean";
+        assert_eq!(
+            extract_lean_path_from_uri(url),
+            Some("Zip/Spec/ZlibCorrect.lean".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_lean_path_no_blob() {
+        // Bare repo URL — no path to extract
+        assert_eq!(
+            extract_lean_path_from_uri("https://github.com/kim-em/lean-zip"),
+            None
+        );
+    }
+
+    #[test]
+    fn find_olean_direct_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let olean = dir.path().join("Zip/Spec/ZlibCorrect.olean");
+        std::fs::create_dir_all(olean.parent().unwrap()).unwrap();
+        std::fs::write(&olean, b"test olean data").unwrap();
+
+        let result = find_olean_for_lean_path(dir.path(), "Zip/Spec/ZlibCorrect.lean");
+        assert_eq!(result, Some(olean));
+    }
+
+    #[test]
+    fn find_olean_with_package_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let olean = dir.path().join("lean/Zip/Spec/ZlibCorrect.olean");
+        std::fs::create_dir_all(olean.parent().unwrap()).unwrap();
+        std::fs::write(&olean, b"test olean data").unwrap();
+
+        let result = find_olean_for_lean_path(dir.path(), "Zip/Spec/ZlibCorrect.lean");
+        assert_eq!(result, Some(olean));
+    }
+
+    #[test]
+    fn find_olean_scan_subdir() {
+        let dir = tempfile::tempdir().unwrap();
+        let olean = dir.path().join("mypkg/Zip/Spec/ZlibCorrect.olean");
+        std::fs::create_dir_all(olean.parent().unwrap()).unwrap();
+        std::fs::write(&olean, b"test olean data").unwrap();
+
+        let result = find_olean_for_lean_path(dir.path(), "Zip/Spec/ZlibCorrect.lean");
+        assert_eq!(result, Some(olean));
+    }
+
+    #[test]
+    fn find_olean_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = find_olean_for_lean_path(dir.path(), "Nonexistent.lean");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn hash_file_sha256_deterministic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.olean");
+        std::fs::write(&path, b"deterministic content").unwrap();
+
+        let h1 = hash_file_sha256(&path).unwrap();
+        let h2 = hash_file_sha256(&path).unwrap();
+        assert_eq!(h1, h2);
+        assert!(h1.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn apply_results_sets_olean_hash() {
+        let mut metadata = vec![sample_metadata("zlib", true)];
+
+        let verifications = vec![PackageVerification {
+            package_name: "zlib".to_string(),
+            results: vec![(
+                sample_property(),
+                PropertyVerification::Verified {
+                    olean_hash: Some("sha256:abc123def456".to_string()),
+                },
+            )],
+        }];
+
+        apply_verification_results(&mut metadata, &verifications);
+        assert_eq!(
+            metadata[0].verified_properties[0].verified_by_forge,
+            Some(true)
+        );
+        assert_eq!(
+            metadata[0].verified_properties[0].proof_hash,
+            "sha256:abc123def456"
+        );
     }
 }
