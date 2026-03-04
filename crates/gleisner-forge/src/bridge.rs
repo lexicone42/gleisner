@@ -27,6 +27,16 @@ pub struct ForgeNetworkPolicy {
     pub allow_internet: bool,
 }
 
+/// Environment variables to set inside the sandbox.
+///
+/// These come from harness `build_env_vars` and state wiring template
+/// expansion (e.g., `{cargo-cache-home}` → resolved state dir path).
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct ForgeEnvPolicy {
+    /// Key-value pairs to set as environment variables.
+    pub vars: Vec<(String, String)>,
+}
+
 /// Validation warnings and errors from environment composition.
 #[derive(Debug, Clone)]
 pub struct BridgeReport {
@@ -34,6 +44,8 @@ pub struct BridgeReport {
     pub filesystem: ForgeFilesystemPolicy,
     /// Network policy for the sandbox.
     pub network: ForgeNetworkPolicy,
+    /// Environment variables for the sandbox.
+    pub env: ForgeEnvPolicy,
     /// State wirings: env var → prefix mappings for persistent cache directories.
     pub state_wirings: Vec<StateWiring>,
     /// Credential paths that packages declared (informational — NOT mounted).
@@ -105,6 +117,7 @@ pub fn compose_to_policy(env: &ComposedEnvironment) -> BridgeReport {
     BridgeReport {
         filesystem: fs,
         network,
+        env: ForgeEnvPolicy::default(),
         state_wirings: env.state_wirings.clone(),
         credential_paths,
         warnings,

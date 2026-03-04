@@ -425,6 +425,11 @@ fn run_in_composed_sandbox(
         prepared.command.env(env_var, state_dir);
     }
 
+    // Set harness/forge env vars (CC, CXX, JAVA_HOME, etc.)
+    for (key, value) in &report.env.vars {
+        prepared.command.env(key, value);
+    }
+
     prepared.command.stdin(std::process::Stdio::inherit());
     prepared.command.stdout(std::process::Stdio::inherit());
     prepared.command.stderr(std::process::Stdio::inherit());
