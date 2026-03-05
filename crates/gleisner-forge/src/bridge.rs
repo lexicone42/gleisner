@@ -18,13 +18,19 @@ pub struct ForgeFilesystemPolicy {
     pub readwrite_bind: Vec<PathBuf>,
 }
 
-/// Network policy derived from package `needs` declarations.
+/// Network policy derived from package `needs` and source declarations.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ForgeNetworkPolicy {
     /// Whether any package needs DNS resolution.
     pub allow_dns: bool,
     /// Whether any package needs full internet access.
     pub allow_internet: bool,
+    /// Domains required by package source declarations.
+    ///
+    /// Derived from `build_deps` URLs — these are the exact domains the build
+    /// needs to download source tarballs from. When merged into a sandbox
+    /// profile, these extend (not replace) the profile's existing allowlist.
+    pub allow_domains: Vec<String>,
 }
 
 /// Environment variables to set inside the sandbox.
@@ -109,9 +115,22 @@ pub fn compose_to_policy(env: &ComposedEnvironment) -> BridgeReport {
         }
     }
 
+    // Collect unique domains from source declarations
+    let allow_domains: Vec<String> = env
+        .source_domains
+        .iter()
+        .map(|sd| sd.domain.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    // If any source domains were found, DNS is implicitly required
+    let needs_dns = env.needs.dns || !allow_domains.is_empty();
+
     let network = ForgeNetworkPolicy {
-        allow_dns: env.needs.dns,
+        allow_dns: needs_dns,
         allow_internet: env.needs.internet,
+        allow_domains,
     };
 
     BridgeReport {
@@ -169,6 +188,7 @@ mod tests {
             file_mappings: Vec::new(),
             state_wirings: Vec::new(),
             needs: MergedNeeds::default(),
+            source_domains: Vec::new(),
             packages: vec!["test".to_string()],
             warnings: Vec::new(),
         }
@@ -210,6 +230,7 @@ mod tests {
             }],
             state_wirings: Vec::new(),
             needs: MergedNeeds::default(),
+            source_domains: Vec::new(),
             packages: vec!["test".to_string()],
             warnings: Vec::new(),
         };
@@ -232,6 +253,7 @@ mod tests {
                 dns: true,
                 internet: false,
             },
+            source_domains: Vec::new(),
             packages: vec!["test".to_string()],
             warnings: Vec::new(),
         };
@@ -239,6 +261,54 @@ mod tests {
         let report = compose_to_policy(&env);
 
         assert!(report.network.allow_dns);
+        assert!(!report.network.allow_internet);
+        assert!(report.network.allow_domains.is_empty());
+    }
+
+    #[test]
+    fn source_domains_become_allow_domains() {
+        use crate::compose::SourceDomain;
+
+        let env = ComposedEnvironment {
+            dir_mappings: Vec::new(),
+            file_mappings: Vec::new(),
+            state_wirings: Vec::new(),
+            needs: MergedNeeds::default(), // no explicit dns/internet
+            source_domains: vec![
+                SourceDomain {
+                    domain: "github.com".to_string(),
+                    package: "zlib".to_string(),
+                    source_url: "https://github.com/madler/zlib/archive/v1.3.1.tar.gz".to_string(),
+                },
+                SourceDomain {
+                    domain: "storage.googleapis.com".to_string(),
+                    package: "curl".to_string(),
+                    source_url: "gs://minimal-staging-archives/curl-8.tar.gz".to_string(),
+                },
+            ],
+            packages: vec!["zlib".to_string(), "curl".to_string()],
+            warnings: Vec::new(),
+        };
+
+        let report = compose_to_policy(&env);
+
+        // Source domains should appear in allow_domains
+        assert_eq!(report.network.allow_domains.len(), 2);
+        assert!(
+            report
+                .network
+                .allow_domains
+                .contains(&"github.com".to_string())
+        );
+        assert!(
+            report
+                .network
+                .allow_domains
+                .contains(&"storage.googleapis.com".to_string())
+        );
+        // DNS should be implicitly enabled (source domains need resolution)
+        assert!(report.network.allow_dns);
+        // allow_internet should still be false (not declared in needs)
         assert!(!report.network.allow_internet);
     }
 

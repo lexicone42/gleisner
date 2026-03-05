@@ -138,9 +138,12 @@ let ripgrep = import "../ripgrep/build.ncl" in
     // ~/.claude.json is a Credential → NOT in binds, but in credential_paths
     assert_eq!(report.credential_paths, vec!["~/.claude.json"]);
 
-    // No DNS/internet needs declared
-    assert!(!report.network.allow_dns);
+    // DNS is implicitly required (source URLs need domain resolution)
+    assert!(report.network.allow_dns);
     assert!(!report.network.allow_internet);
+
+    // Source domain extracted from build_deps URL
+    assert_eq!(report.network.allow_domains, vec!["storage.googleapis.com"]);
 
     // --- Verify attestation ---
     let composed_json = serde_json::json!({
@@ -255,6 +258,154 @@ fn claude_code_source_extraction() {
 
     // Second: the package URI
     assert_eq!(materials[1].uri, "pkg://minimal.dev/claude-code");
+}
+
+// ---------------------------------------------------------------------------
+// Bridge: source domains → domain allowlist
+// ---------------------------------------------------------------------------
+
+/// End-to-end test: packages with source URLs produce a domain allowlist
+/// that gets merged into a bridge report. This is the full path from
+/// Nickel declarations → compose → bridge that drives sandbox network policy.
+#[test]
+fn source_domains_e2e_multi_package() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pkgs = tmp.path().join("packages");
+
+    // Three packages with source URLs from different domains
+    write_packages(
+        &pkgs,
+        &[
+            (
+                "zlib",
+                r#"{
+                    name = "zlib",
+                    ty = "Builder",
+                    build_deps = [
+                        { file = "build.sh" },
+                        {
+                            url = "https://github.com/madler/zlib/releases/download/v1.3.1/zlib-1.3.1.tar.gz",
+                            sha256 = "9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23",
+                        },
+                    ],
+                    outputs = {},
+                }"#,
+            ),
+            (
+                "curl",
+                r#"let zlib = import "../zlib/build.ncl" in
+                {
+                    name = "curl",
+                    ty = "Builder",
+                    build_deps = [
+                        { file = "build.sh" },
+                        {
+                            url = "https://curl.se/download/curl-8.11.0.tar.gz",
+                            sha256 = "264537d350cce5e05b9a60e7ee940e06e4a5e9dba72ef81c3e303e30f7688e7f",
+                        },
+                        zlib,
+                    ],
+                    needs = { dns = {} },
+                    attrs = {
+                        env_dir_mappings = [
+                            { read_only = true, path = "/etc/ssl/certs", class = "State" },
+                        ],
+                    },
+                    outputs = {},
+                }"#,
+            ),
+            (
+                "openssh",
+                r#"let zlib = import "../zlib/build.ncl" in
+                {
+                    name = "openssh",
+                    ty = "Builder",
+                    build_deps = [
+                        { file = "build.sh" },
+                        {
+                            url = "gs://minimal-staging-archives/openssh-10.2p1.tar.gz",
+                            sha256 = "ccc42c04199",
+                        },
+                        zlib,
+                    ],
+                    outputs = {},
+                }"#,
+            ),
+        ],
+    );
+
+    let config = ForgeConfig {
+        pkgs_dir: pkgs,
+        stdlib_dir: tmp.path().join("std"),
+        store_dir: tmp.path().join("store"),
+        filter: vec![],
+    };
+
+    let output = evaluate_packages(&config).unwrap();
+    assert_eq!(output.evaluated, 3);
+    assert_eq!(output.failed, 0);
+
+    // --- Verify source domains in composed environment ---
+    let env = &output.environment;
+
+    // Should have 3 unique domains: github.com, curl.se, storage.googleapis.com
+    assert_eq!(env.source_domains.len(), 3);
+    let domains: Vec<&str> = env
+        .source_domains
+        .iter()
+        .map(|d| d.domain.as_str())
+        .collect();
+    assert!(
+        domains.contains(&"github.com"),
+        "missing github.com in {domains:?}"
+    );
+    assert!(
+        domains.contains(&"curl.se"),
+        "missing curl.se in {domains:?}"
+    );
+    assert!(
+        domains.contains(&"storage.googleapis.com"),
+        "missing storage.googleapis.com in {domains:?}"
+    );
+
+    // github.com should be attributed to zlib (first occurrence)
+    let gh = env
+        .source_domains
+        .iter()
+        .find(|d| d.domain == "github.com")
+        .unwrap();
+    assert_eq!(gh.package, "zlib");
+    assert!(gh.source_url.contains("madler/zlib"));
+
+    // --- Verify bridge ---
+    let report = compose_to_policy(env);
+
+    // Domain allowlist should be sorted and include all 3
+    assert_eq!(report.network.allow_domains.len(), 3);
+    assert_eq!(report.network.allow_domains[0], "curl.se");
+    assert_eq!(report.network.allow_domains[1], "github.com");
+    assert_eq!(report.network.allow_domains[2], "storage.googleapis.com");
+
+    // DNS must be enabled (source domains need resolution + curl declares needs.dns)
+    assert!(report.network.allow_dns);
+
+    // No package declared needs.internet
+    assert!(!report.network.allow_internet);
+
+    // curl's /etc/ssl/certs should be in readonly binds
+    assert!(
+        report
+            .filesystem
+            .readonly_bind
+            .iter()
+            .any(|p| p.to_string_lossy().contains("ssl/certs")),
+        "missing /etc/ssl/certs in readonly binds"
+    );
+
+    // --- Verify the network section appears in composed JSON ---
+    let policy_json = serde_json::to_value(&report.network).unwrap();
+    let domains_json = policy_json["allow_domains"].as_array().unwrap();
+    assert_eq!(domains_json.len(), 3);
 }
 
 // ---------------------------------------------------------------------------

@@ -91,7 +91,9 @@ This maps directly to sandbox enforcement:
 - `needs = { dns }` -- nftables allowing UDP/TCP port 53 only
 - `needs = { internet }` -- nftables allowing outbound connections
 
-Most build systems treat network access as all-or-nothing. minimal.dev made it a typed, per-package declaration.
+In addition, the bridge extracts domains from `build_deps` source URLs (e.g., `github.com` from a tarball download) and adds them to the sandbox's domain allowlist. This means a package's actual network surface is the union of its declared `needs` and its source download domains -- no more, no less. A `needs = { dns }` package that downloads from `storage.googleapis.com` gets DNS + that one domain, not the whole internet.
+
+Most build systems treat network access as all-or-nothing. minimal.dev made it a typed, per-package declaration; gleisner derives the minimal domain set from the source of truth.
 
 ### Typed Outputs
 
@@ -112,12 +114,14 @@ let mut env = ComposedEnvironment::new();
 for (name, json) in &results {
     env.merge_package(name, json);
 }
-// env.dir_mappings -> sandbox bind mounts + Landlock rules
-// env.needs.dns -> nftables DNS allow
-// env.needs.internet -> nftables outbound policy
+// env.dir_mappings      -> sandbox bind mounts + Landlock rules
+// env.needs.dns         -> nftables DNS allow
+// env.needs.internet    -> nftables outbound policy
+// env.source_domains    -> per-domain nftables allowlist
+// env.state_wirings     -> persistent cache directories
 ```
 
-Conflicts (same path, different read_only flags) are resolved conservatively with warnings.
+Conflicts (same path, different read_only flags) are resolved conservatively with warnings. Source domains are deduplicated across packages (first occurrence tracked for provenance).
 
 ### Layers, Harnesses, and Automatic Environment Provisioning
 

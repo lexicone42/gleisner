@@ -127,6 +127,7 @@ Verification changes (1):
 - **Diffable**: `forge-diff` shows exactly what changed between runs
 - **Trust separation**: package authors declare properties, forge independently verifies them
 - **Graceful degradation**: packages without proofs are `unchecked`, not failed
+- **Minimal network surface**: source URLs in `build_deps` are parsed to derive the exact domain allowlist — the sandbox allows only the domains the packages actually need
 
 ## Built with
 

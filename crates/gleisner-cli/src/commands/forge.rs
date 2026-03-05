@@ -310,10 +310,11 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
     }
 
     eprintln!(
-        "forge: composed {} RO + {} RW dirs, {} state wirings, dns={}, internet={}",
+        "forge: composed {} RO + {} RW dirs, {} state wirings, {} source domains, dns={}, internet={}",
         report.filesystem.readonly_bind.len(),
         report.filesystem.readwrite_bind.len(),
         report.state_wirings.len(),
+        report.network.allow_domains.len(),
         report.network.allow_dns,
         report.network.allow_internet,
     );
@@ -520,6 +521,13 @@ fn run_in_composed_sandbox(
         profile.network.default = gleisner_polis::profile::PolicyDefault::Allow;
     }
 
+    // Merge source-derived domains into the profile's allowlist
+    for domain in &report.network.allow_domains {
+        if !profile.network.allow_domains.contains(domain) {
+            profile.network.allow_domains.push(domain.clone());
+        }
+    }
+
     let inner_command =
         gleisner_polis::build_claude_inner_command(&args.claude_bin, &profile, &args.claude_args);
 
@@ -597,6 +605,7 @@ fn run_in_composed_sandbox(
             "network": {
                 "allow_dns": report.network.allow_dns,
                 "allow_internet": report.network.allow_internet,
+                "source_derived_domains": report.network.allow_domains,
             },
             "state_wirings": report.state_wirings,
             "credential_paths_excluded": report.credential_paths.len(),

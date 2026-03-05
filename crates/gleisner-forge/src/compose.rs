@@ -43,6 +43,17 @@ pub struct StateWiring {
     pub package: String,
 }
 
+/// A domain required by a package's source declarations.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct SourceDomain {
+    /// The domain name (e.g., `github.com`).
+    pub domain: String,
+    /// Which package declared this source.
+    pub package: String,
+    /// The full URL this was extracted from.
+    pub source_url: String,
+}
+
 /// Abstract needs declared by packages.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct MergedNeeds {
@@ -63,6 +74,11 @@ pub struct ComposedEnvironment {
     pub state_wirings: Vec<StateWiring>,
     /// Merged abstract needs (logical OR).
     pub needs: MergedNeeds,
+    /// Domains required by package source declarations.
+    ///
+    /// Extracted from `build_deps` entries with `url` fields. Each domain is
+    /// tagged with the package that declared it and the full source URL.
+    pub source_domains: Vec<SourceDomain>,
     /// Packages that contributed to this environment.
     pub packages: Vec<String>,
     /// Conflict warnings (e.g., same path with different `read_only` flags).
@@ -77,6 +93,7 @@ impl ComposedEnvironment {
             file_mappings: Vec::new(),
             state_wirings: Vec::new(),
             needs: MergedNeeds::default(),
+            source_domains: Vec::new(),
             packages: Vec::new(),
             warnings: Vec::new(),
         }
@@ -141,6 +158,29 @@ impl ComposedEnvironment {
             }
             if needs.get("internet").is_some() {
                 self.needs.internet = true;
+            }
+        }
+
+        // Extract domains from source URLs in build_deps
+        if let Some(deps) = json.get("build_deps").and_then(|d| d.as_array()) {
+            for dep in deps {
+                if let Some(url) = dep.get("url").and_then(|u| u.as_str()) {
+                    if let Some(domain) = extract_domain(url) {
+                        let sd = SourceDomain {
+                            domain: domain.clone(),
+                            package: name.to_string(),
+                            source_url: url.to_string(),
+                        };
+                        // Deduplicate by domain (keep first occurrence for provenance)
+                        if !self
+                            .source_domains
+                            .iter()
+                            .any(|existing| existing.domain == domain)
+                        {
+                            self.source_domains.push(sd);
+                        }
+                    }
+                }
             }
         }
     }
@@ -237,6 +277,28 @@ fn parse_file_mapping(value: &serde_json::Value) -> Option<FileMapping> {
         path: value.get("path")?.as_str()?.to_string(),
         class: format_class(value.get("class")?),
     })
+}
+
+/// Extract the domain from a URL string.
+///
+/// Handles `https://`, `http://`, and `gs://` (Google Cloud Storage) schemes.
+/// Returns `None` for non-URL strings (e.g., bare filenames).
+fn extract_domain(url: &str) -> Option<String> {
+    // Handle standard URLs
+    if let Some(rest) = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+    {
+        return rest.split('/').next().map(|h| {
+            // Strip port if present
+            h.split(':').next().unwrap_or(h).to_string()
+        });
+    }
+    // gs:// URLs don't correspond to a network domain (accessed via API)
+    if url.starts_with("gs://") {
+        return Some("storage.googleapis.com".to_string());
+    }
+    None
 }
 
 /// Nickel enum tags serialize as `"Credential"` or `{"Credential": {}}` depending
@@ -390,5 +452,93 @@ mod tests {
         assert_eq!(env.state_wirings.len(), 1);
         assert_eq!(env.state_wirings[0].prefix, "cargo");
         assert!(env.warnings.iter().any(|w| w.contains("CARGO_HOME")));
+    }
+
+    #[test]
+    fn source_domains_extracted_from_build_deps() {
+        let mut env = ComposedEnvironment::new();
+        let json = serde_json::json!({
+            "name": "curl",
+            "attrs": {},
+            "needs": {"dns": {}},
+            "build_deps": [
+                {"file": "build.sh"},
+                {
+                    "url": "https://github.com/curl/curl/releases/download/curl-8_11_0/curl-8.11.0.tar.gz",
+                    "sha256": "abc123",
+                },
+                {
+                    "url": "https://storage.googleapis.com/minimal-os/patches/curl-fix.patch",
+                    "sha256": "def456",
+                },
+            ],
+        });
+        env.merge_package("curl", &json);
+
+        assert_eq!(env.source_domains.len(), 2);
+        assert_eq!(env.source_domains[0].domain, "github.com");
+        assert_eq!(env.source_domains[0].package, "curl");
+        assert_eq!(env.source_domains[1].domain, "storage.googleapis.com");
+    }
+
+    #[test]
+    fn source_domains_dedup_across_packages() {
+        let mut env = ComposedEnvironment::new();
+        let j1 = serde_json::json!({
+            "name": "zlib",
+            "attrs": {},
+            "needs": {},
+            "build_deps": [{"url": "https://github.com/madler/zlib/archive/v1.3.1.tar.gz", "sha256": "a"}],
+        });
+        let j2 = serde_json::json!({
+            "name": "curl",
+            "attrs": {},
+            "needs": {},
+            "build_deps": [{"url": "https://github.com/curl/curl/archive/curl-8.tar.gz", "sha256": "b"}],
+        });
+        env.merge_package("zlib", &j1);
+        env.merge_package("curl", &j2);
+
+        // github.com appears once (from zlib, first occurrence)
+        assert_eq!(env.source_domains.len(), 1);
+        assert_eq!(env.source_domains[0].domain, "github.com");
+        assert_eq!(env.source_domains[0].package, "zlib");
+    }
+
+    #[test]
+    fn source_domains_gs_url_maps_to_storage_api() {
+        let mut env = ComposedEnvironment::new();
+        let json = serde_json::json!({
+            "name": "openssh",
+            "attrs": {},
+            "needs": {},
+            "build_deps": [{"url": "gs://minimal-staging-archives/openssh-10.2p1.tar.gz", "sha256": "c"}],
+        });
+        env.merge_package("openssh", &json);
+
+        assert_eq!(env.source_domains.len(), 1);
+        assert_eq!(env.source_domains[0].domain, "storage.googleapis.com");
+    }
+
+    #[test]
+    fn extract_domain_handles_edge_cases() {
+        assert_eq!(
+            extract_domain("https://example.com/file.tar.gz"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_domain("https://example.com:8080/file.tar.gz"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_domain("http://mirror.example.org/pkg.deb"),
+            Some("mirror.example.org".to_string())
+        );
+        assert_eq!(
+            extract_domain("gs://bucket-name/object"),
+            Some("storage.googleapis.com".to_string())
+        );
+        assert_eq!(extract_domain("build.sh"), None);
+        assert_eq!(extract_domain("./local/file.patch"), None);
     }
 }
