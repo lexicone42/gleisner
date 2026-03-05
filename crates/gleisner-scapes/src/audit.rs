@@ -103,6 +103,14 @@ pub enum EventKind {
         /// SHA-256 hex digest of the value.
         value_sha256: String,
     },
+
+    /// A syscall was observed (from seccomp audit log in `log` mode).
+    Syscall {
+        /// The syscall number (architecture-dependent).
+        number: i64,
+        /// The syscall name (e.g., `"read"`, `"write"`).
+        name: String,
+    },
 }
 
 /// Whether the action was allowed or denied by the sandbox policy.

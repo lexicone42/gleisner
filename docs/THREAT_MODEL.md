@@ -32,7 +32,7 @@ and Claude Code to provide:
   and policy evaluation (JSON rules or WASM/OPA).
 - **Audit logging** (`gleisner-scapes`) -- timestamped, sequenced JSONL event
   streams covering every observable action inside the sandbox.
-- **SBOM generation** (`gleisner-bridger`) -- CycloneDX 1.5 SBOMs from
+- **SBOM generation** (`gleisner-bridger`) -- CycloneDX 1.6 SBOMs from
   Cargo.lock with per-dependency provenance.
 - **Profile learning** (`gleisner learn`) -- generates sandbox profiles from
   kernel audit log observations (Landlock V7 denial events).
@@ -59,7 +59,7 @@ Gleisner's attestation pipeline targets:
 - [**Sigstore**](https://sigstore.dev/) -- keyless signing via Fulcio and
   transparency logging via Rekor, with local ECDSA P-256 fallback for
   air-gapped environments.
-- [**CycloneDX 1.5**](https://cyclonedx.org/) -- SBOM format with Gleisner
+- [**CycloneDX 1.6**](https://cyclonedx.org/) -- SBOM format with Gleisner
   trust annotations.
 
 ---
@@ -69,12 +69,12 @@ Gleisner's attestation pipeline targets:
 > For the full system architecture, crate map, data flow diagrams, and
 > implementation details, see [ARCHITECTURE.md](ARCHITECTURE.md).
 
-Gleisner consists of eight crates. Two are user-facing entry points
+Gleisner consists of nine crates. Two are user-facing entry points
 (`gleisner-cli` and `gleisner-tui`); one is an internal trampoline
 (`gleisner-sandbox-init`). The library crates are: sandbox enforcement
 (`gleisner-polis`), attestation creation (`gleisner-introdus`), verification
-(`gleisner-lacerta`), audit logging (`gleisner-scapes`), and SBOM generation
-(`gleisner-bridger`).
+(`gleisner-lacerta`), audit logging (`gleisner-scapes`), SBOM generation
+(`gleisner-bridger`), and Nickel package evaluation (`gleisner-forge`).
 
 The critical trust boundary is the `gleisner-polis` sandbox. Everything inside
 it is untrusted -- Claude Code may execute arbitrary commands, read arbitrary
@@ -432,7 +432,7 @@ permissions as the sandboxed process. They can read/write any file the sandbox
 allows and make network connections to any allowlisted domain.
 
 **Gleisner Mitigation:**
-- `gleisner-bridger` SBOM generation: produces CycloneDX 1.5 SBOMs that
+- `gleisner-bridger` SBOM generation: produces CycloneDX 1.6 SBOMs that
   annotate each dependency with whether it was introduced by Claude Code or
   pre-existing, enabling targeted review.
 - `gleisner-polis` sandbox: limits blast radius by constraining filesystem and
@@ -960,9 +960,9 @@ mitigation.
 | **LACERTA-001** Prompt injection / credential exfil | Filesystem deny, network allowlist | CLAUDE.md hash in provenance | Command logging | -- | Policy checks on attestation |
 | **LACERTA-002** Malicious dependency introduction | Sandbox limits blast radius | Materials list in provenance | Bash command log | Trust-annotated SBOM, dependency diff | Policy requiring SBOM review |
 | **LACERTA-003** CLAUDE.md disables security | External enforcement (immune) | CLAUDE.md hash in attestation | Session metadata logged | -- | Policy requiring CLAUDE.md hash match |
-| **LACERTA-004** Bash escape from project scope | Namespaces, Landlock, cgroups, rlimits | Sandbox profile in provenance | All commands logged | -- | Policy requiring sandbox profile |
+| **LACERTA-004** Bash escape from project scope | Namespaces, Landlock, seccomp-BPF, cgroups, rlimits | Sandbox profile in provenance | All commands logged | -- | Policy requiring sandbox profile |
 | **LACERTA-005** DNS/HTTP side-channel exfil | DNS policy, network allowlist | -- | Network activity logged | -- | -- |
-| **LACERTA-006** TOCTOU on sandbox boundary | Atomic namespace creation, no-new-privs | Profile digest in attestation | -- | -- | Digest verification |
+| **LACERTA-006** TOCTOU on sandbox boundary | Atomic namespace creation, no-new-privs, seccomp | Profile digest in attestation | -- | -- | Digest verification |
 | **LACERTA-007** Attestation forgery/tampering | -- | Sigstore signing, timestamps, audit log digest | Audit log as ground truth | -- | Signature verification, digest checks, OPA policy |
 | **LACERTA-008** Gleisner dependency compromise | -- | -- | -- | -- | cargo-deny, lockfile pinning, forbid unsafe |
 | **LACERTA-009** Attestation chain manipulation | `.gleisner/` read-only in sandbox | Chain digest linking, payload canonicalization, cycle detection, duplicate digest handling | -- | -- | Chain verification (`--chain`), unsigned link detection, `require_parent_attestation` policy |

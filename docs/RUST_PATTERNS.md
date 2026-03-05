@@ -26,6 +26,9 @@ idioms -- not textbook exercises. They solve real problems.
 13. [Fork-Before-Exec for Namespace Entry](#13-fork-before-exec-for-namespace-entry)
 14. [Extending Bitflags with Raw Bits](#14-extending-bitflags-with-raw-bits)
 15. [cfg-Gated Platform Abstraction](#15-cfg-gated-platform-abstraction)
+16. [UTF-8 Safe String Truncation](#16-utf-8-safe-string-truncation)
+17. [Bidirectional Static Lookup Tables](#17-bidirectional-static-lookup-tables)
+18. [Function-Parameter Dependency Injection](#18-function-parameter-dependency-injection)
 
 ---
 
@@ -1182,6 +1185,167 @@ Key details:
   warnings while making it clear the parameter is intentionally ignored.
 
 **Rust docs:** [Conditional compilation](https://doc.rust-lang.org/reference/conditional-compilation.html), [cfg attribute](https://doc.rust-lang.org/reference/conditional-compilation.html#the-cfg-attribute)
+
+---
+
+## 16. UTF-8 Safe String Truncation
+
+**What it is:** Truncating strings at character boundaries rather than raw byte
+offsets, preventing panics on multi-byte UTF-8 characters.
+
+**Why it matters:** Rust strings are UTF-8, but `&s[..100]` indexes by bytes, not
+characters. If byte 100 lands inside a multi-byte character (e.g., `—` is 3 bytes),
+the program panics with `byte index 100 is not a char boundary`. This is especially
+common in TUI applications that truncate strings for display.
+
+From `gleisner-tui/src/app.rs`:
+
+```rust
+/// Truncate a string at a char boundary, appending "..." if truncated.
+fn truncate_str(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_owned();
+    }
+    // Walk backwards from max_bytes to find the nearest valid char boundary
+    let end = (0..=max_bytes)
+        .rev()
+        .find(|&i| s.is_char_boundary(i))
+        .unwrap_or(0);
+    format!("{}...", &s[..end])
+}
+```
+
+Key details:
+
+- **`is_char_boundary(i)`** returns true if byte index `i` is the start of a
+  UTF-8 character (or the end of the string). Walking backwards from `max_bytes`
+  finds the nearest valid truncation point without splitting a character.
+- **`unwrap_or(0)`** handles the degenerate case where the string starts with a
+  multi-byte character longer than `max_bytes` — return an empty prefix rather
+  than panicking.
+- The alternative `s.chars().take(n)` is O(n) in the string length and gives
+  character count, not byte count. For display truncation where you care about
+  approximate visual width, byte-based truncation with boundary correction is
+  more appropriate.
+- This is a **runtime crash** in release builds, not a compile-time error.
+  Clippy does not catch it. The only defense is never using `&s[..n]` on
+  untrusted string lengths.
+
+**Rust docs:** [`str::is_char_boundary`](https://doc.rust-lang.org/std/primitive.str.html#method.is_char_boundary)
+
+---
+
+## 17. Bidirectional Static Lookup Tables
+
+**What it is:** Using a static slice of `(name, number)` tuples for both
+name-to-number and number-to-name lookups, avoiding duplicate data or HashMap
+overhead for compile-time-known mappings.
+
+**Why it matters:** The seccomp syscall table needs both directions — BPF filter
+compilation needs name→number (profile defines allowlist by name), and audit log
+parsing needs number→name (kernel reports blocked syscalls by number). Maintaining
+two separate data structures invites inconsistency.
+
+From `gleisner-sandbox-init/src/seccomp.rs`:
+
+```rust
+/// Syscall name ↔ number mapping for x86_64.
+/// Source: Linux kernel arch/x86/entry/syscalls/syscall_64.tbl
+static SYSCALL_TABLE: &[(&str, i64)] = &[
+    ("read", 0),
+    ("write", 1),
+    ("open", 2),
+    // ... ~170 entries
+    ("io_uring_setup", 425),
+    ("io_uring_enter", 426),
+    ("io_uring_register", 427),
+];
+
+pub(crate) fn syscall_name_to_number(name: &str) -> Option<i64> {
+    SYSCALL_TABLE.iter().find(|(n, _)| *n == name).map(|(_, num)| *num)
+}
+
+pub(crate) fn syscall_number_to_name(number: i64) -> Option<&'static str> {
+    SYSCALL_TABLE.iter().find(|(_, num)| *num == number).map(|(name, _)| *name)
+}
+```
+
+Key details:
+
+- **Single source of truth**: both lookup functions scan the same slice. Adding
+  a syscall in one place makes it available in both directions. Tests verify no
+  duplicate names or numbers.
+- **O(n) is fine here**: ~170 entries, each lookup is a linear scan. For tables
+  this small, the constant factor of a `HashMap` (hashing, allocation, pointer
+  chasing) outweighs the linear scan cost. `phf` would be zero-cost at runtime
+  but adds a proc-macro dependency for minimal gain.
+- **`&'static str` lifetimes**: string literals in static slices have `'static`
+  lifetime, so `syscall_number_to_name` can return `&'static str` without
+  allocation — the caller gets a reference directly into the binary's read-only
+  data segment.
+- **Architecture gating**: the table is `#[cfg(target_arch = "x86_64")]` with a
+  stub for other architectures, since syscall numbers are architecture-dependent.
+
+**Rust docs:** [`static` items](https://doc.rust-lang.org/reference/items/static-items.html), [slice patterns](https://doc.rust-lang.org/reference/patterns.html#slice-patterns)
+
+---
+
+## 18. Function-Parameter Dependency Injection
+
+**What it is:** Passing a function (closure or fn pointer) as a parameter to
+decouple a library from implementation details that belong in a different crate.
+
+**Why it matters:** `gleisner-polis` (the sandbox policy library) needs to parse
+seccomp audit logs and map syscall numbers to names. But the syscall name table
+lives in `gleisner-sandbox-init` (which depends on `gleisner-polis`, not the
+other way around). Adding a reverse dependency would create a cycle.
+
+From `gleisner-polis/src/audit_log.rs`:
+
+```rust
+/// Parse SECCOMP audit records and convert to AuditEvents.
+/// The `name_resolver` maps architecture-specific syscall numbers to names.
+pub fn parse_seccomp_observations<F>(
+    path: &Path,
+    name_resolver: F,
+) -> Result<Vec<AuditEvent>, std::io::Error>
+where
+    F: Fn(i64) -> Option<String>,
+{
+    // ... parse lines, extract syscall numbers ...
+    let name = name_resolver(syscall_num)
+        .unwrap_or_else(|| format!("syscall_{syscall_num}"));
+    // ...
+}
+```
+
+The caller in `gleisner-polis` (or wherever the pipeline is wired) provides
+the concrete resolver:
+
+```rust
+use gleisner_sandbox_init::seccomp::syscall_number_to_name;
+
+let events = parse_seccomp_observations(&audit_path, |num| {
+    syscall_number_to_name(num).map(String::from)
+})?;
+```
+
+Key details:
+
+- **No trait needed**: for a single function, `Fn(i64) -> Option<String>` is
+  simpler than defining a `SyscallResolver` trait. Traits are appropriate when
+  you need multiple methods, state, or dynamic dispatch across different
+  implementations.
+- **Monomorphization**: the generic `F` is monomorphized at compile time — zero
+  runtime overhead. The closure becomes a direct function call in the compiled
+  code.
+- **Testability**: unit tests in `gleisner-polis` pass a trivial lambda
+  (`|n| Some(format!("syscall_{n}"))`) without needing the full syscall table.
+  The real table is only needed at the integration boundary.
+- This is essentially manual dependency injection without a framework. The
+  function parameter is the "injection point" and the closure is the "binding."
+
+**Rust docs:** [`Fn` traits](https://doc.rust-lang.org/std/ops/trait.Fn.html), [closures](https://doc.rust-lang.org/book/ch13-01-closures.html)
 
 ---
 

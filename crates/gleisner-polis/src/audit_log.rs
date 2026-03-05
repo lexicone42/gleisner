@@ -343,6 +343,165 @@ pub fn parse_kernel_denials(path: &Path) -> Result<Vec<AuditEvent>, std::io::Err
     Ok(events)
 }
 
+// ── Seccomp observation parsing ─────────────────────────────────────
+//
+// When seccomp is set to `SECCOMP_RET_LOG` (learning mode), the kernel
+// writes audit records for every filtered syscall:
+//
+// ```text
+// type=SECCOMP msg=audit(1764079004.833:1261): auid=1000 uid=1000 gid=1000
+//   ses=1 pid=12345 comm="node" exe="/usr/bin/node" sig=0 arch=c000003e
+//   syscall=314 compat=0 ip=0x7f... code=0x7ffc0000
+// ```
+//
+// We extract the `syscall=NNN` field and convert it to a name using the
+// syscall table in `gleisner-sandbox-init/src/seccomp.rs`.
+
+/// The audit type identifiers for seccomp records.
+const SECCOMP_TYPE_NUMERIC: &str = "UNKNOWN[1326]";
+const SECCOMP_TYPE_NAMED: &str = "SECCOMP";
+
+/// A parsed seccomp observation from the kernel audit log.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SeccompObservation {
+    /// When the syscall was observed.
+    pub timestamp: DateTime<Utc>,
+    /// The syscall number.
+    pub syscall: i64,
+    /// The command name (from `comm=`).
+    pub comm: Option<String>,
+}
+
+/// Check whether a line is a seccomp audit record.
+fn is_seccomp_record(line: &str) -> bool {
+    // Must contain "type=SECCOMP" or "type=UNKNOWN[1326]" (or "type=1326")
+    // but NOT be a Landlock record
+    if is_landlock_record(line) {
+        return false;
+    }
+    line.contains(SECCOMP_TYPE_NAMED) || line.contains(SECCOMP_TYPE_NUMERIC)
+}
+
+/// Parse a single seccomp audit line into a `SeccompObservation`.
+pub fn parse_seccomp_line(line: &str) -> Option<SeccompObservation> {
+    if !is_seccomp_record(line) {
+        return None;
+    }
+
+    let timestamp = parse_audit_timestamp(line)?;
+    let syscall_str = extract_field(line, "syscall")?;
+    let syscall: i64 = syscall_str.parse().ok()?;
+    let comm = extract_field(line, "comm").map(|s| s.trim_matches('"').to_owned());
+
+    Some(SeccompObservation {
+        timestamp,
+        syscall,
+        comm,
+    })
+}
+
+/// Parse seccomp observations from a kernel audit log file and return
+/// them as [`AuditEvent`]s with [`EventKind::Syscall`].
+///
+/// Each unique syscall number produces one event (deduplicated).
+/// The `name` field uses the syscall name table when available, falling
+/// back to `"syscall_NNN"` for unknown numbers.
+///
+/// # Arguments
+///
+/// * `path` — Path to the audit log file
+/// * `name_resolver` — Function that maps syscall numbers to names.
+///   Use `gleisner_sandbox_init::seccomp::syscall_number_to_name` when available,
+///   or pass a closure that returns `None` for all (names will be `"syscall_NNN"`).
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read.
+pub fn parse_seccomp_observations<F>(
+    path: &Path,
+    name_resolver: F,
+) -> Result<Vec<AuditEvent>, std::io::Error>
+where
+    F: Fn(i64) -> Option<&'static str>,
+{
+    let contents = std::fs::read_to_string(path)?;
+    let mut events = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for line in contents.lines() {
+        if let Some(obs) = parse_seccomp_line(line) {
+            // Deduplicate: one event per unique syscall number
+            if seen.insert(obs.syscall) {
+                let name = name_resolver(obs.syscall)
+                    .map_or_else(|| format!("syscall_{}", obs.syscall), String::from);
+                events.push(AuditEvent {
+                    timestamp: obs.timestamp,
+                    sequence: 0,
+                    event: EventKind::Syscall {
+                        number: obs.syscall,
+                        name,
+                    },
+                    result: EventResult::Allowed, // RET_LOG allows the call
+                });
+            }
+        }
+    }
+
+    Ok(events)
+}
+
+/// Collect seccomp observations from the kernel audit log and publish
+/// them to the event bus, filtering to the session time window.
+///
+/// Returns the number of unique syscalls published.
+pub fn collect_and_publish_seccomp<F>(
+    config: &KernelAuditConfig,
+    publisher: &EventPublisher,
+    name_resolver: F,
+) -> usize
+where
+    F: Fn(i64) -> Option<&'static str>,
+{
+    let contents = match std::fs::read_to_string(&config.audit_log_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(
+                path = %config.audit_log_path.display(),
+                error = %e,
+                "could not read kernel audit log for seccomp observations"
+            );
+            return 0;
+        }
+    };
+
+    let mut count = 0;
+    let mut seen = std::collections::HashSet::new();
+
+    for line in contents.lines() {
+        if let Some(obs) = parse_seccomp_line(line) {
+            if obs.timestamp < config.session_start || obs.timestamp > config.session_end {
+                continue;
+            }
+            if seen.insert(obs.syscall) {
+                let name = name_resolver(obs.syscall)
+                    .map_or_else(|| format!("syscall_{}", obs.syscall), String::from);
+                publisher.publish(AuditEvent {
+                    timestamp: obs.timestamp,
+                    sequence: 0,
+                    event: EventKind::Syscall {
+                        number: obs.syscall,
+                        name,
+                    },
+                    result: EventResult::Allowed,
+                });
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
+
 // ── Firewall denial parsing ─────────────────────────────────────────
 //
 // nftables/iptables `log` rules produce kernel log entries like:
@@ -968,6 +1127,117 @@ mod tests {
                 let events = parse_kernel_denials(&path).expect("should parse");
                 prop_assert_eq!(events.len(), line_count);
             }
+        }
+    }
+
+    // ── Seccomp observation tests ────────────────────────────────────
+
+    const SECCOMP_LINE: &str = "type=SECCOMP msg=audit(1764079004.833:1261): auid=1000 uid=1000 gid=1000 ses=1 pid=12345 comm=\"node\" exe=\"/usr/bin/node\" sig=0 arch=c000003e syscall=0 compat=0 ip=0x7f1234567890 code=0x7ffc0000";
+    const SECCOMP_LINE_314: &str = "type=SECCOMP msg=audit(1764079005.000:1262): auid=1000 uid=1000 gid=1000 ses=1 pid=12345 comm=\"node\" exe=\"/usr/bin/node\" sig=0 arch=c000003e syscall=314 compat=0 ip=0x7f1234567890 code=0x7ffc0000";
+    const SECCOMP_NUMERIC_TYPE: &str = "type=UNKNOWN[1326] msg=audit(1764079006.000:1263): auid=1000 uid=1000 gid=1000 ses=1 pid=12345 comm=\"node\" exe=\"/usr/bin/node\" sig=0 arch=c000003e syscall=1 compat=0 ip=0x7f1234567890 code=0x7ffc0000";
+
+    #[test]
+    fn parse_seccomp_named_type() {
+        let obs = parse_seccomp_line(SECCOMP_LINE).expect("should parse");
+        assert_eq!(obs.syscall, 0);
+        assert_eq!(obs.comm.as_deref(), Some("node"));
+        assert_eq!(obs.timestamp.timestamp(), 1_764_079_004);
+    }
+
+    #[test]
+    fn parse_seccomp_numeric_type() {
+        let obs = parse_seccomp_line(SECCOMP_NUMERIC_TYPE).expect("should parse");
+        assert_eq!(obs.syscall, 1);
+        assert_eq!(obs.comm.as_deref(), Some("node"));
+    }
+
+    #[test]
+    fn parse_seccomp_not_landlock() {
+        assert!(parse_seccomp_line(FS_DENIAL).is_none());
+        assert!(parse_seccomp_line(NET_DENIAL).is_none());
+    }
+
+    #[test]
+    fn parse_seccomp_not_random_line() {
+        assert!(
+            parse_seccomp_line("type=SYSCALL msg=audit(2000.000:1): arch=c000003e syscall=257")
+                .is_none()
+        );
+        assert!(parse_seccomp_line("").is_none());
+    }
+
+    #[test]
+    fn parse_seccomp_observations_from_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("audit.log");
+
+        let content = [
+            SECCOMP_LINE,
+            SECCOMP_LINE_314,
+            SECCOMP_LINE, // duplicate syscall=0
+            FS_DENIAL,    // Landlock, not seccomp
+            SECCOMP_NUMERIC_TYPE,
+        ]
+        .join("\n");
+        std::fs::write(&log_path, content).unwrap();
+
+        let events = parse_seccomp_observations(&log_path, |nr| match nr {
+            0 => Some("read"),
+            1 => Some("write"),
+            _ => None,
+        })
+        .expect("should parse");
+
+        assert_eq!(events.len(), 3, "3 unique syscalls: 0, 314, 1");
+
+        let names: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match &e.event {
+                EventKind::Syscall { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(names.contains(&"read"));
+        assert!(names.contains(&"write"));
+        assert!(names.contains(&"syscall_314"));
+
+        for event in &events {
+            assert!(matches!(event.result, EventResult::Allowed));
+        }
+    }
+
+    #[test]
+    fn collect_seccomp_with_time_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("audit.log");
+
+        let lines = [
+            "type=SECCOMP msg=audit(1000.000:1): auid=1000 uid=1000 gid=1000 ses=1 pid=1 comm=\"a\" syscall=0 arch=c000003e code=0x7ffc0000",
+            "type=SECCOMP msg=audit(2000.000:2): auid=1000 uid=1000 gid=1000 ses=1 pid=1 comm=\"a\" syscall=1 arch=c000003e code=0x7ffc0000",
+            "type=SECCOMP msg=audit(3000.000:3): auid=1000 uid=1000 gid=1000 ses=1 pid=1 comm=\"a\" syscall=2 arch=c000003e code=0x7ffc0000",
+        ];
+        std::fs::write(&log_path, lines.join("\n")).unwrap();
+
+        let bus = gleisner_scapes::stream::EventBus::new();
+        let mut rx = bus.subscribe();
+        let publisher = bus.publisher();
+
+        let config = KernelAuditConfig {
+            session_start: Utc.timestamp_opt(1500, 0).unwrap(),
+            session_end: Utc.timestamp_opt(2500, 0).unwrap(),
+            audit_log_path: log_path,
+        };
+
+        let count = collect_and_publish_seccomp(&config, &publisher, |_| None);
+        assert_eq!(count, 1, "only the t=2000 record should be in window");
+
+        let event = rx.try_recv().expect("should have one event");
+        match &event.event {
+            EventKind::Syscall { number, name } => {
+                assert_eq!(*number, 1);
+                assert_eq!(name, "syscall_1");
+            }
+            other => panic!("expected Syscall, got {other:?}"),
         }
     }
 }

@@ -298,3 +298,77 @@ The sandbox uses overlay-style mount ordering:
 
 Subdirectory bind mounts in Phase 2 correctly override parent mounts
 from Phase 1. This is standard Linux behavior.
+
+---
+
+## 7. Seccomp-BPF Debugging
+
+### Learning mode: discover required syscalls
+
+If a sandboxed command fails under seccomp and you don't know which syscall was blocked, switch to learning mode:
+
+1. Edit the profile's `[process.seccomp]` section:
+
+```toml
+[process.seccomp]
+preset = "nodejs"
+default_action = "log"  # allow all, but log via kernel audit
+```
+
+2. Run your sandboxed session normally. Every filtered syscall is logged to the kernel audit subsystem (type 1326 / `SECCOMP`).
+
+3. Read the audit log (requires root):
+
+```bash
+sudo grep SECCOMP /var/log/audit/audit.log | tail -20
+# Example output:
+# type=SECCOMP ... syscall=334 ... comm="node"
+# type=SECCOMP ... syscall=345 ... comm="node"
+```
+
+4. Run `gleisner learn` to auto-generate a tightened custom profile:
+
+```bash
+gleisner learn --kernel-audit-log /var/log/audit/audit.log --base-profile developer
+```
+
+This parses the SECCOMP records, maps syscall numbers to names (e.g., 334 → `rseq`), and produces a `custom` seccomp preset with the exact allowlist observed during the session.
+
+### Interpreting SECCOMP audit records
+
+Audit records look like:
+
+```
+type=SECCOMP msg=audit(1709500000.123:456): auid=1000 uid=0 gid=0 ses=1 pid=12345 comm="node" exe="/usr/bin/node" sig=0 arch=c000003e syscall=334 compat=0 ip=0x7f... code=0x7ffc0000
+```
+
+Key fields:
+- `syscall=NNN` — the syscall number (x86_64). Map to name via `ausyscall NNN` or the table in `seccomp.rs`
+- `comm="..."` — the executable that attempted the call
+- `code=0x7ffc0000` — `SECCOMP_RET_LOG` (allowed but logged)
+- `sig=0` — no signal sent (vs. `sig=9` for SECCOMP_RET_KILL)
+
+### Common missing syscalls
+
+| Symptom | Missing syscall | Notes |
+|---------|----------------|-------|
+| DNS resolution fails (`EAI_AGAIN`) | `sendmmsg`, `recvmmsg` | glibc sends parallel A+AAAA queries |
+| `rseq` warning on startup | `rseq` | glibc 2.35+ thread registration |
+| Clone fails | `clone3` | Modern glibc prefers `clone3` over `clone` |
+| Random number generation hangs | `getrandom` | V8 entropy source |
+
+### SandboxSpec seccomp field
+
+Add seccomp to a diagnostic spec:
+
+```json
+{
+  "seccomp": {
+    "preset": "nodejs",
+    "default_action": "errno",
+    "allow_syscalls": []
+  }
+}
+```
+
+Set `"default_action": "log"` to discover what's needed, then `"errno"` to enforce. For maximum strictness, use `"kill"` — the process dies on the first blocked syscall, making the failure unambiguous.

@@ -272,6 +272,9 @@ gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --run
 
 # Evaluate specific packages only
 gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --packages gcc,zlib
+
+# Generate proof-carrying CycloneDX 1.6 SBOM with Declarations
+gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify --sbom
 ```
 
 ### Programmatic

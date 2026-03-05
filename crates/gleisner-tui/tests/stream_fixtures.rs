@@ -39,7 +39,11 @@ fn simple_response_parses_completely() {
             .iter()
             .map(|l| {
                 let preview = if l.len() > 200 {
-                    format!("{}...", &l[..200])
+                    let end = (0..=200)
+                        .rev()
+                        .find(|&i| l.is_char_boundary(i))
+                        .unwrap_or(0);
+                    format!("{}...", &l[..end])
                 } else {
                     l.clone()
                 };
@@ -96,7 +100,11 @@ fn tool_use_response_parses_completely() {
             .iter()
             .map(|l| {
                 let preview = if l.len() > 200 {
-                    format!("{}...", &l[..200])
+                    let end = (0..=200)
+                        .rev()
+                        .find(|&i| l.is_char_boundary(i))
+                        .unwrap_or(0);
+                    format!("{}...", &l[..end])
                 } else {
                     l.clone()
                 };

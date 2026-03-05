@@ -41,7 +41,8 @@ kernel primitives. Claude Code runs inside a restricted environment where:
   paths.
 - Network egress is restricted to an explicit domain allowlist.
 - Process visibility is limited to the sandbox's own PID namespace.
-- Resource consumption is bounded by cgroups v2 and rlimits (FSIZE, AS, NPROC, NOFILE).
+- Resource consumption is bounded by cgroups v2 and rlimits (FSIZE, NPROC, NOFILE).
+- Syscall access is filtered by seccomp-BPF (blocking dangerous calls like `mount`, `ptrace`, `bpf`, `io_uring`).
 
 These constraints are applied externally at the kernel level. Claude Code
 cannot disable them from within the sandbox.
@@ -131,7 +132,7 @@ is recorded but not required (to support air-gapped verification).
 > rationale, see
 > [ARCHITECTURE.md § Sandbox Architecture](ARCHITECTURE.md#sandbox-architecture).
 
-Gleisner implements defense in depth through five independent isolation layers,
+Gleisner implements defense in depth through six independent isolation layers,
 each enforced by a different Linux kernel subsystem:
 
 | Layer | Mechanism | Purpose |
@@ -139,12 +140,14 @@ each enforced by a different Linux kernel subsystem:
 | 1 | User namespaces | Unprivileged isolation -- sandboxed process has no real host privileges |
 | 2 | Mount namespace + pivot_root | Bind-mounts, tmpfs deny, PID namespace, die-with-parent (`PR_SET_PDEATHSIG`) |
 | 3 | Landlock LSM (V7) | Filesystem and network access control, IPC scope isolation, `PR_SET_NO_NEW_PRIVS`, kernel audit logging |
-| 4 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits (cgroups with rlimit fallback) |
-| 5 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
+| 4 | Seccomp-BPF | Syscall filtering -- blocks dangerous syscalls (`mount`, `ptrace`, `bpf`, `io_uring`). Presets: `nodejs` (V8-aware allowlist), `custom` (learned from real sessions via `gleisner learn`) |
+| 5 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits (cgroups with rlimit fallback) |
+| 6 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
 
 Compromising one layer does not automatically compromise the others. For
 example, even if the mount namespace is bypassed, Landlock
-independently restricts filesystem access.
+independently restricts filesystem access. Seccomp-BPF prevents
+the process from calling `mount` or `ptrace` regardless of namespace state.
 
 ---
 

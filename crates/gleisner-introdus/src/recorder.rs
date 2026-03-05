@@ -163,7 +163,8 @@ fn classify_event(
         | EventKind::ProcessExit { .. }
         | EventKind::NetworkConnect { .. }
         | EventKind::NetworkDns { .. }
-        | EventKind::EnvRead { .. } => {
+        | EventKind::EnvRead { .. }
+        | EventKind::Syscall { .. } => {
             // Counted by event_count, no material/subject tracking
         }
     }

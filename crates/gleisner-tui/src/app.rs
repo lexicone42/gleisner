@@ -333,11 +333,7 @@ impl App {
                 }
                 ContentBlock::Thinking { thinking } => {
                     if !thinking.is_empty() {
-                        let preview = if thinking.len() > 100 {
-                            format!("{}...", &thinking[..100])
-                        } else {
-                            thinking.clone()
-                        };
+                        let preview = truncate_str(thinking, 100);
                         self.push_message(Role::System, format!("[thinking] {preview}"));
                     }
                 }
@@ -529,6 +525,18 @@ fn tool_icon(name: &str) -> &'static str {
     }
 }
 
+/// Truncate a string at a char boundary, appending "..." if truncated.
+fn truncate_str(s: &str, max_bytes: usize) -> String {
+    if s.len() <= max_bytes {
+        return s.to_owned();
+    }
+    let end = (0..=max_bytes)
+        .rev()
+        .find(|&i| s.is_char_boundary(i))
+        .unwrap_or(0);
+    format!("{}...", &s[..end])
+}
+
 /// Format a tool call for display (compact one-line summary).
 fn format_tool_call(
     name: &str,
@@ -544,11 +552,7 @@ fn format_tool_call(
         "Read" | "Write" | "Edit" => file_arg("file_path"),
         "Bash" => {
             let cmd = input.get("command").and_then(|v| v.as_str()).unwrap_or("?");
-            if cmd.len() > 60 {
-                format!("{}...", &cmd[..57])
-            } else {
-                cmd.to_owned()
-            }
+            truncate_str(cmd, 60)
         }
         "Glob" => {
             let pattern = input.get("pattern").and_then(|v| v.as_str()).unwrap_or("?");
@@ -576,11 +580,7 @@ fn format_tool_call(
             if arg.is_empty() {
                 short.to_owned()
             } else {
-                let short_arg = if arg.len() > 40 {
-                    format!("{}...", &arg[..37])
-                } else {
-                    arg.to_owned()
-                };
+                let short_arg = truncate_str(arg, 40);
                 format!("{short} {short_arg}")
             }
         }

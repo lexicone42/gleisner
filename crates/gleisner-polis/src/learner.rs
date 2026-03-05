@@ -17,7 +17,7 @@ use gleisner_scapes::audit::{AuditEvent, EventKind, EventResult};
 
 use crate::profile::{
     FilesystemPolicy, NetworkPolicy, PluginPolicy, PolicyDefault, ProcessPolicy, Profile,
-    ResourceLimits,
+    ResourceLimits, SeccompAction, SeccompPolicy, SeccompPreset,
 };
 
 /// Configuration for the profile learner.
@@ -41,6 +41,8 @@ pub struct ProfileLearner {
     network_targets: BTreeSet<(String, u16)>,
     dns_queries: BTreeSet<String>,
     commands_executed: BTreeSet<String>,
+    /// Syscall names observed from seccomp audit log (learning mode).
+    observed_syscalls: BTreeSet<String>,
     denials: Vec<String>,
     event_count: u64,
 }
@@ -55,6 +57,8 @@ pub struct LearningSummary {
     pub unique_network_targets: usize,
     /// Unique commands executed.
     pub unique_commands: usize,
+    /// Unique syscalls observed (from seccomp audit log in learning mode).
+    pub unique_syscalls: usize,
     /// Number of denied events.
     pub denial_count: usize,
     /// Classified path groups.
@@ -130,6 +134,7 @@ impl ProfileLearner {
             network_targets: BTreeSet::new(),
             dns_queries: BTreeSet::new(),
             commands_executed: BTreeSet::new(),
+            observed_syscalls: BTreeSet::new(),
             denials: Vec::new(),
             event_count: 0,
         }
@@ -168,6 +173,9 @@ impl ProfileLearner {
             EventKind::NetworkDns { query, .. } => {
                 self.dns_queries.insert(query.clone());
             }
+            EventKind::Syscall { name, .. } => {
+                self.observed_syscalls.insert(name.clone());
+            }
             _ => {}
         }
     }
@@ -188,6 +196,7 @@ impl ProfileLearner {
             unique_paths: all_paths.len(),
             unique_network_targets: self.network_targets.len(),
             unique_commands: self.commands_executed.len(),
+            unique_syscalls: self.observed_syscalls.len(),
             denial_count: self.denials.len(),
             path_groups,
             detail_groups,
@@ -360,7 +369,7 @@ impl ProfileLearner {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: self.commands_executed.iter().cloned().collect(),
-                seccomp: Default::default(),
+                seccomp: self.build_seccomp_policy(),
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,
@@ -462,8 +471,45 @@ impl ProfileLearner {
             }
         }
 
+        // Merge seccomp: if we observed syscalls, extend the base's allowlist
+        if !self.observed_syscalls.is_empty() {
+            let existing: BTreeSet<String> = profile
+                .process
+                .seccomp
+                .allow_syscalls
+                .iter()
+                .cloned()
+                .collect();
+            for sc in &self.observed_syscalls {
+                if !existing.contains(sc) {
+                    profile.process.seccomp.allow_syscalls.push(sc.clone());
+                }
+            }
+            // Switch to custom preset if not already
+            if profile.process.seccomp.preset == SeccompPreset::Disabled {
+                profile.process.seccomp.preset = SeccompPreset::Custom;
+                profile.process.seccomp.default_action = SeccompAction::Errno;
+            }
+        }
+
         // Note: base disallowed_tools are preserved — never overwritten by learner
         profile
+    }
+
+    /// Build a seccomp policy from observed syscalls.
+    ///
+    /// If syscalls were observed (from seccomp audit log in `log` mode),
+    /// generates a `Custom` preset with exactly those syscalls. Otherwise
+    /// returns `Disabled` (no seccomp filtering).
+    fn build_seccomp_policy(&self) -> SeccompPolicy {
+        if self.observed_syscalls.is_empty() {
+            return SeccompPolicy::default();
+        }
+        SeccompPolicy {
+            preset: SeccompPreset::Custom,
+            default_action: SeccompAction::Errno,
+            allow_syscalls: self.observed_syscalls.iter().cloned().collect(),
+        }
     }
 }
 
@@ -564,6 +610,7 @@ pub fn format_summary(summary: &LearningSummary) -> String {
         summary.unique_network_targets
     );
     let _ = writeln!(out, "Commands executed:     {}", summary.unique_commands);
+    let _ = writeln!(out, "Unique syscalls:      {}", summary.unique_syscalls);
     let _ = writeln!(out, "Denied events:        {}", summary.denial_count);
     let _ = writeln!(out);
     let _ = writeln!(out, "Path Classification:");
@@ -1687,5 +1734,180 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn syscall_events_generate_custom_seccomp_profile() {
+        let mut learner = ProfileLearner::new(default_config());
+
+        // Observe some syscalls
+        learner.observe(&make_event(
+            0,
+            EventKind::Syscall {
+                number: 0,
+                name: "read".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        learner.observe(&make_event(
+            1,
+            EventKind::Syscall {
+                number: 1,
+                name: "write".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        learner.observe(&make_event(
+            2,
+            EventKind::Syscall {
+                number: 9,
+                name: "mmap".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        // Duplicate — should not appear twice
+        learner.observe(&make_event(
+            3,
+            EventKind::Syscall {
+                number: 0,
+                name: "read".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+
+        let (profile, summary) = learner.generate_profile();
+
+        assert_eq!(summary.unique_syscalls, 3, "3 unique syscall names");
+        assert_eq!(profile.process.seccomp.preset, SeccompPreset::Custom);
+        assert_eq!(profile.process.seccomp.allow_syscalls.len(), 3);
+        assert!(
+            profile
+                .process
+                .seccomp
+                .allow_syscalls
+                .contains(&"read".to_owned())
+        );
+        assert!(
+            profile
+                .process
+                .seccomp
+                .allow_syscalls
+                .contains(&"write".to_owned())
+        );
+        assert!(
+            profile
+                .process
+                .seccomp
+                .allow_syscalls
+                .contains(&"mmap".to_owned())
+        );
+    }
+
+    #[test]
+    fn no_syscall_events_keeps_seccomp_disabled() {
+        let mut learner = ProfileLearner::new(default_config());
+
+        // Only file events, no syscalls
+        learner.observe(&make_event(
+            0,
+            EventKind::FileRead {
+                path: PathBuf::from("/home/user/.rustup/toolchains"),
+                sha256: "abc".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+
+        let (profile, summary) = learner.generate_profile();
+
+        assert_eq!(summary.unique_syscalls, 0);
+        assert_eq!(profile.process.seccomp.preset, SeccompPreset::Disabled);
+        assert!(profile.process.seccomp.allow_syscalls.is_empty());
+    }
+
+    #[test]
+    fn merge_extends_base_seccomp() {
+        let base = Profile {
+            name: "base".to_owned(),
+            description: "base profile".to_owned(),
+            filesystem: FilesystemPolicy {
+                readonly_bind: vec![PathBuf::from("/usr")],
+                readwrite_bind: vec![],
+                deny: vec![],
+                tmpfs: vec![],
+            },
+            network: NetworkPolicy {
+                default: PolicyDefault::Deny,
+                allow_domains: vec![],
+                allow_ports: vec![],
+                allow_dns: false,
+            },
+            process: ProcessPolicy {
+                pid_namespace: true,
+                no_new_privileges: true,
+                command_allowlist: vec![],
+                seccomp: SeccompPolicy {
+                    preset: SeccompPreset::Custom,
+                    default_action: SeccompAction::Errno,
+                    allow_syscalls: vec!["read".to_owned(), "write".to_owned()],
+                },
+            },
+            resources: ResourceLimits {
+                max_memory_mb: 4096,
+                max_cpu_percent: 100,
+                max_pids: 256,
+                max_file_descriptors: 1024,
+                max_disk_write_mb: 10240,
+            },
+            plugins: PluginPolicy::default(),
+        };
+
+        let mut config = default_config();
+        config.base_profile = Some(base);
+        let mut learner = ProfileLearner::new(config);
+
+        // Observe new syscalls
+        learner.observe(&make_event(
+            0,
+            EventKind::Syscall {
+                number: 9,
+                name: "mmap".to_owned(),
+            },
+            EventResult::Allowed,
+        ));
+        learner.observe(&make_event(
+            1,
+            EventKind::Syscall {
+                number: 0,
+                name: "read".to_owned(), // already in base
+            },
+            EventResult::Allowed,
+        ));
+
+        let (profile, _) = learner.generate_profile();
+
+        // Should have base syscalls + new one
+        assert_eq!(profile.process.seccomp.preset, SeccompPreset::Custom);
+        assert!(
+            profile
+                .process
+                .seccomp
+                .allow_syscalls
+                .contains(&"read".to_owned())
+        );
+        assert!(
+            profile
+                .process
+                .seccomp
+                .allow_syscalls
+                .contains(&"write".to_owned())
+        );
+        assert!(
+            profile
+                .process
+                .seccomp
+                .allow_syscalls
+                .contains(&"mmap".to_owned())
+        );
+        assert_eq!(profile.process.seccomp.allow_syscalls.len(), 3);
     }
 }
