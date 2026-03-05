@@ -360,6 +360,7 @@ impl ProfileLearner {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: self.commands_executed.iter().cloned().collect(),
+                seccomp: Default::default(),
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,
@@ -834,6 +835,7 @@ mod tests {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,
@@ -1131,6 +1133,7 @@ mod tests {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,
@@ -1201,6 +1204,7 @@ mod tests {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,

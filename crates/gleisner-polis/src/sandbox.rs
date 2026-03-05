@@ -166,6 +166,7 @@ impl DirectSandbox {
                 Some(self.profile.resources.clone())
             },
             extra_env: self.extra_env.clone(),
+            seccomp: self.profile.process.seccomp.clone(),
         }
     }
 
@@ -295,6 +296,7 @@ mod tests {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,
@@ -442,6 +444,7 @@ mod tests {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             project_dir: PathBuf::from("/home/user/project"),
             extra_rw_paths: vec![],
@@ -453,6 +456,7 @@ mod tests {
             gid: 1000,
             resource_limits: None,
             extra_env: vec![],
+            seccomp: Default::default(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");
@@ -525,6 +529,7 @@ mod tests {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             project_dir: project_dir.clone(),
             extra_rw_paths: vec![],
@@ -536,6 +541,7 @@ mod tests {
             gid,
             resource_limits: None,
             extra_env: vec![],
+            seccomp: Default::default(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize spec");
@@ -826,6 +832,7 @@ mod tests {
                 pid_namespace: false, // nested PID ns not needed for network test
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             project_dir: project_dir.clone(),
             extra_rw_paths: vec![],
@@ -842,6 +849,7 @@ mod tests {
             gid,
             resource_limits: None,
             extra_env: vec![],
+            seccomp: Default::default(),
         };
 
         // Write spec to tempfile
@@ -957,6 +965,7 @@ mod tests {
                 pid_namespace: false,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             project_dir: PathBuf::from("/tmp/test"),
             extra_rw_paths: vec![],
@@ -971,6 +980,7 @@ mod tests {
                 ("CARGO_HOME".to_owned(), "/tmp/cargo".to_owned()),
                 ("NODE_DEBUG".to_owned(), "net,tls".to_owned()),
             ],
+            seccomp: Default::default(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");
@@ -1008,6 +1018,7 @@ mod tests {
                 pid_namespace: false,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             project_dir: PathBuf::from("/tmp/test"),
             extra_rw_paths: vec![],
@@ -1019,6 +1030,7 @@ mod tests {
             gid: 100,
             resource_limits: None,
             extra_env: vec![],
+            seccomp: Default::default(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");
@@ -1116,6 +1128,7 @@ mod tests {
                 pid_namespace: false,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             project_dir: PathBuf::from("/tmp"),
             extra_rw_paths: vec![],
@@ -1127,6 +1140,7 @@ mod tests {
             gid,
             resource_limits: None,
             extra_env: vec![("MYVAR".to_owned(), "hello_from_extra_env".to_owned())],
+            seccomp: Default::default(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");

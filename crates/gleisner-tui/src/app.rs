@@ -64,6 +64,8 @@ pub struct SecurityState {
     pub cosigned: bool,
     /// Whether the sandbox is active for this session.
     pub sandbox_active: bool,
+    /// Whether seccomp-BPF filtering is active inside the sandbox.
+    pub seccomp_active: bool,
     /// Number of attestation events recorded during this session.
     pub attest_events: u64,
 }

@@ -76,6 +76,12 @@ pub struct SandboxSpec {
     /// harness build environment.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_env: Vec<(String, String)>,
+    /// Seccomp-BPF syscall filtering policy.
+    ///
+    /// Applied after Landlock (which needs `landlock_*` syscalls to set up)
+    /// and before `fork_and_exec`. The filter is inherited by the child.
+    #[serde(default)]
+    pub seccomp: crate::profile::SeccompPolicy,
 }
 
 /// The type of file access being evaluated.
@@ -227,6 +233,7 @@ mod tests {
                     "rustc".to_owned(),
                     "/usr/bin/git".to_owned(),
                 ],
+                seccomp: Default::default(),
             },
             resources: ResourceLimits {
                 max_memory_mb: 4096,

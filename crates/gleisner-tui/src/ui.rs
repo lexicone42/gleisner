@@ -759,6 +759,20 @@ fn draw_security_dashboard(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(vec![Span::styled("Sandbox ", label_style), sandbox_span]),
     ];
 
+    // ── Seccomp indicator ──
+    let seccomp_span = if sec.seccomp_active {
+        Span::styled(
+            "\u{25CF} bpf",
+            Style::default().fg(CONDUIT).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::styled("\u{25CB} off", label_style)
+    };
+    lines.push(Line::from(vec![
+        Span::styled("Seccomp ", label_style),
+        seccomp_span,
+    ]));
+
     // Attest line uses a Vec<Span> (variable number of spans)
     let mut attest_line = vec![Span::styled("Attest  ", label_style)];
     attest_line.extend(attest_spans);

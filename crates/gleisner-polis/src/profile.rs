@@ -93,6 +93,53 @@ pub struct ProcessPolicy {
     pub no_new_privileges: bool,
     /// Command allowlist. Empty means all commands are permitted (but logged).
     pub command_allowlist: Vec<String>,
+    /// Seccomp-BPF syscall filtering preset.
+    ///
+    /// Built-in presets:
+    /// - `"nodejs"` — allowlist tuned for Node.js/V8 (Claude Code's runtime)
+    /// - `"disabled"` or absent — no seccomp filtering (default)
+    #[serde(default)]
+    pub seccomp: SeccompPolicy,
+}
+
+/// Seccomp-BPF policy configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SeccompPolicy {
+    /// Built-in preset name. Currently supported: `"nodejs"`, `"disabled"`.
+    #[serde(default)]
+    pub preset: SeccompPreset,
+    /// Action taken when a blocked syscall is attempted.
+    /// - `"errno"` — return EPERM (default, debuggable)
+    /// - `"log"` — allow but log via audit (learning mode)
+    /// - `"kill"` — kill the process (strict mode)
+    #[serde(default)]
+    pub default_action: SeccompAction,
+}
+
+/// Built-in seccomp preset.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SeccompPreset {
+    /// No seccomp filtering.
+    #[default]
+    Disabled,
+    /// Allowlist tuned for Node.js / V8 (Claude Code's runtime).
+    /// Blocks dangerous syscalls (modules, mount, ptrace, bpf, `io_uring`)
+    /// while allowing everything V8's JIT and Node.js networking need.
+    Nodejs,
+}
+
+/// Action for blocked syscalls.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SeccompAction {
+    /// Return EPERM — blocks the call, process continues. Easiest to debug.
+    #[default]
+    Errno,
+    /// Allow but log via kernel audit subsystem. Learning mode.
+    Log,
+    /// Kill the entire process. Maximum security.
+    Kill,
 }
 
 /// Claude Code plugin and MCP tool policy.

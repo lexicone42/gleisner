@@ -156,7 +156,7 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         None
     };
 
-    // Build package filter: user-specified packages + harness build_packages
+    // Build package filter: user-specified packages + harness build_packages + conditional
     let mut filter = args.packages.clone();
     if let Some(ref harness) = harness_match {
         for pkg in &harness.build_packages {
@@ -167,6 +167,18 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         for pkg in &harness.runtime_packages {
             if !filter.contains(pkg) {
                 filter.push(pkg.clone());
+            }
+        }
+
+        // Evaluate conditional packages (file predicate checks)
+        let conditional =
+            gleisner_forge::harness::collect_conditional_packages(harness, &project_dir);
+        if !conditional.is_empty() {
+            eprintln!("forge: conditional packages: {}", conditional.join(", "),);
+        }
+        for pkg in conditional {
+            if !filter.contains(&pkg) {
+                filter.push(pkg);
             }
         }
     }

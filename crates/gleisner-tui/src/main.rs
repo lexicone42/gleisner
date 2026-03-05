@@ -196,6 +196,8 @@ async fn run(
 ) -> color_eyre::Result<()> {
     let mut app = App::new(&profile.name);
     app.security.sandbox_active = sandbox.is_some();
+    app.security.seccomp_active = sandbox.is_some()
+        && profile.process.seccomp.preset != gleisner_polis::profile::SeccompPreset::Disabled;
 
     let sandbox_indicator = if sandbox.is_some() { " [embodied]" } else { "" };
     let sigstore_indicator = if use_sigstore { " [sigstore]" } else { "" };
@@ -1082,6 +1084,18 @@ fn run_forge_pipeline(
         for pkg in &harness.runtime_packages {
             if !filter.contains(pkg) {
                 filter.push(pkg.clone());
+            }
+        }
+
+        // Evaluate conditional packages (file predicate checks)
+        let conditional =
+            gleisner_forge::harness::collect_conditional_packages(harness, project_dir);
+        if !conditional.is_empty() {
+            eprintln!("forge: conditional packages: {}", conditional.join(", "),);
+        }
+        for pkg in conditional {
+            if !filter.contains(&pkg) {
+                filter.push(pkg);
             }
         }
     }

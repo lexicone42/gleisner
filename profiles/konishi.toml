@@ -44,6 +44,10 @@ pid_namespace = true
 no_new_privileges = true
 command_allowlist = []
 
+[process.seccomp]
+preset = "nodejs"
+default_action = "errno"
+
 [resources]
 max_memory_mb = 4096
 max_cpu_percent = 100

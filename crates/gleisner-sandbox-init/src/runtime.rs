@@ -247,6 +247,26 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
         eprintln!("gleisner-sandbox-init: rlimits applied inside sandbox");
     }
 
+    // ── 5b. Apply seccomp-BPF ──────────────────────────────────────
+    // Compile and install the seccomp filter AFTER Landlock (which needs
+    // landlock_* syscalls) and BEFORE fork_and_exec. The filter is
+    // inherited by the forked child and persists across execve.
+    match crate::seccomp::compile(&spec.seccomp) {
+        Ok(Some(bpf)) => {
+            crate::seccomp::apply(&bpf)?;
+            eprintln!(
+                "gleisner-sandbox-init: seccomp-bpf applied (preset={:?}, action={:?})",
+                spec.seccomp.preset, spec.seccomp.default_action
+            );
+        }
+        Ok(None) => {
+            // Seccomp disabled — no filter applied
+        }
+        Err(e) => {
+            eprintln!("gleisner-sandbox-init: seccomp compilation failed (continuing): {e}");
+        }
+    }
+
     // ── 6. Set working directory ──────────────────────────────────
     chdir(&spec.work_dir).map_err(|e| format!("chdir to {}: {e}", spec.work_dir.display()))?;
 

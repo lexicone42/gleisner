@@ -54,6 +54,10 @@ pid_namespace = true
 no_new_privileges = true
 command_allowlist = []
 
+[process.seccomp]
+preset = "nodejs"
+default_action = "kill"
+
 [resources]
 max_memory_mb = 2048
 max_cpu_percent = 50

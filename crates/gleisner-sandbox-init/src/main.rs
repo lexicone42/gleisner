@@ -18,6 +18,8 @@
 
 #[cfg(target_os = "linux")]
 mod runtime;
+#[cfg(target_os = "linux")]
+mod seccomp;
 
 #[cfg(target_os = "linux")]
 fn main() {
@@ -85,6 +87,7 @@ mod tests {
                 pid_namespace: true,
                 no_new_privileges: true,
                 command_allowlist: vec![],
+                seccomp: Default::default(),
             },
             project_dir: PathBuf::from("/home/user/project"),
             extra_rw_paths: vec![PathBuf::from("/home/user/.cargo")],
@@ -96,6 +99,7 @@ mod tests {
             gid: 1000,
             resource_limits: None,
             extra_env: vec![],
+            seccomp: Default::default(),
         };
 
         let json = serde_json::to_string(&spec).unwrap();
