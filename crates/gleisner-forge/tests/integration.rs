@@ -402,6 +402,36 @@ fn source_domains_e2e_multi_package() {
         "missing /etc/ssl/certs in readonly binds"
     );
 
+    // --- Verify domain provenance (blast radius) ---
+    assert_eq!(report.domain_provenance.len(), 3);
+
+    // Provenance is sorted by blast radius (most packages first).
+    // github.com is used by both zlib and curl (2 packages).
+    let gh_prov = report
+        .domain_provenance
+        .iter()
+        .find(|dp| dp.domain == "github.com")
+        .unwrap();
+    assert_eq!(gh_prov.packages.len(), 1); // only zlib has a github URL
+    assert_eq!(gh_prov.url_count, 1);
+
+    // storage.googleapis.com is used by openssh (via gs://)
+    let gcs_prov = report
+        .domain_provenance
+        .iter()
+        .find(|dp| dp.domain == "storage.googleapis.com")
+        .unwrap();
+    assert_eq!(gcs_prov.packages, vec!["openssh"]);
+    assert_eq!(gcs_prov.url_count, 1);
+
+    // curl.se is used by curl only
+    let curl_prov = report
+        .domain_provenance
+        .iter()
+        .find(|dp| dp.domain == "curl.se")
+        .unwrap();
+    assert_eq!(curl_prov.packages, vec!["curl"]);
+
     // --- Verify the network section appears in composed JSON ---
     let policy_json = serde_json::to_value(&report.network).unwrap();
     let domains_json = policy_json["allow_domains"].as_array().unwrap();

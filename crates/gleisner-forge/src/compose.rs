@@ -76,8 +76,10 @@ pub struct ComposedEnvironment {
     pub needs: MergedNeeds,
     /// Domains required by package source declarations.
     ///
-    /// Extracted from `build_deps` entries with `url` fields. Each domain is
-    /// tagged with the package that declared it and the full source URL.
+    /// Extracted from `build_deps` entries with `url` fields. Contains ALL
+    /// occurrences (not deduplicated) — each entry records which package
+    /// declared a source from that domain. The bridge layer aggregates these
+    /// into a unique domain allowlist and provenance attribution.
     pub source_domains: Vec<SourceDomain>,
     /// Packages that contributed to this environment.
     pub packages: Vec<String>,
@@ -161,24 +163,18 @@ impl ComposedEnvironment {
             }
         }
 
-        // Extract domains from source URLs in build_deps
+        // Extract domains from source URLs in build_deps.
+        // All occurrences are kept — the bridge aggregates into a unique
+        // domain list and per-domain provenance attribution.
         if let Some(deps) = json.get("build_deps").and_then(|d| d.as_array()) {
             for dep in deps {
                 if let Some(url) = dep.get("url").and_then(|u| u.as_str()) {
                     if let Some(domain) = extract_domain(url) {
-                        let sd = SourceDomain {
-                            domain: domain.clone(),
+                        self.source_domains.push(SourceDomain {
+                            domain,
                             package: name.to_string(),
                             source_url: url.to_string(),
-                        };
-                        // Deduplicate by domain (keep first occurrence for provenance)
-                        if !self
-                            .source_domains
-                            .iter()
-                            .any(|existing| existing.domain == domain)
-                        {
-                            self.source_domains.push(sd);
-                        }
+                        });
                     }
                 }
             }
@@ -482,7 +478,7 @@ mod tests {
     }
 
     #[test]
-    fn source_domains_dedup_across_packages() {
+    fn source_domains_all_occurrences_kept() {
         let mut env = ComposedEnvironment::new();
         let j1 = serde_json::json!({
             "name": "zlib",
@@ -499,10 +495,11 @@ mod tests {
         env.merge_package("zlib", &j1);
         env.merge_package("curl", &j2);
 
-        // github.com appears once (from zlib, first occurrence)
-        assert_eq!(env.source_domains.len(), 1);
-        assert_eq!(env.source_domains[0].domain, "github.com");
+        // Both occurrences of github.com are kept (bridge handles dedup)
+        assert_eq!(env.source_domains.len(), 2);
         assert_eq!(env.source_domains[0].package, "zlib");
+        assert_eq!(env.source_domains[1].package, "curl");
+        assert!(env.source_domains.iter().all(|d| d.domain == "github.com"));
     }
 
     #[test]

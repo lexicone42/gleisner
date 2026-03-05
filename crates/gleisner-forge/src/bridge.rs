@@ -5,9 +5,10 @@
 //! depending on gleisner-polis directly — it produces plain data types that
 //! the CLI/TUI wiring layer converts into `SandboxSpec` fields.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use crate::compose::{ComposedEnvironment, StateWiring};
+use crate::compose::{ComposedEnvironment, SourceDomain, StateWiring};
 
 /// Filesystem policy derived from package declarations.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -43,6 +44,23 @@ pub struct ForgeEnvPolicy {
     pub vars: Vec<(String, String)>,
 }
 
+/// Per-domain provenance: which packages use this domain and why.
+///
+/// This answers supply chain questions like "if storage.googleapis.com is
+/// compromised, which packages are affected?" and "which package introduced
+/// this new domain?"
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DomainProvenance {
+    /// The domain name.
+    pub domain: String,
+    /// Packages that download sources from this domain.
+    pub packages: Vec<String>,
+    /// Number of source URLs pointing at this domain.
+    pub url_count: usize,
+    /// Example source URLs (up to 3, for display).
+    pub example_urls: Vec<String>,
+}
+
 /// Validation warnings and errors from environment composition.
 #[derive(Debug, Clone)]
 pub struct BridgeReport {
@@ -54,6 +72,10 @@ pub struct BridgeReport {
     pub env: ForgeEnvPolicy,
     /// State wirings: env var → prefix mappings for persistent cache directories.
     pub state_wirings: Vec<StateWiring>,
+    /// Per-domain provenance attribution: which packages use which domains.
+    ///
+    /// Sorted by package count descending (highest blast radius first).
+    pub domain_provenance: Vec<DomainProvenance>,
     /// Credential paths that packages declared (informational — NOT mounted).
     pub credential_paths: Vec<String>,
     /// Warnings from the composition (conflicts, degraded binds, etc.).
@@ -115,14 +137,8 @@ pub fn compose_to_policy(env: &ComposedEnvironment) -> BridgeReport {
         }
     }
 
-    // Collect unique domains from source declarations
-    let allow_domains: Vec<String> = env
-        .source_domains
-        .iter()
-        .map(|sd| sd.domain.clone())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    // Build per-domain provenance and derive the unique domain allowlist
+    let (allow_domains, domain_provenance) = build_domain_provenance(&env.source_domains);
 
     // If any source domains were found, DNS is implicitly required
     let needs_dns = env.needs.dns || !allow_domains.is_empty();
@@ -138,9 +154,54 @@ pub fn compose_to_policy(env: &ComposedEnvironment) -> BridgeReport {
         network,
         env: ForgeEnvPolicy::default(),
         state_wirings: env.state_wirings.clone(),
+        domain_provenance,
         credential_paths,
         warnings,
     }
+}
+
+/// Build per-domain provenance attribution from all source domain records.
+///
+/// Returns `(unique_domains_sorted, provenance_by_blast_radius)`.
+fn build_domain_provenance(
+    source_domains: &[SourceDomain],
+) -> (Vec<String>, Vec<DomainProvenance>) {
+    // Group by domain
+    let mut by_domain: BTreeMap<&str, Vec<&SourceDomain>> = BTreeMap::new();
+    for sd in source_domains {
+        by_domain.entry(&sd.domain).or_default().push(sd);
+    }
+
+    let allow_domains: Vec<String> = by_domain.keys().map(ToString::to_string).collect();
+
+    let mut provenance: Vec<DomainProvenance> = by_domain
+        .into_iter()
+        .map(|(domain, entries)| {
+            // Unique packages for this domain
+            let mut packages: Vec<String> = entries.iter().map(|e| e.package.clone()).collect();
+            packages.sort();
+            packages.dedup();
+
+            let url_count = entries.len();
+            let example_urls: Vec<String> = entries
+                .iter()
+                .map(|e| e.source_url.clone())
+                .take(3)
+                .collect();
+
+            DomainProvenance {
+                domain: domain.to_string(),
+                packages,
+                url_count,
+                example_urls,
+            }
+        })
+        .collect();
+
+    // Sort by blast radius: most packages first
+    provenance.sort_by(|a, b| b.packages.len().cmp(&a.packages.len()));
+
+    (allow_domains, provenance)
 }
 
 /// Add a path to the appropriate bind list, avoiding duplicates and
@@ -310,6 +371,70 @@ mod tests {
         assert!(report.network.allow_dns);
         // allow_internet should still be false (not declared in needs)
         assert!(!report.network.allow_internet);
+    }
+
+    #[test]
+    fn domain_provenance_tracks_blast_radius() {
+        use crate::compose::SourceDomain;
+
+        let env = ComposedEnvironment {
+            dir_mappings: Vec::new(),
+            file_mappings: Vec::new(),
+            state_wirings: Vec::new(),
+            needs: MergedNeeds::default(),
+            source_domains: vec![
+                SourceDomain {
+                    domain: "github.com".to_string(),
+                    package: "zlib".to_string(),
+                    source_url: "https://github.com/madler/zlib/v1.3.1.tar.gz".to_string(),
+                },
+                SourceDomain {
+                    domain: "github.com".to_string(),
+                    package: "curl".to_string(),
+                    source_url: "https://github.com/curl/curl/curl-8.tar.gz".to_string(),
+                },
+                SourceDomain {
+                    domain: "github.com".to_string(),
+                    package: "openssh".to_string(),
+                    source_url: "https://github.com/openssh/openssh-portable/v10.tar.gz"
+                        .to_string(),
+                },
+                SourceDomain {
+                    domain: "storage.googleapis.com".to_string(),
+                    package: "gcc".to_string(),
+                    source_url: "gs://minimal-staging/gcc-14.tar.gz".to_string(),
+                },
+            ],
+            packages: vec![
+                "zlib".to_string(),
+                "curl".to_string(),
+                "openssh".to_string(),
+                "gcc".to_string(),
+            ],
+            warnings: Vec::new(),
+        };
+
+        let report = compose_to_policy(&env);
+
+        // 2 unique domains
+        assert_eq!(report.network.allow_domains.len(), 2);
+
+        // Provenance sorted by blast radius: github.com (3 pkgs) > GCS (1 pkg)
+        assert_eq!(report.domain_provenance.len(), 2);
+        assert_eq!(report.domain_provenance[0].domain, "github.com");
+        assert_eq!(report.domain_provenance[0].packages.len(), 3);
+        assert_eq!(report.domain_provenance[0].url_count, 3);
+        assert_eq!(
+            report.domain_provenance[0].packages,
+            vec!["curl", "openssh", "zlib"]
+        );
+
+        assert_eq!(report.domain_provenance[1].domain, "storage.googleapis.com");
+        assert_eq!(report.domain_provenance[1].packages.len(), 1);
+        assert_eq!(report.domain_provenance[1].packages, vec!["gcc"]);
+
+        // Example URLs capped at 3
+        assert_eq!(report.domain_provenance[0].example_urls.len(), 3);
     }
 
     #[test]

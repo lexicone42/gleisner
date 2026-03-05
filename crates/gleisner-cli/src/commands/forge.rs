@@ -319,6 +319,28 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
         report.network.allow_internet,
     );
 
+    // Display domain provenance (blast radius)
+    if !report.domain_provenance.is_empty() {
+        eprintln!("forge: domain provenance (by blast radius):");
+        for dp in &report.domain_provenance {
+            eprintln!(
+                "forge:   {} — {} packages, {} URLs ({})",
+                dp.domain,
+                dp.packages.len(),
+                dp.url_count,
+                if dp.packages.len() <= 5 {
+                    dp.packages.join(", ")
+                } else {
+                    format!(
+                        "{}, ... +{} more",
+                        dp.packages[..5].join(", "),
+                        dp.packages.len() - 5
+                    )
+                },
+            );
+        }
+    }
+
     // 3. Validate against profile if requested
     if let Some(profile_name) = &args.profile {
         let profile = gleisner_polis::resolve_profile(profile_name)?;
@@ -334,6 +356,7 @@ pub async fn execute(args: ForgeArgs) -> Result<()> {
             "network": report.network,
             "state_wirings": report.state_wirings,
             "env": report.env,
+            "domain_provenance": report.domain_provenance,
         },
         "harness": harness_match.as_ref().map(|h| serde_json::json!({
             "name": h.name,
@@ -606,6 +629,7 @@ fn run_in_composed_sandbox(
                 "allow_dns": report.network.allow_dns,
                 "allow_internet": report.network.allow_internet,
                 "source_derived_domains": report.network.allow_domains,
+                "domain_provenance": report.domain_provenance,
             },
             "state_wirings": report.state_wirings,
             "credential_paths_excluded": report.credential_paths.len(),
