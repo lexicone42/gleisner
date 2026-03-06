@@ -57,11 +57,13 @@ When a package does `import "../gcc/build.ncl"`, Nickel's import resolver looks 
 
 This is standard Nickel API -- `CacheHub.sources.add_string(SourcePath::Path(...), content)` -- not a fork or hack. It's the same mechanism Nickel uses for its own stdlib.
 
-### Transitive Dependency Flattening
+### Store-Ref Projection
 
-Package results recursively embed their full dependency trees in `build_deps` and `runtime_deps`. Without flattening, a single gcc result is 136 MB of nested JSON because it includes all transitive dependencies. This compounds -- downstream packages that depend on gcc would embed the 136 MB, and their dependents would embed that, leading to OOM at ~17 GB.
+Package results recursively embed their full dependency trees in `build_deps` and `runtime_deps`. Without intervention, a single gcc result is 136 MB of nested JSON because it includes all transitive dependencies. This compounds -- downstream packages that depend on gcc would embed the 136 MB, and their dependents would embed that, leading to OOM at ~17 GB.
 
-`flatten_for_injection()` strips transitive deps before injection: each dependency entry that contains `build_deps` (indicating it's a package, not a Source or Local) is replaced with a `{ name, ty, _stub = true }` stub. With flattening, gcc is 1.7 MB and peak RSS stays under 510 MB for the full 226-package run.
+`project_for_injection()` solves this by projecting each result down to only the fields downstream Nickel code actually accesses: `name`, `ty`, `outputs`, `target`, and `prebuilt`, plus a `_store_ref` back-pointer to the full result in the content-addressed store. A gcc result that was 136 MB full is ~200 bytes projected. Peak RSS stays under 510 MB for the full 226-package run.
+
+The full result (with `cmd`, `build_deps`, `attrs`, etc.) remains available in the store for compose, SBOM generation, and attestation. `flatten_for_injection()` is still available as a utility for inspection use cases.
 
 ## The minimal.dev Integration
 
@@ -239,7 +241,7 @@ The single failure is cmake, whose `source_provenance.releases = 'TagBased {}` u
 crates/gleisner-forge/
 +-- src/
 |   +-- lib.rs          -- crate root, module declarations
-|   +-- eval.rs         -- EvalContext, eval_package, flatten_for_injection
+|   +-- eval.rs         -- EvalContext, eval_package, project_for_injection
 |   +-- dag.rs          -- PackageGraph, topological sort from import analysis
 |   +-- store.rs        -- Content-addressed JSON store (SHA-256)
 |   +-- compose.rs      -- ComposedEnvironment from merged package results
