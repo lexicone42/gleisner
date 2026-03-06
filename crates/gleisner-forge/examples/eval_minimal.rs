@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use gleisner_forge::dag::PackageGraph;
-use gleisner_forge::eval::{EvalContext, eval_package, flatten_for_injection};
+use gleisner_forge::eval::{EvalContext, eval_package, project_for_injection};
 use gleisner_forge::store::Store;
 
 /// Read current process RSS from /proc/self/statm (Linux only).
@@ -108,7 +108,10 @@ fn main() {
                     &result.store_ref.hash[..12],
                     rss,
                 );
-                json_cache.insert(node.name.clone(), flatten_for_injection(&result.json));
+                json_cache.insert(
+                    node.name.clone(),
+                    project_for_injection(&result.json, &result.store_ref),
+                );
                 evaluated += 1;
             }
             Err(e) => {

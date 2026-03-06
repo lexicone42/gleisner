@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::compose::ComposedEnvironment;
 use crate::dag::PackageGraph;
 use crate::error::ForgeError;
-use crate::eval::{EvalContext, eval_package, flatten_for_injection};
+use crate::eval::{EvalContext, eval_package, project_for_injection};
 use crate::store::Store;
 
 /// Result of a full evaluation run.
@@ -129,7 +129,10 @@ pub fn evaluate_packages(config: &ForgeConfig) -> Result<ForgeOutput, ForgeError
                 );
                 composed.merge_package(&node.name, &result.json);
                 package_results.insert(node.name.clone(), result.json.clone());
-                json_cache.insert(node.name.clone(), flatten_for_injection(&result.json));
+                json_cache.insert(
+                    node.name.clone(),
+                    project_for_injection(&result.json, &result.store_ref),
+                );
                 evaluated += 1;
             }
             Err(e) => {

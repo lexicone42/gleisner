@@ -38,6 +38,13 @@ use nickel_lang_core::serialize::{self, ExportFormat};
 use crate::error::ForgeError;
 use crate::store::{Store, StoreRef};
 
+/// Fields preserved in the thin projection injected into downstream evals.
+///
+/// Downstream Nickel packages access `dep.name`, `dep.ty`, and
+/// `dep.outputs.*` (for `PATH/CPATH/LIBRARY_PATH` construction).
+/// Everything else lives in the store, reachable via `_store_ref`.
+const PROJECTION_FIELDS: &[&str] = &["name", "ty", "outputs", "target", "prebuilt"];
+
 /// Result of evaluating a single package.
 #[derive(Debug)]
 pub struct EvalResult {
@@ -208,8 +215,9 @@ pub fn eval_package(
                     }
                 })?;
 
-            let flat = flatten_for_injection(json);
-            let nickel_content = json_to_nickel(&flat);
+            // dep values are already projected (thin records with _store_ref)
+            // by orchestrate — no need to flatten again.
+            let nickel_content = json_to_nickel(json);
             cache.sources.add_string(
                 SourcePath::Path(dep_path, InputFormat::Nickel),
                 nickel_content,
@@ -358,6 +366,37 @@ pub fn flatten_for_injection(value: &serde_json::Value) -> serde_json::Value {
         }
         other => other.clone(),
     }
+}
+
+/// Project a package result to the minimal record needed by downstream consumers.
+///
+/// Returns a thin record containing only [`PROJECTION_FIELDS`] plus a
+/// `_store_ref` back-pointer to the full result in the content-addressed store.
+/// This replaces the previous `flatten_for_injection` approach in the hot path:
+/// instead of cloning the full result and stripping transitive dep trees,
+/// we project only the fields downstream Nickel code actually accesses.
+///
+/// The full result (with `cmd`, `build_deps`, `attrs`, etc.) remains available
+/// in the store for compose, SBOM, and attestation.
+pub fn project_for_injection(value: &serde_json::Value, store_ref: &StoreRef) -> serde_json::Value {
+    let Some(obj) = value.as_object() else {
+        return value.clone();
+    };
+
+    let mut out = serde_json::Map::with_capacity(PROJECTION_FIELDS.len() + 1);
+
+    for &field in PROJECTION_FIELDS {
+        if let Some(v) = obj.get(field) {
+            out.insert(field.to_string(), v.clone());
+        }
+    }
+
+    out.insert(
+        "_store_ref".to_string(),
+        serde_json::Value::String(store_ref.hash.clone()),
+    );
+
+    serde_json::Value::Object(out)
 }
 
 /// Convert a JSON value to a Nickel record literal string.
@@ -574,5 +613,125 @@ mod tests {
         assert_eq!(result_a.json["name"], "a");
         assert_eq!(result_b.json["name"], "b");
         assert_ne!(result_a.store_ref.hash, result_b.store_ref.hash);
+    }
+
+    #[test]
+    fn project_keeps_only_projection_fields() {
+        let full = serde_json::json!({
+            "name": "gcc",
+            "ty": "Builder",
+            "outputs": {"bin": "/store/gcc/bin"},
+            "target": {"os": "Linux", "arch": "Amd64"},
+            "prebuilt": false,
+            "cmd": "very long build script...",
+            "cmds": ["step1", "step2"],
+            "build_args": {"CFLAGS": "-O2"},
+            "build_deps": [{"name": "glibc", "build_deps": []}],
+            "runtime_deps": [{"name": "glibc"}],
+            "attrs": {"env_dir_mappings": []},
+            "needs": {"dns": {}},
+        });
+        let store_ref = StoreRef {
+            hash: "abc123".to_string(),
+        };
+
+        let thin = project_for_injection(&full, &store_ref);
+        let obj = thin.as_object().unwrap();
+
+        // Kept fields
+        assert_eq!(obj["name"], "gcc");
+        assert_eq!(obj["ty"], "Builder");
+        assert!(obj.contains_key("outputs"));
+        assert!(obj.contains_key("target"));
+        assert!(obj.contains_key("prebuilt"));
+        assert_eq!(obj["_store_ref"], "abc123");
+
+        // Stripped fields
+        assert!(!obj.contains_key("cmd"));
+        assert!(!obj.contains_key("cmds"));
+        assert!(!obj.contains_key("build_args"));
+        assert!(!obj.contains_key("build_deps"));
+        assert!(!obj.contains_key("runtime_deps"));
+        assert!(!obj.contains_key("attrs"));
+        assert!(!obj.contains_key("needs"));
+    }
+
+    #[test]
+    fn project_thin_record_much_smaller() {
+        let big_deps: Vec<serde_json::Value> = (0..50)
+            .map(|i| {
+                serde_json::json!({
+                    "name": format!("dep-{i}"),
+                    "ty": "Builder",
+                    "cmd": "x".repeat(10_000),
+                    "build_deps": [],
+                })
+            })
+            .collect();
+
+        let full = serde_json::json!({
+            "name": "top",
+            "ty": "Builder",
+            "outputs": {"bin": "/out/bin"},
+            "cmd": "x".repeat(50_000),
+            "build_deps": big_deps,
+        });
+        let store_ref = StoreRef {
+            hash: "def456".to_string(),
+        };
+
+        let full_size = serde_json::to_string(&full).unwrap().len();
+        let thin = project_for_injection(&full, &store_ref);
+        let thin_size = serde_json::to_string(&thin).unwrap().len();
+
+        // The thin projection should be dramatically smaller
+        assert!(
+            thin_size < full_size / 10,
+            "thin ({thin_size}) should be <10% of full ({full_size})"
+        );
+    }
+
+    #[test]
+    fn eval_with_projected_dep_results() {
+        // Simulates the new flow: dep results are already projected (thin)
+        // before being passed to eval_package.
+        let dir = tempfile::tempdir().unwrap();
+        let pkgs = dir.path().join("pkgs");
+
+        std::fs::create_dir_all(pkgs.join("dep")).unwrap();
+        std::fs::write(
+            pkgs.join("dep/build.ncl"),
+            r#"{ name = "dep", value = 100 }"#,
+        )
+        .unwrap();
+
+        std::fs::create_dir_all(pkgs.join("main")).unwrap();
+        std::fs::write(
+            pkgs.join("main/build.ncl"),
+            r#"let dep = import "../dep/build.ncl" in
+            { name = "main", dep_name = dep.name }"#,
+        )
+        .unwrap();
+
+        let store = Store::new(dir.path().join("store")).unwrap();
+        let ctx = EvalContext::new(&[]).unwrap();
+
+        // Inject a projected thin record (as orchestrate now does)
+        let mut dep_results = HashMap::new();
+        dep_results.insert(
+            "dep".to_string(),
+            serde_json::json!({
+                "name": "dep",
+                "ty": "Builder",
+                "outputs": {},
+                "_store_ref": "abc123"
+            }),
+        );
+
+        let result =
+            eval_package(&pkgs.join("main/build.ncl"), &dep_results, &store, &ctx).unwrap();
+
+        assert_eq!(result.json["name"], "main");
+        assert_eq!(result.json["dep_name"], "dep");
     }
 }
