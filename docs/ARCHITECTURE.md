@@ -660,7 +660,7 @@ pub trait PolicyEngine: Send + Sync {
 
 ### Chain Verification
 
-When `--check-chain` is enabled, the verifier walks the attestation chain via `walk_chain()` and validates:
+When `--chain` is enabled, the verifier walks the attestation chain via `walk_chain()` and validates:
 - Each link's parent digest matches the actual payload digest of the referenced parent bundle
 - No unsigned links exist in the chain (bundles with `VerificationMaterial::None` produce a `Fail` outcome)
 - The chain is cycle-free (cycle detection via visited digest tracking in `walk_chain()`)

@@ -412,7 +412,7 @@ git diff Cargo.lock
 If you discover a security vulnerability in Gleisner, please report it
 responsibly.
 
-**Email:** security@gleisner.dev *(placeholder -- update with actual contact)*
+**Email:** security@gleisner.dev
 
 **What to include:**
 
@@ -482,7 +482,7 @@ Practical steps for users setting up Gleisner in a new environment.
 
 - [ ] **Verify attestations before trusting session output.**
       Run `gleisner verify attestation.json`.
-- [ ] **Enable chain verification** (`--check-chain`) to detect gaps in the
+- [ ] **Enable chain verification** (`--chain`) to detect gaps in the
       attestation history.
 - [ ] **Use policy files** to codify your organization's requirements (require
       sandbox, require audit log, allowed profiles, etc.).

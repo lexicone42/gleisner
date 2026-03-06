@@ -242,7 +242,7 @@ pub fn match_harness<'a>(
 
     for harness in harnesses {
         if harness_matches(harness, project_dir)
-            && (best.is_none() || harness.priority > best.unwrap().priority)
+            && best.as_ref().is_none_or(|b| harness.priority > b.priority)
         {
             best = Some(harness);
         }

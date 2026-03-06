@@ -148,15 +148,16 @@ gleisner forge --pkgs-dir packages/ --stdlib-dir stdlib/ --verify --dry-run
 
 ## Sandbox Layers
 
-Five independent isolation layers, each enforced by a different Linux kernel mechanism:
+Six independent isolation layers, each enforced by a different Linux kernel mechanism:
 
 | Layer | Mechanism | Purpose |
 |-------|-----------|---------|
 | 1 | User namespaces | Unprivileged isolation -- no real host privileges |
 | 2 | Mount namespace + pivot_root | Bind-mounts, tmpfs deny, PID namespace, die-with-parent |
 | 3 | Landlock LSM (V7) | Filesystem and network access control, IPC scope isolation, kernel audit logging |
-| 4 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits |
-| 5 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
+| 4 | Seccomp-BPF | Syscall filtering -- blocks dangerous calls (`mount`, `ptrace`, `bpf`, `io_uring`) |
+| 5 | Cgroups v2 + rlimits | Memory, CPU, PID, FD, and disk write limits |
+| 6 | Network filtering | pasta + nftables/iptables for domain-level allowlisting |
 
 Compromising one layer does not compromise the others. Even if the mount namespace is bypassed, Landlock independently restricts filesystem access at the kernel level.
 
@@ -164,7 +165,7 @@ Compromising one layer does not compromise the others. Even if the mount namespa
 
 Profiles are TOML files defining filesystem rules, network policy, process isolation, resource limits, and Claude Code plugin restrictions. They live in `~/.config/gleisner/profiles/` or `profiles/` in the project root.
 
-Four profiles are bundled (named after polises in *Diaspora*):
+Five profiles are bundled (named after polises in *Diaspora*):
 
 | Profile | Network | Resources | Use Case |
 |---------|---------|-----------|----------|
@@ -172,6 +173,7 @@ Four profiles are bundled (named after polises in *Diaspora*):
 | **carter-zimmerman** | + npm, PyPI, GitHub, crates.io | 8 GB, 512 PIDs | Projects needing external registries |
 | **ashton-laval** | Anthropic API only, DNS disabled | 2 GB, 128 PIDs, 50% CPU | High-security, minimal permissions |
 | **developer** | + crates.io, GitHub, Sigstore | 16 GB, 1024 PIDs | Rust development, gleisner-in-gleisner |
+| **developer-open** | Allow-all | 16 GB, 1024 PIDs | Trusted environments, no policy constraints |
 
 All profiles hide credential directories (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.azure`, `~/.kube`, `~/.docker`) and enforce PID namespace isolation.
 
@@ -276,7 +278,7 @@ All rules are opt-in. Absent fields are skipped, not failed.
 | `gleisner-forge` | Forge: Nickel package evaluator for minimal.dev, proof verification (Lean 4 via `lake build`), attestation metadata |
 | `gleisner-introdus` | Attestation: in-toto v1 statements, ECDSA P-256 + Sigstore signing, chain linking |
 | `gleisner-lacerta` | Verification: signature checking, digest verification, policy engine (JSON + WASM/OPA) |
-| `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.5 JSON |
+| `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.6 JSON with proof-carrying Declarations |
 | `gleisner-scapes` | Events: tokio broadcast bus, JSONL audit writer, session recorder |
 | `gleisner-sandbox-init` | Container runtime: creates namespaces, bind mounts, pivot_root, applies Landlock, execs inner command |
 
