@@ -8,6 +8,8 @@
 //! 2. **Digests** — SHA-256 of subjects and audit logs
 //! 3. **Policy** — configurable rules (built-in JSON or WASM/OPA stub)
 
+#[cfg(feature = "lattice")]
+pub mod composition_analysis;
 pub mod diff;
 pub mod digest;
 pub mod error;
