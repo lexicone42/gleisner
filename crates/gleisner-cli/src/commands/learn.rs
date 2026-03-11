@@ -112,10 +112,8 @@ pub async fn execute(args: LearnArgs) -> Result<()> {
         })?,
     };
 
-    let home_dir = directories::BaseDirs::new()
-        .ok_or_else(|| eyre!("could not determine home directory"))?
-        .home_dir()
-        .to_path_buf();
+    let home_dir = gleisner_polis::util::resolve_home_dir()
+        .ok_or_else(|| eyre!("could not determine home directory"))?;
 
     let base_profile = args
         .base_profile
@@ -253,10 +251,8 @@ async fn watch_loop(args: LearnArgs) -> Result<()> {
         })?,
     };
 
-    let home_dir = directories::BaseDirs::new()
-        .ok_or_else(|| eyre!("could not determine home directory"))?
-        .home_dir()
-        .to_path_buf();
+    let home_dir = gleisner_polis::util::resolve_home_dir()
+        .ok_or_else(|| eyre!("could not determine home directory"))?;
 
     let base_profile = args
         .base_profile

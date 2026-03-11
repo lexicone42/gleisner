@@ -417,6 +417,144 @@ mod tests {
         assert_eq!(reader.line_number(), 4); // 4 lines total (including 2 blank)
     }
 
+    // ── Property-based tests ──────────────────────────────────────
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Strategy for arbitrary `EventKind` variants.
+        fn arb_event_kind() -> impl Strategy<Value = EventKind> {
+            prop_oneof![
+                (
+                    "[a-zA-Z0-9/._-]{1,50}".prop_map(PathBuf::from),
+                    "[a-f0-9]{64}"
+                )
+                    .prop_map(|(path, sha256)| EventKind::FileRead { path, sha256 }),
+                (
+                    "[a-zA-Z0-9/._-]{1,50}".prop_map(PathBuf::from),
+                    proptest::option::of("[a-f0-9]{64}"),
+                    "[a-f0-9]{64}"
+                )
+                    .prop_map(|(path, sha256_before, sha256_after)| {
+                        EventKind::FileWrite {
+                            path,
+                            sha256_before,
+                            sha256_after,
+                        }
+                    }),
+                (
+                    "[a-zA-Z0-9/._-]{1,50}".prop_map(PathBuf::from),
+                    "[a-f0-9]{64}"
+                )
+                    .prop_map(|(path, sha256_before)| EventKind::FileDelete {
+                        path,
+                        sha256_before,
+                    }),
+                (
+                    "[a-zA-Z0-9_.-]{1,30}",
+                    prop::collection::vec("[a-zA-Z0-9_.-]{1,20}", 0..5),
+                    "[a-zA-Z0-9/._-]{1,50}".prop_map(PathBuf::from)
+                )
+                    .prop_map(|(command, args, cwd)| EventKind::ProcessExec {
+                        command,
+                        args,
+                        cwd,
+                    }),
+                ("[a-zA-Z0-9_.-]{1,30}", -128i32..128)
+                    .prop_map(|(command, exit_code)| EventKind::ProcessExit { command, exit_code }),
+                ("[a-zA-Z0-9.-]{1,50}", 1u16..65535)
+                    .prop_map(|(target, port)| EventKind::NetworkConnect { target, port }),
+                (
+                    "[a-zA-Z0-9.-]{1,50}",
+                    prop::collection::vec(
+                        "[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}",
+                        0..5
+                    )
+                )
+                    .prop_map(|(query, results)| EventKind::NetworkDns { query, results }),
+                ("[A-Z_]{1,30}", "[a-f0-9]{64}")
+                    .prop_map(|(key, value_sha256)| EventKind::EnvRead { key, value_sha256 }),
+                (0i64..500, "[a-z_]{1,20}")
+                    .prop_map(|(number, name)| EventKind::Syscall { number, name }),
+            ]
+        }
+
+        fn arb_event_result() -> impl Strategy<Value = EventResult> {
+            prop_oneof![
+                Just(EventResult::Allowed),
+                "[a-zA-Z ]{1,50}".prop_map(|reason| EventResult::Denied { reason }),
+            ]
+        }
+
+        fn arb_audit_event() -> impl Strategy<Value = AuditEvent> {
+            (0u64..1_000_000, arb_event_kind(), arb_event_result()).prop_map(
+                |(sequence, event, result)| AuditEvent {
+                    timestamp: DateTime::from_timestamp(1_700_000_000, 0).expect("valid timestamp"),
+                    sequence,
+                    event,
+                    result,
+                },
+            )
+        }
+
+        proptest! {
+            /// Every EventKind variant survives a JSON roundtrip.
+            #[test]
+            fn event_kind_json_roundtrip(event in arb_audit_event()) {
+                let json = serde_json::to_string(&event).unwrap();
+                let parsed: AuditEvent = serde_json::from_str(&json).unwrap();
+                prop_assert_eq!(parsed.sequence, event.sequence);
+                prop_assert_eq!(&parsed.result, &event.result);
+            }
+
+            /// JSONL writer/reader roundtrip for arbitrary events.
+            #[test]
+            fn jsonl_roundtrip(events in prop::collection::vec(arb_audit_event(), 0..20)) {
+                let mut buf = Vec::new();
+                {
+                    let mut writer = JsonlWriter::new(&mut buf);
+                    for event in &events {
+                        writer.write_event(event).unwrap();
+                    }
+                }
+
+                let mut reader = JsonlReader::new(std::io::Cursor::new(buf));
+                for (i, original) in events.iter().enumerate() {
+                    let read_back = reader.next_event().unwrap()
+                        .unwrap_or_else(|| panic!("expected event {i}"));
+                    prop_assert_eq!(read_back.sequence, original.sequence);
+                    prop_assert_eq!(&read_back.result, &original.result);
+                }
+                prop_assert!(reader.next_event().unwrap().is_none());
+            }
+
+            /// JSON serialization never contains raw API keys (defense-in-depth).
+            #[test]
+            fn env_read_serialization_never_leaks_value(
+                key in "[A-Z_]{1,20}",
+                hash in "[a-f0-9]{64}"
+            ) {
+                let event = AuditEvent {
+                    timestamp: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
+                    sequence: 0,
+                    event: EventKind::EnvRead {
+                        key: key,
+                        value_sha256: hash,
+                    },
+                    result: EventResult::Allowed,
+                };
+                let json = serde_json::to_string(&event).unwrap();
+                // Should never contain a "value" field — only "value_sha256"
+                let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+                let detail = &parsed["event"]["detail"];
+                prop_assert!(detail.get("value").is_none(),
+                    "EnvRead should never serialize a raw 'value' field");
+                prop_assert!(detail.get("value_sha256").is_some());
+            }
+        }
+    }
+
     #[test]
     fn jsonl_reader_empty_input() {
         let mut reader = JsonlReader::new(std::io::Cursor::new(b""));

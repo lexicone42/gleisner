@@ -554,6 +554,17 @@ fn run_in_composed_sandbox(
     let inner_command =
         gleisner_polis::build_claude_inner_command(&args.claude_bin, &profile, &args.claude_args);
 
+    // Collect all forge env vars — these must go through extra_env (not
+    // prepared.command.env()) because the sandbox-init child does env_clear()
+    // and only preserves a whitelist + spec.extra_env.
+    let mut forge_env: Vec<(String, String)> = Vec::new();
+    for (env_var, state_dir) in &state_env_vars {
+        forge_env.push((env_var.clone(), state_dir.display().to_string()));
+    }
+    for (key, value) in &report.env.vars {
+        forge_env.push((key.clone(), value.clone()));
+    }
+
     let config = gleisner_polis::SandboxSessionConfig {
         profile,
         project_dir: project_dir.to_path_buf(),
@@ -561,22 +572,10 @@ fn run_in_composed_sandbox(
         extra_allow_paths: Vec::new(),
         no_landlock: false,
         no_cgroups: false,
-        extra_env: vec![],
+        extra_env: forge_env,
     };
 
     let mut prepared = gleisner_polis::prepare_sandbox(config, &inner_command)?;
-
-    prepared.command.env_remove("CLAUDECODE");
-
-    // Set state wiring env vars so the inner process finds its cache dirs
-    for (env_var, state_dir) in &state_env_vars {
-        prepared.command.env(env_var, state_dir);
-    }
-
-    // Set harness/forge env vars (CC, CXX, JAVA_HOME, etc.)
-    for (key, value) in &report.env.vars {
-        prepared.command.env(key, value);
-    }
 
     prepared.command.stdin(std::process::Stdio::inherit());
     prepared.command.stdout(std::process::Stdio::inherit());

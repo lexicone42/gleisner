@@ -274,6 +274,13 @@ impl ProfileLearner {
             }
         }
 
+        // Promote umbrella subdirs: if ≥4 entries share an umbrella parent
+        // (e.g. .config/nvim, .config/fish, .config/starship, .config/alacritty),
+        // collapse to the umbrella itself (e.g. .config). This keeps learned
+        // profiles practical instead of listing every XDG app individually.
+        promote_umbrella_entries(&mut home_readonly);
+        promote_umbrella_entries(&mut home_readwrite);
+
         // Promote: if a home path appears in both readonly and readwrite, keep only readwrite
         home_readonly.retain(|p| !home_readwrite.contains(p));
         other_readonly.retain(|p| !other_readwrite.contains(p));
@@ -572,6 +579,37 @@ fn classify_single_path(path: &Path, home_dir: &Path, project_dir: &Path) -> Pat
     }
 
     PathClass::Other(path.to_path_buf())
+}
+
+/// Minimum number of umbrella subdirectories before collapsing.
+///
+/// If a session touches files under 4+ different subdirectories of an umbrella
+/// dir (`.config`, `.local`, `.cache`), the individual entries are replaced
+/// with the umbrella parent. Below this threshold, specific entries are kept
+/// for tighter isolation.
+const UMBRELLA_PROMOTION_THRESHOLD: usize = 4;
+
+/// Collapse umbrella subdirectories when too many accumulate.
+///
+/// For each umbrella dir in [`UMBRELLA_DIRS`], counts how many entries have
+/// that dir as their first component. If the count reaches
+/// [`UMBRELLA_PROMOTION_THRESHOLD`], all those entries are replaced with
+/// the umbrella dir itself.
+fn promote_umbrella_entries(set: &mut BTreeSet<PathBuf>) {
+    for umbrella in UMBRELLA_DIRS {
+        let umbrella_path = Path::new(umbrella);
+        let children: Vec<PathBuf> = set
+            .iter()
+            .filter(|p| p.starts_with(umbrella_path) && *p != umbrella_path)
+            .cloned()
+            .collect();
+        if children.len() >= UMBRELLA_PROMOTION_THRESHOLD {
+            for child in &children {
+                set.remove(child);
+            }
+            set.insert(PathBuf::from(umbrella));
+        }
+    }
 }
 
 /// Check if a path is a sentinel value from the kernel audit parser.
@@ -1478,6 +1516,77 @@ mod tests {
         let (_, summary) = learner.generate_profile();
         assert!(summary.path_groups.home_readonly.is_empty());
         assert_eq!(summary.path_groups.skipped_count, 1);
+    }
+
+    #[test]
+    fn umbrella_promotion_collapses_many_subdirs() {
+        let mut learner = ProfileLearner::new(default_config());
+        // Access files under 4+ different .config subdirs → should collapse to .config
+        for (i, app) in ["nvim", "fish", "starship", "alacritty"].iter().enumerate() {
+            learner.observe(&make_event(
+                i as u64,
+                EventKind::FileRead {
+                    path: PathBuf::from(format!("/home/user/.config/{app}/config")),
+                    sha256: format!("hash{i}"),
+                },
+                EventResult::Allowed,
+            ));
+        }
+        let (profile, summary) = learner.generate_profile();
+        // Individual entries should be collapsed
+        assert!(
+            !summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".config/nvim")),
+            ".config/nvim should be collapsed into .config"
+        );
+        // The umbrella dir itself should be present
+        assert!(
+            summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".config")),
+            ".config should be promoted"
+        );
+        // Profile should have ~/.config in readonly_bind
+        assert!(
+            profile
+                .filesystem
+                .readonly_bind
+                .contains(&PathBuf::from("~/.config")),
+        );
+    }
+
+    #[test]
+    fn umbrella_promotion_does_not_trigger_below_threshold() {
+        let mut learner = ProfileLearner::new(default_config());
+        // Only 3 .config subdirs — below threshold, should NOT collapse
+        for (i, app) in ["nvim", "fish", "starship"].iter().enumerate() {
+            learner.observe(&make_event(
+                i as u64,
+                EventKind::FileRead {
+                    path: PathBuf::from(format!("/home/user/.config/{app}/config")),
+                    sha256: format!("hash{i}"),
+                },
+                EventResult::Allowed,
+            ));
+        }
+        let (_, summary) = learner.generate_profile();
+        // Individual entries should remain
+        assert!(
+            summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".config/nvim")),
+        );
+        // The umbrella dir should NOT be present
+        assert!(
+            !summary
+                .path_groups
+                .home_readonly
+                .contains(&PathBuf::from(".config")),
+        );
     }
 
     #[test]

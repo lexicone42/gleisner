@@ -517,6 +517,128 @@ mod tests {
         assert_eq!(env.source_domains[0].domain, "storage.googleapis.com");
     }
 
+    // ── Property-based tests ──────────────────────────────────────
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            /// extract_domain never panics on arbitrary strings.
+            #[test]
+            fn extract_domain_never_panics(s in ".*") {
+                let _ = extract_domain(&s);
+            }
+
+            /// https:// URLs always produce a domain (non-empty host).
+            #[test]
+            fn https_urls_always_have_domain(
+                host in "[a-z][a-z0-9.-]{0,30}",
+                path in "[a-z0-9/._-]{0,30}"
+            ) {
+                let url = format!("https://{host}/{path}");
+                let domain = extract_domain(&url);
+                prop_assert!(domain.is_some(), "https URL should always have domain");
+                prop_assert!(!domain.as_ref().unwrap().is_empty());
+                // Domain should not contain port numbers
+                prop_assert!(!domain.unwrap().contains(':'));
+            }
+
+            /// gs:// URLs always map to storage.googleapis.com.
+            #[test]
+            fn gs_urls_map_to_gcs(
+                bucket in "[a-z][a-z0-9-]{0,20}",
+                object in "[a-z0-9/._-]{1,30}"
+            ) {
+                let url = format!("gs://{bucket}/{object}");
+                prop_assert_eq!(
+                    extract_domain(&url),
+                    Some("storage.googleapis.com".to_string())
+                );
+            }
+
+            /// merge_package never panics on arbitrary JSON.
+            #[test]
+            fn merge_package_never_panics(
+                name in "[a-z][a-z0-9-]{0,15}",
+                json_str in "\\{[a-z0-9 :,\"{}\\[\\]]*\\}"
+            ) {
+                let mut env = ComposedEnvironment::new();
+                // Try to parse the string as JSON; if it fails, use a default
+                let json = serde_json::from_str(&json_str)
+                    .unwrap_or(serde_json::json!({"name": name.clone()}));
+                env.merge_package(&name, &json);
+                // At minimum the package name is recorded
+                prop_assert!(env.packages.contains(&name));
+            }
+
+            /// Merging the same package twice is idempotent for dir mappings.
+            #[test]
+            fn merge_idempotent_for_dir_mappings(
+                path in "/[a-z]{1,10}(/[a-z]{1,10}){0,3}",
+                read_only in any::<bool>()
+            ) {
+                let json = serde_json::json!({
+                    "name": "test",
+                    "attrs": {
+                        "env_dir_mappings": [
+                            {"read_only": read_only, "path": path, "class": "State"}
+                        ]
+                    },
+                    "needs": {}
+                });
+
+                let mut env = ComposedEnvironment::new();
+                env.merge_package("a", &json);
+                let count_after_first = env.dir_mappings.len();
+
+                env.merge_package("b", &json);
+                // Same path should be deduped, not added again
+                prop_assert_eq!(env.dir_mappings.len(), count_after_first);
+            }
+
+            /// needs.dns and needs.internet are monotonic (once true, stays true).
+            #[test]
+            fn needs_are_monotonic(
+                dns1 in any::<bool>(),
+                internet1 in any::<bool>(),
+                dns2 in any::<bool>(),
+                internet2 in any::<bool>()
+            ) {
+                let mut env = ComposedEnvironment::new();
+                let j1 = serde_json::json!({
+                    "name": "a",
+                    "attrs": {},
+                    "needs": {
+                        "dns": if dns1 { serde_json::json!({}) } else { serde_json::Value::Null },
+                        "internet": if internet1 { serde_json::json!({}) } else { serde_json::Value::Null },
+                    }
+                });
+                let j2 = serde_json::json!({
+                    "name": "b",
+                    "attrs": {},
+                    "needs": {
+                        "dns": if dns2 { serde_json::json!({}) } else { serde_json::Value::Null },
+                        "internet": if internet2 { serde_json::json!({}) } else { serde_json::Value::Null },
+                    }
+                });
+
+                env.merge_package("a", &j1);
+                let dns_after_first = env.needs.dns;
+                let internet_after_first = env.needs.internet;
+
+                env.merge_package("b", &j2);
+                // Monotonic: once true, can't go back to false
+                if dns_after_first {
+                    prop_assert!(env.needs.dns);
+                }
+                if internet_after_first {
+                    prop_assert!(env.needs.internet);
+                }
+            }
+        }
+    }
+
     #[test]
     fn extract_domain_handles_edge_cases() {
         assert_eq!(

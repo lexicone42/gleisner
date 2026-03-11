@@ -2750,6 +2750,7 @@ dependencies = [
  "indexmap 2.13.0",
  "nickel-lang-core",
  "petgraph 0.7.1",
+ "proptest",
  "regex",
  "serde",
  "serde_json",

@@ -102,6 +102,10 @@ const fn target_arch() -> TargetArch {
 //
 // Syscall numbers are from nix::libc::SYS_* which are architecture-specific.
 
+/// `futex_waitv(2)` — added in Linux 5.16, not yet in libc crate.
+/// Node.js / V8 uses this for efficient multi-futex waiting.
+const SYS_FUTEX_WAITV: i64 = 449;
+
 /// Syscalls allowed for Node.js / V8 workloads.
 fn nodejs_allowlist() -> Vec<i64> {
     use nix::libc::{
@@ -246,6 +250,7 @@ fn nodejs_allowlist() -> Vec<i64> {
         SYS_set_robust_list,
         SYS_get_robust_list,
         SYS_futex,
+        SYS_FUTEX_WAITV, // Linux 5.16+, used by Node.js/V8 for multi-futex waiting
         SYS_sched_yield,
         SYS_sched_getaffinity,
         SYS_sched_setaffinity,
@@ -556,6 +561,7 @@ static SYSCALL_TABLE: &[(&str, i64)] = {
         ("set_robust_list", SYS_set_robust_list),
         ("get_robust_list", SYS_get_robust_list),
         ("futex", SYS_futex),
+        ("futex_waitv", SYS_FUTEX_WAITV),
         ("sched_yield", SYS_sched_yield),
         ("sched_getaffinity", SYS_sched_getaffinity),
         ("sched_setaffinity", SYS_sched_setaffinity),

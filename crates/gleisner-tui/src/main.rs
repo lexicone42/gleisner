@@ -624,7 +624,8 @@ fn handle_learn_command(
         format!("{}-learned", profile.name)
     };
 
-    let home_dir = std::env::var("HOME").map_or_else(|_| PathBuf::from("/tmp"), PathBuf::from);
+    let home_dir =
+        gleisner_polis::util::resolve_home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
 
     let config = LearnerConfig {
         project_dir: project_dir.to_owned(),

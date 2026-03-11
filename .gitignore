@@ -3,3 +3,4 @@
 .serena/
 *.pem
 e2e-test-project/
+*.proptest-regressions

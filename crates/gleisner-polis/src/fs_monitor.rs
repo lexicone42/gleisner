@@ -220,6 +220,18 @@ fn walk_and_hash(current: &Path, ignore_patterns: &[String], snapshot: &mut File
 /// This is the reconciliation step: any file that changed between
 /// snapshots but wasn't seen by inotify gets a synthetic event.
 /// The `seen_paths` set contains paths already reported by the monitor.
+///
+/// # Temporal semantics
+///
+/// The before-snapshot is taken at session start (T₀), the after-snapshot
+/// at session end (T₁). The inotify monitor covers `[T_monitor_start, T_monitor_stop]`,
+/// which is a subset of `[T₀, T₁]`. Reconciled events use `sequence: 0`
+/// to distinguish them from real-time events (which have monotonic sequences).
+/// This means:
+///
+/// - A file modified between T₀ and monitor start: caught by reconciliation
+/// - A file modified between monitor stop and T₁: caught by reconciliation
+/// - A file modified and reverted within `[T₀, T₁]`: invisible (hash matches)
 pub fn reconcile_snapshots<S: ::std::hash::BuildHasher>(
     before: &FileSnapshot,
     after: &FileSnapshot,

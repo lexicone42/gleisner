@@ -49,6 +49,13 @@ impl DirectSandbox {
     pub fn new(profile: Profile, project_dir: PathBuf) -> Result<Self, SandboxError> {
         let init_bin = detect_sandbox_init().ok_or(SandboxError::SandboxInitNotFound)?;
 
+        // Canonicalize project_dir so bind_mount calculates the correct
+        // target path. A relative path like "." would otherwise resolve to
+        // new_root itself (via new_root.join(".")), covering the entire
+        // tmpfs and hiding old_root — causing pivot_root ENOENT.
+        let project_dir = std::fs::canonicalize(&project_dir)
+            .map_err(|_| SandboxError::PathNotFound(project_dir.clone()))?;
+
         info!(
             profile = %profile.name,
             project_dir = %project_dir.display(),

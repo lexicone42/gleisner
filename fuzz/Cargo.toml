@@ -1,0 +1,52 @@
+[package]
+name = "gleisner-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dependencies.gleisner-forge]
+path = "../crates/gleisner-forge"
+
+[dependencies.gleisner-scapes]
+path = "../crates/gleisner-scapes"
+
+[dependencies.gleisner-polis]
+path = "../crates/gleisner-polis"
+
+# ── Fuzz targets ───────────────────────────────────────────
+
+[[bin]]
+name = "fuzz_compose_merge"
+path = "fuzz_targets/fuzz_compose_merge.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_store_hash"
+path = "fuzz_targets/fuzz_store_hash.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_audit_jsonl"
+path = "fuzz_targets/fuzz_audit_jsonl.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_expand_tilde"
+path = "fuzz_targets/fuzz_expand_tilde.rs"
+test = false
+doc = false
+bench = false

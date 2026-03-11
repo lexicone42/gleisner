@@ -691,6 +691,135 @@ mod tests {
         );
     }
 
+    // ── Property-based tests ──────────────────────────────────────
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// Strategy for generating arbitrary JSON values (bounded depth).
+        fn arb_json() -> impl Strategy<Value = serde_json::Value> {
+            let leaf = prop_oneof![
+                Just(serde_json::Value::Null),
+                any::<bool>().prop_map(serde_json::Value::Bool),
+                // Avoid NaN/Infinity which aren't valid JSON
+                (-1e15f64..1e15f64)
+                    .prop_filter("finite", |f| f.is_finite())
+                    .prop_map(|f| serde_json::json!(f)),
+                any::<i64>().prop_map(|n| serde_json::json!(n)),
+                ".*".prop_map(|s: String| serde_json::Value::String(s)),
+            ];
+            leaf.prop_recursive(
+                3,  // depth
+                64, // max nodes
+                8,  // items per collection
+                |inner| {
+                    prop_oneof![
+                        prop::collection::vec(inner.clone(), 0..8)
+                            .prop_map(serde_json::Value::Array),
+                        prop::collection::vec(("[a-zA-Z_][a-zA-Z0-9_]{0,15}", inner), 0..6)
+                            .prop_map(|pairs| {
+                                let map: serde_json::Map<String, serde_json::Value> =
+                                    pairs.into_iter().collect();
+                                serde_json::Value::Object(map)
+                            }),
+                    ]
+                },
+            )
+        }
+
+        proptest! {
+            /// json_to_nickel never panics on arbitrary JSON input.
+            #[test]
+            fn json_to_nickel_never_panics(json in arb_json()) {
+                let _ = json_to_nickel(&json);
+            }
+
+            /// String escaping produces valid Nickel string literals:
+            /// output starts and ends with double quotes, no unescaped
+            /// newlines/tabs/backslashes inside.
+            #[test]
+            fn json_to_nickel_strings_are_quoted(s in ".*") {
+                let json = serde_json::Value::String(s);
+                let result = json_to_nickel(&json);
+                prop_assert!(result.starts_with('"'));
+                prop_assert!(result.ends_with('"'));
+
+                // The inner content should have no raw newlines/tabs
+                let inner = &result[1..result.len()-1];
+                prop_assert!(!inner.contains('\n'), "raw newline in: {}", result);
+                prop_assert!(!inner.contains('\r'), "raw CR in: {}", result);
+                prop_assert!(!inner.contains('\t'), "raw tab in: {}", result);
+            }
+
+            /// project_for_injection always includes _store_ref and only
+            /// PROJECTION_FIELDS (plus _store_ref).
+            #[test]
+            fn project_output_subset_of_projection_fields(
+                pairs in prop::collection::vec(
+                    ("[a-z_]{1,20}", arb_json()), 1..20
+                )
+            ) {
+                let map: serde_json::Map<String, serde_json::Value> =
+                    pairs.into_iter().collect();
+                let input = serde_json::Value::Object(map);
+                let store_ref = StoreRef { hash: "test_hash".to_string() };
+
+                let result = project_for_injection(&input, &store_ref);
+                let obj = result.as_object().unwrap();
+
+                // _store_ref always present
+                prop_assert!(obj.contains_key("_store_ref"));
+                prop_assert_eq!(obj["_store_ref"].as_str().unwrap(), "test_hash");
+
+                // All output keys must be in PROJECTION_FIELDS or "_store_ref"
+                for key in obj.keys() {
+                    prop_assert!(
+                        PROJECTION_FIELDS.contains(&key.as_str()) || key == "_store_ref",
+                        "unexpected key in projection: {}",
+                        key
+                    );
+                }
+
+                // Output size <= input size + 1 (_store_ref)
+                prop_assert!(obj.len() <= PROJECTION_FIELDS.len() + 1);
+            }
+
+            /// flatten_for_injection never panics and preserves non-dep keys.
+            /// Uses indexed keys to avoid duplicate-key ambiguity.
+            #[test]
+            fn flatten_preserves_non_dep_keys(
+                values in prop::collection::vec(arb_json(), 0..5)
+            ) {
+                let mut map = serde_json::Map::new();
+                map.insert("name".to_string(), serde_json::json!("test"));
+                map.insert("ty".to_string(), serde_json::json!("Builder"));
+                let extra_keys: Vec<String> = (0..values.len())
+                    .map(|i| format!("extra_{i}"))
+                    .collect();
+                for (k, v) in extra_keys.iter().zip(values.iter()) {
+                    map.insert(k.clone(), v.clone());
+                }
+                let input = serde_json::Value::Object(map);
+                let result = flatten_for_injection(&input);
+
+                let result_obj = result.as_object().unwrap();
+                // name and ty always preserved
+                prop_assert_eq!(result_obj.get("name"), Some(&serde_json::json!("test")));
+                prop_assert_eq!(result_obj.get("ty"), Some(&serde_json::json!("Builder")));
+
+                // Extra keys preserved
+                for (k, v) in extra_keys.iter().zip(values.iter()) {
+                    prop_assert_eq!(
+                        result_obj.get(k), Some(v),
+                        "key '{}' should be preserved",
+                        k
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn eval_with_projected_dep_results() {
         // Simulates the new flow: dep results are already projected (thin)

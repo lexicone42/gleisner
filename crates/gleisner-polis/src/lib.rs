@@ -17,7 +17,7 @@ pub mod learner;
 pub mod monitor;
 pub mod policy;
 pub mod profile;
-mod util;
+pub mod util;
 
 // ── Linux-only ──────────────────────────────────────────────────────
 #[cfg(target_os = "linux")]
@@ -44,7 +44,7 @@ pub use learner::{
 pub use monitor::{FsMonitorConfig, ProcMonitorConfig};
 pub use policy::{FileAccessType, LandlockPolicy, SandboxSpec};
 pub use profile::{Profile, resolve_profile};
-pub use util::{build_claude_inner_command, expand_tilde, resolve_claude_bin};
+pub use util::{build_claude_inner_command, expand_tilde, resolve_claude_bin, resolve_home_dir};
 
 // ── Linux-only re-exports ───────────────────────────────────────────
 #[cfg(target_os = "linux")]

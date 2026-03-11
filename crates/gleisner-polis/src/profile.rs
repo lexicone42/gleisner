@@ -231,17 +231,19 @@ pub fn resolve_profile(name_or_path: &str) -> Result<Profile, SandboxError> {
 
     // If it's already a valid path to a TOML file, use it directly
     if path.extension().is_some_and(|ext| ext == "toml") && path.exists() {
+        tracing::debug!(path = %path.display(), "loading profile from explicit path");
         return load_profile(path);
     }
 
-    // Search default dirs for {name}.toml
-    let found = DEFAULT_PROFILE_DIRS
+    // Search default dirs for {name}.toml — collect ALL matches for shadow detection
+    let candidates: Vec<PathBuf> = DEFAULT_PROFILE_DIRS
         .iter()
         .map(|dir| dir.join(format!("{name_or_path}.toml")))
-        .find(|p| p.exists());
+        .filter(|p| p.exists())
+        .collect();
 
-    // let-else: early return on None
-    let Some(profile_path) = found else {
+    // let-else: early return when no candidates found
+    let Some(profile_path) = candidates.first() else {
         let search_paths: Vec<String> = DEFAULT_PROFILE_DIRS
             .iter()
             .map(|d| d.display().to_string())
@@ -256,7 +258,23 @@ pub fn resolve_profile(name_or_path: &str) -> Result<Profile, SandboxError> {
         });
     };
 
-    load_profile(&profile_path)
+    // Warn if XDG profile shadows a bundled/system profile
+    if candidates.len() > 1 {
+        tracing::warn!(
+            loaded = %profile_path.display(),
+            shadowed = %candidates[1].display(),
+            "profile '{}' found in multiple locations — using first match (update XDG copy if stale)",
+            name_or_path
+        );
+    }
+
+    tracing::debug!(
+        name = name_or_path,
+        path = %profile_path.display(),
+        "resolved profile"
+    );
+
+    load_profile(profile_path)
 }
 
 fn load_profile(path: &Path) -> Result<Profile, SandboxError> {
@@ -289,20 +307,27 @@ mod tests {
 
     #[test]
     fn konishi_profile_parses_correctly() {
-        // This test runs from the workspace root, so profiles/ is accessible
+        // This test runs from the workspace root, so profiles/ is accessible.
+        // In CI (different cwd), the bundled profiles/ dir won't resolve —
+        // skip rather than silently pass, so real parse errors are never hidden.
         let result = resolve_profile("konishi");
-        if let Ok(profile) = result {
-            assert_eq!(profile.name, "konishi");
-            assert!(matches!(profile.network.default, PolicyDefault::Deny));
-            assert!(
-                profile
-                    .network
-                    .allow_domains
-                    .contains(&"api.anthropic.com".to_owned())
-            );
-            assert!(profile.process.pid_namespace);
+        match result {
+            Ok(profile) => {
+                assert_eq!(profile.name, "konishi");
+                assert!(matches!(profile.network.default, PolicyDefault::Deny));
+                assert!(
+                    profile
+                        .network
+                        .allow_domains
+                        .contains(&"api.anthropic.com".to_owned())
+                );
+                assert!(profile.process.pid_namespace);
+            }
+            Err(ref e) if e.to_string().contains("not found") => {
+                eprintln!("skipping konishi test: profile not found (expected in CI)");
+            }
+            Err(e) => panic!("unexpected profile error (not 'not found'): {e}"),
         }
-        // If the file isn't found (CI, different cwd), that's also fine
     }
 
     #[test]

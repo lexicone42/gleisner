@@ -172,6 +172,105 @@ mod tests {
         assert_eq!(ref1, ref2);
     }
 
+    // ── Property-based tests ──────────────────────────────────────
+
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+
+        fn arb_json() -> impl Strategy<Value = serde_json::Value> {
+            let leaf = prop_oneof![
+                Just(serde_json::Value::Null),
+                any::<bool>().prop_map(serde_json::Value::Bool),
+                any::<i64>().prop_map(|n| serde_json::json!(n)),
+                ".*".prop_map(|s: String| serde_json::Value::String(s)),
+            ];
+            leaf.prop_recursive(3, 64, 8, |inner| {
+                prop_oneof![
+                    prop::collection::vec(inner.clone(), 0..8).prop_map(serde_json::Value::Array),
+                    prop::collection::vec(("[a-zA-Z_][a-zA-Z0-9_]{0,15}", inner), 0..6).prop_map(
+                        |pairs| {
+                            let map: serde_json::Map<String, serde_json::Value> =
+                                pairs.into_iter().collect();
+                            serde_json::Value::Object(map)
+                        }
+                    ),
+                ]
+            })
+        }
+
+        proptest! {
+            /// canonical_json is idempotent: applying it twice yields the
+            /// same string as applying it once.
+            #[test]
+            fn canonical_json_is_idempotent(json in arb_json()) {
+                let c1 = canonical_json(&json);
+                let reparsed: serde_json::Value = serde_json::from_str(&c1).unwrap();
+                let c2 = canonical_json(&reparsed);
+                prop_assert_eq!(c1, c2);
+            }
+
+            /// content_hash is deterministic: same value always produces same hash.
+            #[test]
+            fn content_hash_deterministic(json in arb_json()) {
+                let h1 = Store::content_hash(&json);
+                let h2 = Store::content_hash(&json);
+                prop_assert_eq!(h1, h2);
+            }
+
+            /// content_hash is key-order independent: shuffled object keys
+            /// produce the same hash. Uses unique keys to avoid duplicate-key
+            /// ambiguity.
+            #[test]
+            fn content_hash_key_order_independent(
+                n in 1usize..10
+            ) {
+                // Generate unique keys by index
+                let pairs: Vec<(String, serde_json::Value)> = (0..n)
+                    .map(|i| (format!("key_{i}"), serde_json::json!(i)))
+                    .collect();
+
+                let forward: serde_json::Map<String, serde_json::Value> =
+                    pairs.iter().cloned().collect();
+                let reverse: serde_json::Map<String, serde_json::Value> =
+                    pairs.iter().rev().cloned().collect();
+
+                let h1 = Store::content_hash(&serde_json::Value::Object(forward));
+                let h2 = Store::content_hash(&serde_json::Value::Object(reverse));
+                prop_assert_eq!(h1, h2);
+            }
+
+            /// Store put/get roundtrip: value retrieved from store produces
+            /// the same content hash as the original.
+            #[test]
+            fn store_put_get_roundtrip(json in arb_json()) {
+                let dir = tempfile::tempdir().unwrap();
+                let store = Store::new(dir.path().join("store")).unwrap();
+
+                let store_ref = store.put(&json).unwrap();
+                prop_assert!(store.contains(&store_ref));
+
+                let retrieved = store.get(&store_ref).unwrap();
+                prop_assert_eq!(
+                    Store::content_hash(&json),
+                    Store::content_hash(&retrieved)
+                );
+            }
+
+            /// Store put is idempotent: putting the same value twice returns
+            /// the same StoreRef.
+            #[test]
+            fn store_put_idempotent(json in arb_json()) {
+                let dir = tempfile::tempdir().unwrap();
+                let store = Store::new(dir.path().join("store")).unwrap();
+
+                let ref1 = store.put(&json).unwrap();
+                let ref2 = store.put(&json).unwrap();
+                prop_assert_eq!(ref1, ref2);
+            }
+        }
+    }
+
     #[test]
     fn different_key_order_same_hash() {
         let j1: serde_json::Value = serde_json::from_str(r#"{"a": 1, "b": 2}"#).unwrap();
