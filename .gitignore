@@ -4,3 +4,4 @@
 *.pem
 e2e-test-project/
 *.proptest-regressions
+static_analysis_semgrep_*/

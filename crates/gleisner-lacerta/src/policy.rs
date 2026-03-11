@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::VerificationError;
 
 /// Input to a policy engine — extracted from the attestation payload.
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyInput {
     /// Whether the session was sandboxed.
     pub sandboxed: Option<bool>,
@@ -52,7 +52,7 @@ pub trait PolicyEngine: Send + Sync {
 ///
 /// All fields are `Option` — absent rules are skipped (not failed).
 /// This provides opt-in strictness: you only fail on rules you explicitly set.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BuiltinPolicy {
     /// Require that the session was sandboxed.
     pub require_sandbox: Option<bool>,

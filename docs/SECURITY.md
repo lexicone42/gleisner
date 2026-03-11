@@ -1,7 +1,7 @@
 # Gleisner -- Security Guide
 
-**Document version:** 0.2.0
-**Date:** 2026-02-21
+**Document version:** 0.3.0
+**Date:** 2026-03-11
 **Status:** Living document
 **Companion:** This document covers practical security guidance. For threat
 scenarios, attack surface analysis, and residual risk assessment, see
@@ -66,6 +66,13 @@ Verification results are embedded in the attestation's `package_metadata` as
 `VerifiedProperty` structs, enabling policies that require proof coverage for
 specific package categories (e.g., cryptographic libraries). See
 [FORGE.md](FORGE.md#proof-verification) for details.
+
+### 1.5 Policy Compliance (Optional)
+
+The Z3 SMT solver can prove whether a session's security policy meets named
+baselines (SLSA Build L1/L2/L3, Gleisner Strict). Results are embedded in
+CycloneDX 1.6 SBOMs as machine-readable claims and counter-claims. See
+[Section 5.4](#54-policy-lattice-z3-smt) for details.
 
 ---
 
@@ -253,6 +260,7 @@ Create a JSON file with the rules you want to enforce. All fields are optional
 | `allowed_builders` | `[string]` | Fail if the builder ID is not in the list |
 | `require_materials` | `bool` | Fail if no materials (dependencies) are recorded |
 | `require_parent_attestation` | `bool` | Fail if the attestation is not part of a chain |
+| `max_denial_count` | `u64` | Fail if Landlock denial events exceed this limit |
 
 Apply the policy during verification:
 
@@ -282,6 +290,31 @@ gleisner verify --policy policy.wasm attestation.json
 Policy auto-detection: `gleisner-lacerta` inspects the file extension --
 `.json` files load as `BuiltinPolicy`, `.wasm` files load as `WasmPolicy`.
 
+### 5.4 Policy Lattice (Z3 SMT)
+
+The `policy_lattice` module (behind the `lattice` feature flag in `gleisner-lacerta`)
+encodes `BuiltinPolicy` rules as Z3 QF_LIA constraints to answer questions
+that runtime evaluation cannot:
+
+- **Subsumption**: Is every input accepted by policy A also accepted by policy B?
+- **Comparison**: Full lattice ordering (strictly stricter, strictly looser, equivalent, incomparable)
+- **Witnesses**: Concrete counterexample inputs when subsumption fails
+
+Standard baselines are provided for compliance checking:
+
+| Baseline | Rules |
+|---|---|
+| SLSA Build L1 | `require_materials` |
+| SLSA Build L2 | L1 + `require_sandbox` + `require_audit_log` |
+| SLSA Build L3 | L2 + `require_parent_attestation` + `max_denial_count: 0` |
+| Gleisner Strict | L3 + `allowed_profiles: ["strict"]` + `max_session_duration_secs: 3600` |
+
+These form a strict chain: L1 ⊃ L2 ⊃ L3 ⊂ Gleisner Strict.
+
+Results are embedded in CycloneDX 1.6 SBOMs as Declarations claims. See
+[FORGE.md](FORGE.md#cyclonedx-16-sbom) and
+[LEAN-INTEGRATION-RESEARCH.md](LEAN-INTEGRATION-RESEARCH.md) for details.
+
 ### 5.3 Writing Custom Policies
 
 The policy engine receives a `PolicyInput` struct extracted from the
@@ -297,6 +330,7 @@ pub struct PolicyInput {
     pub has_materials: bool,
     pub has_parent_attestation: bool,
     pub chain_length: Option<u64>,
+    pub denial_count: Option<u64>,
 }
 ```
 

@@ -13,6 +13,8 @@ pub mod digest;
 pub mod error;
 pub mod inspect;
 pub mod policy;
+#[cfg(feature = "lattice")]
+pub mod policy_lattice;
 pub mod policy_wasm;
 pub mod signature;
 pub mod verify;

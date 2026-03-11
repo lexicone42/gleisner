@@ -251,6 +251,10 @@ gleisner verify --policy policy.json .gleisner/attestation-*.json
 
 All rules are opt-in. Absent fields are skipped, not failed.
 
+### Policy Lattice (Z3)
+
+The `gleisner-lacerta` crate includes a Z3-powered policy lattice module (behind the `lattice` feature) that can formally prove whether one policy subsumes another. This enables automated compliance checking against named baselines (SLSA Build L1/L2/L3) with concrete counterexample witnesses when compliance fails. Results are embedded in CycloneDX 1.6 SBOMs. See [docs/SECURITY.md](docs/SECURITY.md) for details.
+
 ## Architecture
 
 ```
@@ -275,10 +279,10 @@ All rules are opt-in. Absent fields are skipped, not failed.
 | `gleisner-cli` | CLI: `wrap`, `record`, `verify`, `inspect`, `diff`, `sbom`, `learn`, `forge` |
 | `gleisner-tui` | Interactive TUI with security dashboard, slash commands, attestation recording |
 | `gleisner-polis` | Sandbox: namespaces, Landlock V7, cgroups/rlimits, inotify, pasta networking, profile learning |
-| `gleisner-forge` | Forge: Nickel package evaluator for minimal.dev, proof verification (Lean 4 via `lake build`), attestation metadata |
+| `gleisner-forge` | Forge: Nickel package evaluator for minimal.dev, proof verification (Lean 4), CycloneDX 1.6 SBOM with proof-carrying Declarations |
 | `gleisner-introdus` | Attestation: in-toto v1 statements, ECDSA P-256 + Sigstore signing, chain linking |
-| `gleisner-lacerta` | Verification: signature checking, digest verification, policy engine (JSON + WASM/OPA) |
-| `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.6 JSON with proof-carrying Declarations |
+| `gleisner-lacerta` | Verification: signature checking, digest verification, policy engine (JSON + WASM/OPA), Z3 policy lattice analysis |
+| `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.6 JSON |
 | `gleisner-scapes` | Events: tokio broadcast bus, JSONL audit writer, session recorder |
 | `gleisner-sandbox-init` | Container runtime: creates namespaces, bind mounts, pivot_root, applies Landlock, execs inner command |
 
@@ -291,7 +295,7 @@ All rules are opt-in. Absent fields are skipped, not failed.
 | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) | Threat actors, attack surfaces, LACERTA scenarios, mitigations matrix |
 | [docs/FORGE.md](docs/FORGE.md) | Forge: Nickel package evaluation, proof verification, minimal.dev integration |
 | [docs/RUST_PATTERNS.md](docs/RUST_PATTERNS.md) | Rust patterns and idioms in the codebase (learning guide) |
-| [docs/LEAN-INTEGRATION-RESEARCH.md](docs/LEAN-INTEGRATION-RESEARCH.md) | Research notes on Lean formal verification integration |
+| [docs/LEAN-INTEGRATION-RESEARCH.md](docs/LEAN-INTEGRATION-RESEARCH.md) | Proof-carrying SBOMs: embedding Lean proofs and Z3 policy compliance in CycloneDX 1.6 |
 
 ## Contributing
 

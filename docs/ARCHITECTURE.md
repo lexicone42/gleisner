@@ -60,10 +60,10 @@ The project is a Cargo workspace with nine crates. All version numbers and lint 
 | `gleisner-polis` | Sandbox enforcement. Direct sandbox via `gleisner-sandbox-init`, Landlock LSM, cgroup v2 resource limits, inotify filesystem monitoring with snapshot reconciliation, `/proc` process monitoring, network filtering. | `DirectSandbox`, `Profile`, `CgroupScope`, `NetworkFilter`, `NamespaceHandle`, `TapHandle` |
 | `gleisner-sandbox-init` | Container runtime. Creates user/mount/PID/network namespaces, sets up bind mounts with pivot_root, applies Landlock V7, installs seccomp-BPF filters, then exec's the inner command. | `SandboxSpec` (via gleisner-polis) |
 | `gleisner-introdus` | Attestation creation. In-toto statement assembly, ECDSA P-256 signing, chain discovery, git state capture, Claude Code context capture, session recording. | `InTotoStatement`, `GleisnerProvenance`, `AttestationBundle`, `LocalSigner`, `ChainLink` |
-| `gleisner-lacerta` | Verification. Signature verification (local key + Sigstore), digest checking, policy evaluation (builtin JSON + WASM/OPA), chain walking. | `Verifier`, `VerificationReport`, `BuiltinPolicy`, `WasmPolicy` |
+| `gleisner-lacerta` | Verification. Signature verification (local key + Sigstore), digest checking, policy evaluation (builtin JSON + WASM/OPA), chain walking, Z3 policy lattice analysis (feature-gated). | `Verifier`, `VerificationReport`, `BuiltinPolicy`, `WasmPolicy`, `SubsumptionResult`, `LatticeRelation` |
 | `gleisner-scapes` | Event infrastructure. Audit event types, broadcast channel event bus, JSONL audit log writer. | `EventBus`, `EventPublisher`, `AuditEvent`, `EventKind`, `JsonlWriter` |
-| `gleisner-forge` | Nickel package evaluation for minimal.dev. Content-addressed evaluation, topological dependency ordering, sandbox policy composition, Lean 4 proof verification (via `lake build`), attestation metadata extraction. | `ForgeConfig`, `EvalContext`, `ComposedEnvironment`, `VerifyConfig`, `PackageVerification` |
-| `gleisner-bridger` | SBOM generation. Cargo.lock parsing, CycloneDX 1.6 JSON output with proof-carrying Declarations. | `Sbom`, `Component` |
+| `gleisner-forge` | Nickel package evaluation for minimal.dev. Content-addressed evaluation, topological dependency ordering, sandbox policy composition, Lean 4 proof verification (via `lake build`), CycloneDX 1.6 SBOM with proof-carrying Declarations, attestation metadata extraction. | `ForgeConfig`, `EvalContext`, `ComposedEnvironment`, `VerifyConfig`, `PackageVerification`, `PolicyComplianceProof` |
+| `gleisner-bridger` | SBOM generation. Cargo.lock parsing, CycloneDX 1.6 JSON output. | `Sbom`, `Component` |
 
 ### Dependency Graph
 
@@ -655,8 +655,11 @@ pub trait PolicyEngine: Send + Sync {
 | `allowed_builders` | `builder_id` | Restrict builder identity |
 | `require_materials` | `has_materials` | Require input materials |
 | `require_parent_attestation` | `has_parent_attestation` | Require chain continuity |
+| `max_denial_count` | `denial_count` | Limit Landlock denial events |
 
 **WasmPolicy** (WASM/OPA): Module loading via `wasmtime` is implemented, but the OPA ABI evaluation is not yet complete (the OPA ABI for WASM involves complex memory management and JSON serialization protocol). The builtin engine covers immediate needs.
+
+**Policy Lattice** (Z3 SMT, feature-gated): The `policy_lattice` module encodes `BuiltinPolicy` rules as Z3 QF_LIA constraints to prove subsumption between policies. This enables automated compliance checking against SLSA Build baselines with concrete counterexample witnesses when compliance fails. Results are embedded in CycloneDX 1.6 SBOMs as Declarations claims. See [SECURITY.md § Policy Lattice](SECURITY.md#54-policy-lattice-z3-smt).
 
 ### Chain Verification
 

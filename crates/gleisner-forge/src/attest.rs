@@ -75,6 +75,13 @@ pub struct ForgeAttestation {
     /// environment includes formally proved components.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<VerificationSummary>,
+    /// Policy compliance proofs from Z3 lattice analysis.
+    ///
+    /// Each entry records whether the session's policy meets a standard
+    /// baseline (SLSA Build Levels, Gleisner strict). Empty when lattice
+    /// analysis was not performed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub policy_compliance: Vec<PolicyComplianceProof>,
 }
 
 /// Source provenance for a package.
@@ -161,6 +168,31 @@ pub struct VerificationSummary {
     pub packages_with_proofs: usize,
     /// Packages with no verified properties.
     pub packages_without_proofs: usize,
+}
+
+/// Result of checking a session policy against a named baseline.
+///
+/// Produced by the policy lattice module (Z3 SMT solver) and consumed
+/// by SBOM generation. This struct is solver-independent — it carries
+/// only the results, not the Z3 machinery.
+///
+/// When `is_compliant` is `true`, the Z3 solver proved that every input
+/// accepted by the session policy is also accepted by the baseline (UNSAT).
+/// When `false`, the `witness` field contains a concrete counterexample
+/// serialized as JSON.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct PolicyComplianceProof {
+    /// Baseline identifier (e.g., `"slsa-build-l1"`).
+    pub baseline_name: String,
+    /// Human-readable baseline description.
+    pub baseline_description: String,
+    /// Whether the session policy subsumes the baseline.
+    pub is_compliant: bool,
+    /// Concrete counterexample when non-compliant (serialized `PolicyInput`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub witness: Option<serde_json::Value>,
+    /// Human-readable explanation of the result.
+    pub explanation: String,
 }
 
 /// Per-package supply chain metadata extracted from minimal.dev `attrs`.
@@ -272,6 +304,7 @@ pub fn extract_attestation_with_results(
         packages: output.environment.packages.clone(),
         package_metadata,
         verification,
+        policy_compliance: Vec::new(),
     }
 }
 

@@ -5,7 +5,7 @@ Incremental Nickel package evaluator for [minimal.dev](https://minimal.dev) buil
 **Related documents:**
 - [ARCHITECTURE.md](ARCHITECTURE.md) -- overall gleisner architecture
 - [SECURITY.md](SECURITY.md) -- attestation and verification design
-- [LEAN-INTEGRATION-RESEARCH.md](LEAN-INTEGRATION-RESEARCH.md) -- research notes on Lean formal verification integration
+- [LEAN-INTEGRATION-RESEARCH.md](LEAN-INTEGRATION-RESEARCH.md) -- proof-carrying SBOMs: Lean proofs and Z3 policy compliance in CycloneDX 1.6
 
 ---
 
@@ -221,6 +221,29 @@ counts: total, verified, failed, and unchecked.
 
 If the Lean binary is not available, verification is skipped with a warning. If `--strict-verify` is passed, any failure is a hard error. The schema supports arbitrary proof systems -- Lean 4 is the first.
 
+## CycloneDX 1.6 SBOM
+
+`gleisner forge --sbom` generates a proof-carrying SBOM using CycloneDX 1.6 **Declarations**. Two kinds of formal evidence are embedded:
+
+### Lean Proof Claims
+
+Each `VerifiedProperty` becomes an attestation claim with:
+- Proof artifact hashes and URIs as evidence data
+- Conformance score: 1.0 (forge-verified), 0.0 (unchecked/failed)
+- Assessors: gleisner-forge (local) + proof kernel (third-party)
+
+### Z3 Policy Compliance Claims
+
+When policy compliance data is provided (from the `gleisner-lacerta` lattice module), each baseline check becomes a claim or counter-claim:
+- **UNSAT** (compliant): claim with conformance 1.0 — Z3 proved subsumption
+- **SAT** (non-compliant): counter-claim with conformance 0.0 + concrete witness as evidence
+
+Standard baselines: SLSA Build L1 (materials), L2 (+ sandbox + audit), L3 (+ chain + zero denials), Gleisner Strict (all rules, tight limits).
+
+The Z3 SMT Solver appears as a third-party assessor alongside proof kernels. Both are mechanically certain — conformance 1.0 means mathematical proof, not heuristic confidence.
+
+See [LEAN-INTEGRATION-RESEARCH.md](LEAN-INTEGRATION-RESEARCH.md) for the full proposal on proof-carrying SBOMs.
+
 ## Performance
 
 Upstream nickel-lang-core 0.17 (no fork dependency):
@@ -247,7 +270,8 @@ crates/gleisner-forge/
 |   +-- compose.rs      -- ComposedEnvironment from merged package results
 |   +-- orchestrate.rs  -- ForgeConfig, evaluate_packages (top-level entry point)
 |   +-- bridge.rs       -- BridgeReport, compose_to_policy (forge→sandbox translation)
-|   +-- attest.rs       -- ForgeAttestation, package metadata extraction, verification summary
+|   +-- attest.rs       -- ForgeAttestation, package metadata extraction, verification summary, PolicyComplianceProof
+|   +-- sbom.rs         -- CycloneDX 1.6 SBOM generation with Declarations (proof claims + policy compliance)
 |   +-- verify.rs       -- Lean 4 proof verification (via lake build)
 |   +-- negotiate.rs    -- Capability negotiation between package needs and profile rules
 |   +-- deploy.rs       -- Deployment helpers (store layout, output paths)

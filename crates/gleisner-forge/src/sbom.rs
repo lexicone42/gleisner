@@ -24,7 +24,9 @@ use chrono::Utc;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::attest::{ForgeAttestation, PackageMetadata, SourceProvenance, VerifiedProperty};
+use crate::attest::{
+    ForgeAttestation, PackageMetadata, PolicyComplianceProof, SourceProvenance, VerifiedProperty,
+};
 
 // ────────────────────────────────────────────────────────────────────
 // CycloneDX 1.6 document types
@@ -414,9 +416,9 @@ fn metadata_to_component(meta: &PackageMetadata) -> Component {
     }
 }
 
-/// Build `CycloneDX` 1.6 declarations from packages with verified properties.
+/// Build `CycloneDX` 1.6 declarations from verified properties and policy compliance.
 ///
-/// Returns `None` if no packages have formal proofs.
+/// Returns `None` if there are neither formal proofs nor policy compliance results.
 fn build_declarations(attestation: &ForgeAttestation) -> Option<Declarations> {
     let packages_with_proofs: Vec<&PackageMetadata> = attestation
         .package_metadata
@@ -424,11 +426,14 @@ fn build_declarations(attestation: &ForgeAttestation) -> Option<Declarations> {
         .filter(|m| !m.verified_properties.is_empty())
         .collect();
 
-    if packages_with_proofs.is_empty() {
+    let has_proofs = !packages_with_proofs.is_empty();
+    let has_compliance = !attestation.policy_compliance.is_empty();
+
+    if !has_proofs && !has_compliance {
         return None;
     }
 
-    // Assessors: the forge itself + each proof system used
+    // Assessors: the forge itself (always present)
     let mut assessors = vec![Assessor {
         bom_ref: "assessor-gleisner-forge".to_owned(),
         third_party: Some(false),
@@ -438,48 +443,83 @@ fn build_declarations(attestation: &ForgeAttestation) -> Option<Declarations> {
         }),
     }];
 
-    // Collect unique proof systems
-    let mut proof_systems: Vec<String> = packages_with_proofs
-        .iter()
-        .flat_map(|m| m.verified_properties.iter())
-        .map(|p| p.proof_system.clone())
-        .collect();
-    proof_systems.sort();
-    proof_systems.dedup();
+    let mut attestations = Vec::new();
 
-    for system in &proof_systems {
-        assessors.push(Assessor {
-            bom_ref: format!("assessor-kernel-{system}"),
-            third_party: Some(true),
-            organization: Some(Organization {
-                name: format!("{system} proof kernel"),
-                url: kernel_urls(system),
-            }),
+    // ── Formal verification claims ──────────────────────────
+    if has_proofs {
+        let mut proof_systems: Vec<String> = packages_with_proofs
+            .iter()
+            .flat_map(|m| m.verified_properties.iter())
+            .map(|p| p.proof_system.clone())
+            .collect();
+        proof_systems.sort();
+        proof_systems.dedup();
+
+        for system in &proof_systems {
+            assessors.push(Assessor {
+                bom_ref: format!("assessor-kernel-{system}"),
+                third_party: Some(true),
+                organization: Some(Organization {
+                    name: format!("{system} proof kernel"),
+                    url: kernel_urls(system),
+                }),
+            });
+        }
+
+        let mut proof_claims = Vec::new();
+        for meta in &packages_with_proofs {
+            for prop in &meta.verified_properties {
+                proof_claims.push(property_to_claim(meta, prop));
+            }
+        }
+
+        attestations.push(Attestation {
+            summary: format!(
+                "Formal verification of {} properties across {} packages",
+                proof_claims.len(),
+                packages_with_proofs.len(),
+            ),
+            assessor: "assessor-gleisner-forge".to_owned(),
+            timestamp: Some(Utc::now().to_rfc3339()),
+            map: proof_claims,
         });
     }
 
-    // Build attestation claims for each package
-    let mut attestation_maps = Vec::new();
-    for meta in &packages_with_proofs {
-        for prop in &meta.verified_properties {
-            attestation_maps.push(property_to_claim(meta, prop));
-        }
-    }
+    // ── Policy compliance claims ────────────────────────────
+    if has_compliance {
+        assessors.push(Assessor {
+            bom_ref: "assessor-z3-smt".to_owned(),
+            third_party: Some(true),
+            organization: Some(Organization {
+                name: "Z3 SMT Solver".to_owned(),
+                url: vec!["https://github.com/Z3Prover/z3".to_owned()],
+            }),
+        });
 
-    let attestation_entry = Attestation {
-        summary: format!(
-            "Formal verification of {} properties across {} packages",
-            attestation_maps.len(),
-            packages_with_proofs.len(),
-        ),
-        assessor: "assessor-gleisner-forge".to_owned(),
-        timestamp: Some(Utc::now().to_rfc3339()),
-        map: attestation_maps,
-    };
+        let compliance_claims: Vec<AttestationClaim> = attestation
+            .policy_compliance
+            .iter()
+            .map(policy_compliance_to_claim)
+            .collect();
+
+        let compliant_count = attestation
+            .policy_compliance
+            .iter()
+            .filter(|p| p.is_compliant)
+            .count();
+        let total = attestation.policy_compliance.len();
+
+        attestations.push(Attestation {
+            summary: format!("Policy compliance: {compliant_count}/{total} baselines met"),
+            assessor: "assessor-z3-smt".to_owned(),
+            timestamp: Some(Utc::now().to_rfc3339()),
+            map: compliance_claims,
+        });
+    }
 
     Some(Declarations {
         assessors,
-        attestations: vec![attestation_entry],
+        attestations,
     })
 }
 
@@ -575,6 +615,94 @@ fn property_to_claim(meta: &PackageMetadata, prop: &VerifiedProperty) -> Attesta
         }],
         counter_claims: vec![],
         conformance: Conformance { score, confidence },
+    }
+}
+
+/// Convert a [`PolicyComplianceProof`] into a `CycloneDX` attestation claim.
+///
+/// Compliant baselines (UNSAT) produce a claim with conformance 1.0.
+/// Non-compliant baselines (SAT) produce a counter-claim with the Z3
+/// witness as evidence data.
+fn policy_compliance_to_claim(proof: &PolicyComplianceProof) -> AttestationClaim {
+    let claim_ref = format!("claim-policy-{}", proof.baseline_name);
+    let evidence_ref = format!("evidence-policy-{}", proof.baseline_name);
+
+    let evidence_properties = vec![
+        Property {
+            name: "cdx:forge:proof-method".to_owned(),
+            value: "z3-smt-qf-lia".to_owned(),
+        },
+        Property {
+            name: "cdx:forge:baseline-name".to_owned(),
+            value: proof.baseline_name.clone(),
+        },
+        Property {
+            name: "cdx:forge:baseline-description".to_owned(),
+            value: proof.baseline_description.clone(),
+        },
+    ];
+
+    if proof.is_compliant {
+        // UNSAT: session policy subsumes baseline
+        AttestationClaim {
+            requirement: format!("policy-compliance/{}", proof.baseline_name),
+            claims: vec![Claim {
+                bom_ref: claim_ref,
+                target: "session-policy".to_owned(),
+                predicate: format!("Session policy meets {} requirements", proof.baseline_name,),
+                reasoning: Some(proof.explanation.clone()),
+                evidence: vec![Evidence {
+                    bom_ref: evidence_ref,
+                    description: format!(
+                        "Z3 SMT solver proved subsumption: {}",
+                        proof.baseline_description,
+                    ),
+                    properties: evidence_properties,
+                    data: None,
+                }],
+            }],
+            counter_claims: vec![],
+            conformance: Conformance {
+                score: 1.0,
+                confidence: Some(1.0),
+            },
+        }
+    } else {
+        // SAT: found a witness — counter-claim with counterexample
+        let counter_evidence_data = proof.witness.as_ref().map(|witness| {
+            vec![EvidenceData {
+                name: "counterexample-witness".to_owned(),
+                r#type: Some("application/json".to_owned()),
+                value: serde_json::to_string_pretty(witness).unwrap_or_default(),
+            }]
+        });
+
+        AttestationClaim {
+            requirement: format!("policy-compliance/{}", proof.baseline_name),
+            claims: vec![],
+            counter_claims: vec![Claim {
+                bom_ref: claim_ref,
+                target: "session-policy".to_owned(),
+                predicate: format!(
+                    "Session policy does NOT meet {} requirements",
+                    proof.baseline_name,
+                ),
+                reasoning: Some(proof.explanation.clone()),
+                evidence: vec![Evidence {
+                    bom_ref: evidence_ref,
+                    description: format!(
+                        "Z3 SMT solver found counterexample: {}",
+                        proof.baseline_description,
+                    ),
+                    properties: evidence_properties,
+                    data: counter_evidence_data,
+                }],
+            }],
+            conformance: Conformance {
+                score: 0.0,
+                confidence: Some(1.0),
+            },
+        }
     }
 }
 
@@ -697,6 +825,7 @@ mod tests {
                 packages_with_proofs: 1,
                 packages_without_proofs: 1,
             }),
+            policy_compliance: vec![],
         }
     }
 
@@ -869,6 +998,7 @@ mod tests {
                 verified_properties: vec![],
             }],
             verification: None,
+            policy_compliance: vec![],
         };
 
         let bom = forge_to_cyclonedx(&attestation);
@@ -926,6 +1056,7 @@ mod tests {
                 verified_properties: vec![],
             }],
             verification: None,
+            policy_compliance: vec![],
         };
 
         let bom = forge_to_cyclonedx(&attestation);
@@ -937,5 +1068,173 @@ mod tests {
             .unwrap();
         assert_eq!(vcs.url, "https://ftp.gnu.org/gnu/bash/");
         assert_eq!(vcs.comment.as_deref(), Some("GNU project"));
+    }
+
+    // ── Policy compliance SBOM tests ────────────────────────
+
+    fn sample_compliance_proofs() -> Vec<PolicyComplianceProof> {
+        use crate::attest::PolicyComplianceProof;
+        vec![
+            PolicyComplianceProof {
+                baseline_name: "slsa-build-l1".to_owned(),
+                baseline_description: "SLSA Build Level 1: materials present".to_owned(),
+                is_compliant: true,
+                witness: None,
+                explanation:
+                    "Every input accepted by the candidate is also accepted by the baseline."
+                        .to_owned(),
+            },
+            PolicyComplianceProof {
+                baseline_name: "slsa-build-l2".to_owned(),
+                baseline_description: "SLSA Build Level 2: sandbox + audit log + materials"
+                    .to_owned(),
+                is_compliant: true,
+                witness: None,
+                explanation:
+                    "Every input accepted by the candidate is also accepted by the baseline."
+                        .to_owned(),
+            },
+            PolicyComplianceProof {
+                baseline_name: "slsa-build-l3".to_owned(),
+                baseline_description: "SLSA Build Level 3: L2 + attestation chain + zero denials"
+                    .to_owned(),
+                is_compliant: false,
+                witness: Some(serde_json::json!({
+                    "sandboxed": true,
+                    "has_audit_log": true,
+                    "has_materials": true,
+                    "has_parent_attestation": false,
+                })),
+                explanation:
+                    "Found an input accepted by the candidate but rejected by the baseline."
+                        .to_owned(),
+            },
+        ]
+    }
+
+    #[test]
+    fn policy_compliance_creates_declarations() {
+        let mut att = sample_attestation();
+        att.policy_compliance = sample_compliance_proofs();
+
+        let bom = forge_to_cyclonedx(&att);
+        let decl = bom.declarations.as_ref().expect("should have declarations");
+
+        // Assessors: forge + lean4 kernel + z3 smt
+        assert_eq!(decl.assessors.len(), 3);
+        assert_eq!(decl.assessors[2].bom_ref, "assessor-z3-smt");
+
+        // Two attestation groups: proof verification + policy compliance
+        assert_eq!(decl.attestations.len(), 2);
+        assert!(decl.attestations[1].summary.contains("2/3 baselines met"));
+        assert_eq!(decl.attestations[1].assessor, "assessor-z3-smt");
+    }
+
+    #[test]
+    fn compliant_baseline_has_claim_with_score_1() {
+        let mut att = sample_attestation();
+        att.policy_compliance = sample_compliance_proofs();
+
+        let bom = forge_to_cyclonedx(&att);
+        let decl = bom.declarations.as_ref().unwrap();
+        let compliance_claims = &decl.attestations[1].map;
+
+        let l1 = &compliance_claims[0];
+        assert_eq!(l1.requirement, "policy-compliance/slsa-build-l1");
+        assert_eq!(l1.claims.len(), 1);
+        assert!(l1.counter_claims.is_empty());
+        assert_eq!(l1.conformance.score, 1.0);
+        assert_eq!(l1.conformance.confidence, Some(1.0));
+        assert!(l1.claims[0].predicate.contains("meets"));
+    }
+
+    #[test]
+    fn non_compliant_baseline_has_counter_claim_with_witness() {
+        let mut att = sample_attestation();
+        att.policy_compliance = sample_compliance_proofs();
+
+        let bom = forge_to_cyclonedx(&att);
+        let decl = bom.declarations.as_ref().unwrap();
+        let compliance_claims = &decl.attestations[1].map;
+
+        let l3 = &compliance_claims[2];
+        assert_eq!(l3.requirement, "policy-compliance/slsa-build-l3");
+        assert!(l3.claims.is_empty());
+        assert_eq!(l3.counter_claims.len(), 1);
+        assert_eq!(l3.conformance.score, 0.0);
+        assert_eq!(l3.conformance.confidence, Some(1.0));
+        assert!(l3.counter_claims[0].predicate.contains("does NOT meet"));
+
+        // Evidence should contain the counterexample witness
+        let evidence = &l3.counter_claims[0].evidence[0];
+        let data = evidence.data.as_ref().expect("should have evidence data");
+        assert_eq!(data[0].name, "counterexample-witness");
+        assert!(data[0].value.contains("has_parent_attestation"));
+    }
+
+    #[test]
+    fn policy_compliance_only_creates_declarations_without_proofs() {
+        use crate::attest::PolicyComplianceProof;
+
+        let attestation = ForgeAttestation {
+            materials: vec![],
+            subjects: vec![],
+            builder_id: "gleisner-forge/0.1.0".to_owned(),
+            packages: vec!["curl".to_owned()],
+            package_metadata: vec![PackageMetadata {
+                name: "curl".to_owned(),
+                upstream_version: Some("8.11.0".to_owned()),
+                source_provenance: None,
+                repology_project: None,
+                purl: "pkg:github/curl/curl@8.11.0".to_owned(),
+                source_urls: vec![],
+                verified_properties: vec![],
+            }],
+            verification: None,
+            policy_compliance: vec![PolicyComplianceProof {
+                baseline_name: "slsa-build-l1".to_owned(),
+                baseline_description: "SLSA Build Level 1".to_owned(),
+                is_compliant: true,
+                witness: None,
+                explanation: "Proved.".to_owned(),
+            }],
+        };
+
+        let bom = forge_to_cyclonedx(&attestation);
+        let decl = bom.declarations.as_ref().expect("should have declarations");
+
+        // Assessors: forge + z3 (no proof kernels)
+        assert_eq!(decl.assessors.len(), 2);
+        assert_eq!(decl.assessors[0].bom_ref, "assessor-gleisner-forge");
+        assert_eq!(decl.assessors[1].bom_ref, "assessor-z3-smt");
+
+        // Only one attestation group (policy compliance)
+        assert_eq!(decl.attestations.len(), 1);
+        assert!(decl.attestations[0].summary.contains("1/1 baselines met"));
+    }
+
+    #[test]
+    fn policy_compliance_serializes_to_json() {
+        let mut att = sample_attestation();
+        att.policy_compliance = sample_compliance_proofs();
+
+        let bom = forge_to_cyclonedx(&att);
+        let json = serde_json::to_string_pretty(&bom).unwrap();
+
+        // Policy compliance fields present
+        assert!(json.contains("policy-compliance/slsa-build-l1"));
+        assert!(json.contains("z3-smt-qf-lia"));
+        assert!(json.contains("assessor-z3-smt"));
+        assert!(json.contains("counterexample-witness"));
+
+        // Roundtrip
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            parsed["declarations"]["attestations"]
+                .as_array()
+                .unwrap()
+                .len()
+                >= 2
+        );
     }
 }

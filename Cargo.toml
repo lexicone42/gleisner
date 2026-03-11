@@ -76,6 +76,9 @@ unicode-width = "0.2"
 # Policy (WASM runtime for OPA/Rego)
 wasmtime = "27"
 
+# SMT solver (for policy lattice analysis)
+z3 = "0.19"
+
 # Filesystem
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 directories = "6"

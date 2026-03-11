@@ -120,6 +120,14 @@ Verification changes (1):
  └─────────────┘
 ```
 
+## CycloneDX 1.6 SBOM
+
+`gleisner forge --sbom` generates a proof-carrying SBOM using CycloneDX 1.6
+Declarations. Two kinds of formal evidence are embedded:
+
+- **Lean proof claims**: verified properties with kernel version, spec hash, proof artifact hash
+- **Z3 policy compliance claims**: SMT-proved subsumption against SLSA Build L1/L2/L3 baselines, with concrete counterexample witnesses when compliance fails
+
 ## Key properties
 
 - **Incremental**: content-addressed store skips unchanged packages
@@ -128,9 +136,11 @@ Verification changes (1):
 - **Trust separation**: package authors declare properties, forge independently verifies them
 - **Graceful degradation**: packages without proofs are `unchecked`, not failed
 - **Minimal network surface**: source URLs in `build_deps` are parsed to derive the exact domain allowlist — the sandbox allows only the domains the packages actually need
+- **Proof-carrying SBOMs**: formal verification results embedded in standard CycloneDX 1.6 metadata
 
 ## Built with
 
 - [nickel-lang-core](https://github.com/nickel-lang/nickel) 0.17 — Nickel evaluation
 - [lean4](https://github.com/leanprover/lean4) — proof verification kernel
 - [kim-em/lean-zip](https://github.com/kim-em/lean-zip) — zlib roundtrip proofs
+- [Z3](https://github.com/Z3Prover/z3) 4.x — SMT solver for policy lattice analysis
