@@ -779,3 +779,190 @@ fn orchestrate_dependency_injection() {
     let app_json = &output.package_results["app"];
     assert_eq!(app_json["lib_name"], "lib");
 }
+
+// ---------------------------------------------------------------------------
+// SBOM e2e: policy compliance proofs → CycloneDX 1.6 Declarations
+// ---------------------------------------------------------------------------
+
+/// End-to-end test: construct a `ForgeAttestation` with both proof properties
+/// and policy compliance data, generate `CycloneDX` SBOM, and verify the
+/// Declarations structure carries both Lean proof claims and Z3 policy
+/// compliance claims.
+#[test]
+fn e2e_sbom_with_policy_compliance_and_proofs() {
+    use gleisner_forge::attest::{
+        ForgeAttestation, ForgeMaterial, PackageMetadata, PolicyComplianceProof, SourceProvenance,
+        VerificationSummary, VerifiedProperty,
+    };
+    use gleisner_forge::sbom::forge_to_cyclonedx;
+
+    // Build a realistic attestation with both proofs and compliance data
+    let attestation = ForgeAttestation {
+        materials: vec![ForgeMaterial {
+            uri: "pkg://minimal.dev/zlib".to_owned(),
+            sha256: String::new(),
+        }],
+        subjects: vec![],
+        builder_id: "gleisner-forge/0.1.0".to_owned(),
+        packages: vec!["zlib".to_owned()],
+        package_metadata: vec![PackageMetadata {
+            name: "zlib".to_owned(),
+            upstream_version: Some("1.3.1".to_owned()),
+            source_provenance: Some(SourceProvenance::GithubRepo {
+                owner: "madler".to_owned(),
+                repo: "zlib".to_owned(),
+            }),
+            repology_project: Some("zlib".to_owned()),
+            purl: "pkg:github/madler/zlib@1.3.1".to_owned(),
+            source_urls: vec![],
+            verified_properties: vec![VerifiedProperty {
+                property: "roundtrip".to_owned(),
+                description: "decompress(compress(data)) = data".to_owned(),
+                proof_system: "lean4".to_owned(),
+                kernel_version: "leanprover/lean4:v4.29.0-rc2".to_owned(),
+                specification_hash: "sha256:spec1111".to_owned(),
+                proof_hash: "sha256:proof2222".to_owned(),
+                declared_proof_hash: None,
+                proof_uri: Some("https://github.com/kim-em/lean-zip".to_owned()),
+                verified_by_forge: Some(true),
+                forge_kernel_version: Some("leanprover/lean4:v4.29.0-rc2".to_owned()),
+            }],
+        }],
+        verification: Some(VerificationSummary {
+            total_properties: 1,
+            forge_verified: 1,
+            unchecked: 0,
+            packages_with_proofs: 1,
+            packages_without_proofs: 0,
+        }),
+        policy_compliance: vec![
+            PolicyComplianceProof {
+                baseline_name: "slsa-build-l1".to_owned(),
+                baseline_description: "SLSA Build Level 1: materials present".to_owned(),
+                is_compliant: true,
+                witness: None,
+                explanation:
+                    "Every input accepted by the candidate is also accepted by the baseline."
+                        .to_owned(),
+            },
+            PolicyComplianceProof {
+                baseline_name: "slsa-build-l2".to_owned(),
+                baseline_description: "SLSA Build Level 2: sandbox + audit log + materials"
+                    .to_owned(),
+                is_compliant: true,
+                witness: None,
+                explanation:
+                    "Every input accepted by the candidate is also accepted by the baseline."
+                        .to_owned(),
+            },
+            PolicyComplianceProof {
+                baseline_name: "slsa-build-l3".to_owned(),
+                baseline_description: "SLSA Build Level 3: L2 + attestation chain + zero denials"
+                    .to_owned(),
+                is_compliant: false,
+                witness: Some(serde_json::json!({
+                    "sandboxed": true,
+                    "has_audit_log": true,
+                    "has_materials": true,
+                    "has_parent_attestation": false,
+                    "denial_count": null,
+                })),
+                explanation:
+                    "Found an input accepted by the candidate but rejected by the baseline."
+                        .to_owned(),
+            },
+        ],
+    };
+
+    let bom = forge_to_cyclonedx(&attestation);
+
+    // ── CycloneDX structure ──
+    assert_eq!(bom.spec_version, "1.6");
+    assert_eq!(bom.components.len(), 1);
+    assert_eq!(bom.components[0].name, "zlib");
+
+    // ── Declarations must exist ──
+    let decl = bom.declarations.as_ref().expect("should have declarations");
+
+    // Three assessors: forge + lean4 kernel + z3 smt
+    assert_eq!(decl.assessors.len(), 3);
+    let assessor_refs: Vec<&str> = decl.assessors.iter().map(|a| a.bom_ref.as_str()).collect();
+    assert!(assessor_refs.contains(&"assessor-gleisner-forge"));
+    assert!(assessor_refs.contains(&"assessor-kernel-lean4"));
+    assert!(assessor_refs.contains(&"assessor-z3-smt"));
+
+    // Two attestation groups
+    assert_eq!(decl.attestations.len(), 2);
+
+    // ── Group 1: Formal verification ──
+    let proof_group = &decl.attestations[0];
+    assert!(proof_group.summary.contains("1 properties"));
+    assert_eq!(proof_group.assessor, "assessor-gleisner-forge");
+    assert_eq!(proof_group.map.len(), 1);
+    assert_eq!(
+        proof_group.map[0].requirement,
+        "formal-verification/zlib/roundtrip"
+    );
+    assert_eq!(proof_group.map[0].conformance.score, 1.0);
+
+    // ── Group 2: Policy compliance ──
+    let compliance_group = &decl.attestations[1];
+    assert!(compliance_group.summary.contains("2/3 baselines met"));
+    assert_eq!(compliance_group.assessor, "assessor-z3-smt");
+    assert_eq!(compliance_group.map.len(), 3);
+
+    // L1: compliant → claim
+    let l1 = &compliance_group.map[0];
+    assert_eq!(l1.requirement, "policy-compliance/slsa-build-l1");
+    assert_eq!(l1.claims.len(), 1);
+    assert!(l1.counter_claims.is_empty());
+    assert_eq!(l1.conformance.score, 1.0);
+
+    // L2: compliant → claim
+    let l2 = &compliance_group.map[1];
+    assert_eq!(l2.requirement, "policy-compliance/slsa-build-l2");
+    assert_eq!(l2.conformance.score, 1.0);
+
+    // L3: non-compliant → counter-claim with witness
+    let l3 = &compliance_group.map[2];
+    assert_eq!(l3.requirement, "policy-compliance/slsa-build-l3");
+    assert!(l3.claims.is_empty());
+    assert_eq!(l3.counter_claims.len(), 1);
+    assert_eq!(l3.conformance.score, 0.0);
+    assert_eq!(l3.conformance.confidence, Some(1.0));
+
+    // Counter-claim evidence has the witness
+    let evidence = &l3.counter_claims[0].evidence[0];
+    let data = evidence.data.as_ref().expect("should have evidence data");
+    assert_eq!(data[0].name, "counterexample-witness");
+    assert!(data[0].value.contains("has_parent_attestation"));
+
+    // Z3 proof method in evidence properties
+    let proof_method = evidence
+        .properties
+        .iter()
+        .find(|p| p.name == "cdx:forge:proof-method")
+        .expect("should have proof-method property");
+    assert_eq!(proof_method.value, "z3-smt-qf-lia");
+
+    // ── Full JSON roundtrip ──
+    let json = serde_json::to_string_pretty(&bom).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+    // Verify key paths exist in the serialized output
+    assert_eq!(parsed["specVersion"], "1.6");
+    assert!(
+        parsed["declarations"]["attestations"]
+            .as_array()
+            .unwrap()
+            .len()
+            == 2
+    );
+
+    // Verify the JSON contains both proof and compliance evidence
+    assert!(json.contains("formal-verification/zlib/roundtrip"));
+    assert!(json.contains("policy-compliance/slsa-build-l1"));
+    assert!(json.contains("z3-smt-qf-lia"));
+    assert!(json.contains("lean4"));
+    assert!(json.contains("counterexample-witness"));
+}
