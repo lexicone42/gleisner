@@ -6,12 +6,25 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use regex::Regex;
 
 use crate::error::ForgeError;
+
+/// Matches `import "../<name>/build.ncl"` dependency declarations.
+static IMPORT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"import\s+"\.\./([\w.+-]+)/build\.ncl""#).expect("valid regex"));
+
+/// Matches the `replace_on_cycle` marker in package files.
+static CYCLE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"replace_on_cycle\b").expect("valid regex"));
+
+/// Matches `prebuilt = true` in package files.
+static PREBUILT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"prebuilt\s*=\s*true").expect("valid regex"));
 
 /// A node in the package dependency graph.
 #[derive(Debug, Clone)]
@@ -37,11 +50,6 @@ impl PackageGraph {
     /// Expects the directory structure: `<pkgs_dir>/<name>/build.ncl`
     /// where each `build.ncl` imports dependencies via `import "../<dep>/build.ncl"`.
     pub fn from_directory(pkgs_dir: &Path) -> Result<Self, ForgeError> {
-        let import_re =
-            Regex::new(r#"import\s+"\.\./([\w.+-]+)/build\.ncl""#).expect("valid regex");
-        let cycle_re = Regex::new(r"replace_on_cycle\b").expect("valid regex");
-        let prebuilt_re = Regex::new(r"prebuilt\s*=\s*true").expect("valid regex");
-
         let mut graph = DiGraph::new();
         let mut name_to_index: HashMap<String, NodeIndex> = HashMap::new();
 
@@ -69,7 +77,7 @@ impl PackageGraph {
                     source,
                 })?;
 
-            let has_cycle_fallback = cycle_re.is_match(&content) && prebuilt_re.is_match(&content);
+            let has_cycle_fallback = CYCLE_RE.is_match(&content) && PREBUILT_RE.is_match(&content);
 
             let idx = graph.add_node(PackageNode {
                 name: name.clone(),
@@ -92,7 +100,7 @@ impl PackageGraph {
                 }
             })?;
 
-            for cap in import_re.captures_iter(&content) {
+            for cap in IMPORT_RE.captures_iter(&content) {
                 let dep_name = &cap[1];
                 if let Some(&dep_idx) = name_to_index.get(dep_name) {
                     // Edge: dep → this package (dep must be evaluated first)
@@ -125,10 +133,7 @@ impl PackageGraph {
         // Remove self-edges (e.g., bash imports ../bash/build.ncl for replace_on_cycle)
         let self_edges: Vec<_> = work
             .edge_indices()
-            .filter(|&e| {
-                let (src, dst) = work.edge_endpoints(e).unwrap();
-                src == dst
-            })
+            .filter(|&e| work.edge_endpoints(e).is_some_and(|(src, dst)| src == dst))
             .collect();
         for e in self_edges.into_iter().rev() {
             work.remove_edge(e);

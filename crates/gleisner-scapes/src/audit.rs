@@ -539,7 +539,7 @@ mod tests {
                     timestamp: DateTime::from_timestamp(1_700_000_000, 0).unwrap(),
                     sequence: 0,
                     event: EventKind::EnvRead {
-                        key: key,
+                        key,
                         value_sha256: hash,
                     },
                     result: EventResult::Allowed,
