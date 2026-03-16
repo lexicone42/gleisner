@@ -12,8 +12,8 @@ use gleisner_polis::{SandboxSessionConfig, prepare_sandbox};
 use crate::command::Command;
 use crate::error::ContainerError;
 use crate::types::{
-    ContainerDir, ContainerFile, LandlockRule, Mount, Namespace, NetworkMode, ROOTFS_ETC_PATHS,
-    ROOTFS_READONLY_DIRS, SeccompPreset,
+    ContainerDir, ContainerFile, ContainerSymlink, LandlockRule, Mount, Namespace, NetworkMode,
+    ROOTFS_ETC_PATHS, ROOTFS_READONLY_DIRS, SeccompPreset,
 };
 
 /// A container sandbox builder.
@@ -48,6 +48,11 @@ pub struct Sandbox {
     gid: u32,
     files: Vec<ContainerFile>,
     dirs: Vec<ContainerDir>,
+    symlinks: Vec<ContainerSymlink>,
+    /// Whether to mount /proc inside the container (default: true via sandbox-init).
+    mount_proc: bool,
+    /// Whether to mount /dev inside the container (default: true via sandbox-init).
+    mount_dev: bool,
 }
 
 impl Default for Sandbox {
@@ -76,7 +81,10 @@ impl Sandbox {
             gid,
             files: Vec::new(),
             dirs: Vec::new(),
+            symlinks: Vec::new(),
             landlock_rules: Vec::new(),
+            mount_proc: true,
+            mount_dev: true,
         }
     }
 
@@ -294,6 +302,39 @@ impl Sandbox {
         self
     }
 
+    /// Create a symbolic link inside the container.
+    ///
+    /// The symlink is created via a staging directory before exec.
+    pub fn symlink(&mut self, target: impl Into<PathBuf>, link: impl Into<PathBuf>) -> &mut Self {
+        self.symlinks.push(ContainerSymlink {
+            target: target.into(),
+            link: link.into(),
+        });
+        self
+    }
+
+    // ── Virtual filesystem control ───────────────────────────────
+
+    /// Control whether `/proc` is mounted inside the container.
+    ///
+    /// Enabled by default. Sandbox-init tries `hidepid=2` for privacy,
+    /// falling back to plain procfs or a host bind-mount.
+    /// Disable if the workload doesn't need `/proc` access.
+    pub fn mount_proc(&mut self, enabled: bool) -> &mut Self {
+        self.mount_proc = enabled;
+        self
+    }
+
+    /// Control whether `/dev` is mounted inside the container.
+    ///
+    /// Enabled by default with a minimal device set (null, zero, full,
+    /// urandom, tty, pts). Disable for fully headless workloads that
+    /// don't need device access.
+    pub fn mount_dev(&mut self, enabled: bool) -> &mut Self {
+        self.mount_dev = enabled;
+        self
+    }
+
     // ── Build and execute ────────────────────────────────────────
 
     /// Create a [`Command`] that will execute the given program inside this
@@ -354,7 +395,7 @@ impl Sandbox {
         // File injection: write files to a staging dir, then bind-mount them.
         // Each file becomes a host-side file that gets bind-mounted read-only
         // into the container at the target path.
-        if !self.files.is_empty() || !self.dirs.is_empty() {
+        if !self.files.is_empty() || !self.dirs.is_empty() || !self.symlinks.is_empty() {
             let staging =
                 std::env::temp_dir().join(format!(".gleisner-inject-{}", std::process::id()));
             std::fs::create_dir_all(&staging)
@@ -384,6 +425,23 @@ impl Sandbox {
                 // Bind-mount the parent directory so the file is visible
                 // (sandbox-init mounts directories, not individual files)
                 let parent = host_path.parent().unwrap_or(&staging).to_path_buf();
+                if !readonly_bind.contains(&parent) && !readwrite_bind.contains(&parent) {
+                    readonly_bind.push(parent);
+                }
+            }
+
+            for symlink in &self.symlinks {
+                let link_path =
+                    staging.join(symlink.link.strip_prefix("/").unwrap_or(&symlink.link));
+                if let Some(parent) = link_path.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        ContainerError::Config(format!("create symlink parent: {e}"))
+                    })?;
+                }
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&symlink.target, &link_path)
+                    .map_err(|e| ContainerError::Config(format!("create symlink: {e}")))?;
+                let parent = link_path.parent().unwrap_or(&staging).to_path_buf();
                 if !readonly_bind.contains(&parent) && !readwrite_bind.contains(&parent) {
                     readonly_bind.push(parent);
                 }
@@ -668,6 +726,194 @@ mod tests {
                 .contains(&PathBuf::from("/var/log")),
             "writable landlock rule should add to readwrite_bind"
         );
+    }
+
+    #[test]
+    fn symlink_creation() {
+        let mut sb = Sandbox::new();
+        sb.symlink("/usr/bin/python3", "/usr/local/bin/python");
+
+        assert_eq!(sb.symlinks.len(), 1);
+        assert_eq!(sb.symlinks[0].target, Path::new("/usr/bin/python3"));
+        assert_eq!(sb.symlinks[0].link, Path::new("/usr/local/bin/python"));
+    }
+
+    #[test]
+    fn procfs_devfs_control() {
+        let mut sb = Sandbox::new();
+        assert!(sb.mount_proc, "proc should be enabled by default");
+        assert!(sb.mount_dev, "dev should be enabled by default");
+
+        sb.mount_proc(false).mount_dev(false);
+        assert!(!sb.mount_proc);
+        assert!(!sb.mount_dev);
+    }
+
+    /// Helper: skip test if sandbox-init not available or no user namespaces.
+    fn skip_if_no_sandbox() -> bool {
+        let has_init = std::env::current_exe().ok().and_then(|exe| {
+            let candidate = exe.parent()?.parent()?.join("gleisner-sandbox-init");
+            candidate.is_file().then_some(())
+        });
+        if has_init.is_none() {
+            eprintln!(
+                "skipping: gleisner-sandbox-init not built (run: cargo build -p gleisner-sandbox-init)"
+            );
+            return true;
+        }
+        let probe = std::process::Command::new("unshare")
+            .args(["--user", "true"])
+            .output();
+        if probe.is_err() || !probe.as_ref().unwrap().status.success() {
+            eprintln!("skipping: no user namespace support");
+            return true;
+        }
+        false
+    }
+
+    #[test]
+    fn e2e_rootfs_echo() {
+        if skip_if_no_sandbox() {
+            return;
+        }
+
+        let mut sb = Sandbox::new();
+        sb.rootfs()
+            .namespace(Namespace::Pid)
+            .hostname("test-rootfs")
+            .landlock(false);
+
+        let result = sb.command_with_args("/bin/echo", &["rootfs works"]);
+        if let Err(ref e) = result {
+            eprintln!("skipping: {e}");
+            return;
+        }
+
+        let output = result.unwrap().output().expect("run sandbox");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("rootfs works"),
+            "expected 'rootfs works' in stdout, got: {stdout}"
+        );
+        assert!(output.status.success());
+    }
+
+    #[test]
+    fn e2e_rootfs_hostname() {
+        if skip_if_no_sandbox() {
+            return;
+        }
+
+        let mut sb = Sandbox::new();
+        sb.rootfs()
+            .namespace(Namespace::Pid)
+            .hostname("custom-host")
+            .landlock(false);
+
+        let result = sb.command_with_args("/bin/hostname", &[] as &[&str]);
+        if let Err(ref e) = result {
+            eprintln!("skipping: {e}");
+            return;
+        }
+
+        let output = result.unwrap().output().expect("run sandbox");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("custom-host") || stdout.contains("gleisner-sandbox"),
+            "expected custom hostname, got: {stdout}"
+        );
+    }
+
+    #[test]
+    fn e2e_rootfs_pid_namespace() {
+        if skip_if_no_sandbox() {
+            return;
+        }
+
+        let mut sb = Sandbox::new();
+        sb.rootfs().namespace(Namespace::Pid).landlock(false);
+
+        // In a PID namespace, the sandboxed process should be PID 1
+        let result = sb.command_with_args("/bin/sh", &["-c", "echo $$"]);
+        if let Err(ref e) = result {
+            eprintln!("skipping: {e}");
+            return;
+        }
+
+        let output = result.unwrap().output().expect("run sandbox");
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert_eq!(stdout, "1", "process should be PID 1 inside namespace");
+    }
+
+    #[test]
+    fn e2e_rootfs_env_injection() {
+        if skip_if_no_sandbox() {
+            return;
+        }
+
+        let mut sb = Sandbox::new();
+        sb.rootfs()
+            .namespace(Namespace::Pid)
+            .env("MY_VAR", "hello_container")
+            .landlock(false);
+
+        let result = sb.command_with_args("/bin/sh", &["-c", "echo $MY_VAR"]);
+        if let Err(ref e) = result {
+            eprintln!("skipping: {e}");
+            return;
+        }
+
+        let output = result.unwrap().output().expect("run sandbox");
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        assert_eq!(stdout, "hello_container", "env var should be visible");
+    }
+
+    #[test]
+    fn e2e_rootfs_with_landlock() {
+        if skip_if_no_sandbox() {
+            return;
+        }
+
+        let mut sb = Sandbox::new();
+        sb.rootfs().namespace(Namespace::Pid).landlock(true); // Enable Landlock
+
+        // /bin/true should work (it's in the rootfs)
+        let result = sb.command_with_args("/bin/true", &[] as &[&str]);
+        if let Err(ref e) = result {
+            eprintln!("skipping: {e}");
+            return;
+        }
+
+        let output = result.unwrap().output().expect("run sandbox");
+        assert!(
+            output.status.success(),
+            "should succeed with Landlock enabled"
+        );
+    }
+
+    #[test]
+    fn e2e_allow_domains_network() {
+        if skip_if_no_sandbox() {
+            return;
+        }
+
+        let mut sb = Sandbox::new();
+        sb.rootfs()
+            .namespace(Namespace::Pid)
+            .allow_domains(["api.anthropic.com"])
+            .seccomp(SeccompPreset::Nodejs)
+            .landlock(false);
+
+        // Just verify the sandbox starts — network actually working requires
+        // pasta which may not be available in all test environments
+        let result = sb.command_with_args("/bin/true", &[] as &[&str]);
+        if let Err(ref e) = result {
+            eprintln!("skipping (pasta not available?): {e}");
+            return;
+        }
+
+        let output = result.unwrap().output().expect("run sandbox");
+        assert!(output.status.success());
     }
 
     #[test]

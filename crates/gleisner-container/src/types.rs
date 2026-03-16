@@ -77,6 +77,15 @@ pub struct ContainerDir {
     pub mode: u32,
 }
 
+/// A symbolic link to create inside the container.
+#[derive(Debug, Clone)]
+pub struct ContainerSymlink {
+    /// The target the symlink points to.
+    pub target: PathBuf,
+    /// The symlink path inside the container.
+    pub link: PathBuf,
+}
+
 /// Landlock access rule for fine-grained filesystem control.
 #[derive(Debug, Clone)]
 pub struct LandlockRule {

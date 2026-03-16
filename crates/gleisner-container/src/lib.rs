@@ -46,7 +46,8 @@ pub use builder::Sandbox;
 pub use command::{Child, Command, Output};
 pub use error::ContainerError;
 pub use types::{
-    ContainerDir, ContainerFile, LandlockRule, Mount, Namespace, NetworkMode, SeccompPreset,
+    ContainerDir, ContainerFile, ContainerSymlink, LandlockRule, Mount, Namespace, NetworkMode,
+    SeccompPreset,
 };
 
 #[cfg(feature = "forge")]
