@@ -43,6 +43,9 @@ mod types;
 #[cfg(feature = "forge")]
 mod forge;
 
+#[cfg(feature = "audit")]
+pub mod observe;
+
 #[cfg(feature = "lattice")]
 pub mod verify;
 

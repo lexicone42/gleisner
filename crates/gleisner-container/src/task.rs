@@ -668,6 +668,131 @@ impl TaskSandbox {
     }
 }
 
+// ── System prompt generation ────────────────────────────────────
+
+impl TaskSandbox {
+    /// Generate a system prompt fragment describing the sandbox boundaries.
+    ///
+    /// This produces text suitable for injection into an AI agent's system
+    /// prompt, telling it what it can and cannot do inside the sandbox.
+    ///
+    /// # Security design
+    ///
+    /// The fragment describes **allowed** capabilities only — it does NOT
+    /// enumerate denied paths, internal mount points, or sandbox implementation
+    /// details. This is intentional:
+    /// - An honest agent benefits from knowing its constraints (fewer failed operations)
+    /// - An adversarial agent gains no attack surface information (nothing to probe)
+    /// - The Landlock/seccomp/namespace enforcement is independent of this text
+    ///
+    /// The fragment is informational, not authoritative — the kernel enforces
+    /// the actual boundaries regardless of what the prompt says.
+    pub fn system_prompt_fragment(&self) -> String {
+        let mut lines = Vec::new();
+
+        lines.push(
+            "You are running in a sandboxed environment with restricted permissions.".to_owned(),
+        );
+        lines.push(String::new());
+
+        // Filesystem
+        lines.push("Filesystem access:".to_owned());
+        lines.push(format!("  - Read/write: {}", self.project_dir.display()));
+        for path in &self.write_paths {
+            lines.push(format!("  - Read/write: {}", path.display()));
+        }
+        for path in &self.read_paths {
+            lines.push(format!("  - Read-only: {}", path.display()));
+        }
+        if self.needs_home
+            || self.tools.iter().any(|t| {
+                matches!(
+                    t.as_str(),
+                    "claude" | "git" | "npm" | "npx" | "cargo" | "node"
+                )
+            })
+        {
+            lines.push("  - Read-only: home directory (for tool configuration)".to_owned());
+        }
+        lines.push("  - Other paths are not accessible".to_owned());
+
+        // Network
+        lines.push(String::new());
+        lines.push("Network access:".to_owned());
+        if self.needs_internet {
+            lines.push("  - Unrestricted internet access".to_owned());
+        } else {
+            let mut all_domains: BTreeSet<String> = self.domains.iter().cloned().collect();
+            for tool in &self.tools {
+                match tool.as_str() {
+                    "npm" | "npx" => {
+                        all_domains.insert("registry.npmjs.org".to_owned());
+                    }
+                    "pip" | "uv" | "uvx" => {
+                        all_domains.insert("pypi.org".to_owned());
+                    }
+                    _ => {}
+                }
+            }
+            if all_domains.is_empty() {
+                lines.push("  - No network access (fully isolated)".to_owned());
+            } else {
+                for domain in &all_domains {
+                    lines.push(format!("  - Allowed: {domain}"));
+                }
+                lines.push("  - All other domains are blocked".to_owned());
+            }
+        }
+
+        // Tools
+        if !self.tools.is_empty() {
+            lines.push(String::new());
+            lines.push(format!("Available tools: {}", self.tools.join(", ")));
+        }
+
+        // Guidance
+        lines.push(String::new());
+        lines.push(
+            "Operations outside these boundaries will fail silently or with permission errors."
+                .to_owned(),
+        );
+        lines.push(
+            "Work within the project directory and use only the declared network endpoints."
+                .to_owned(),
+        );
+
+        lines.join("\n")
+    }
+}
+
+impl CapabilityExplanation {
+    /// Convert the explanation to a compact system prompt fragment.
+    ///
+    /// Unlike [`TaskSandbox::system_prompt_fragment()`] which works from
+    /// declarations, this works from the resolved explanation (after tool
+    /// derivation). Use this when you have an explanation but not the
+    /// original `TaskSandbox`.
+    pub fn to_system_prompt(&self) -> String {
+        let mut lines = vec![
+            "You are running in a sandboxed environment.".to_owned(),
+            String::new(),
+        ];
+
+        let mut last_cat = String::new();
+        for grant in &self.grants {
+            if grant.category != last_cat {
+                lines.push(format!("{}:", grant.category));
+                last_cat.clone_from(&grant.category);
+            }
+            lines.push(format!("  - {}", grant.capability));
+        }
+
+        lines.push(String::new());
+        lines.push("Work within these boundaries. Unauthorized operations will fail.".to_owned());
+        lines.join("\n")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -883,6 +1008,88 @@ mod tests {
             report.summary.contains("already minimal"),
             "should say config is minimal: {}",
             report.summary
+        );
+    }
+
+    // ── System prompt tests ─────────────────────────────────
+
+    #[test]
+    fn system_prompt_describes_allowed_capabilities() {
+        let task = TaskSandbox::new("/workspace/project")
+            .needs_tools(["claude", "git"])
+            .needs_network(["api.anthropic.com"]);
+
+        let prompt = task.system_prompt_fragment();
+
+        // Should describe the project dir
+        assert!(
+            prompt.contains("/workspace/project"),
+            "should mention project dir: {prompt}"
+        );
+        // Should mention allowed domains
+        assert!(
+            prompt.contains("api.anthropic.com"),
+            "should mention API domain: {prompt}"
+        );
+        // Should mention home dir access
+        assert!(
+            prompt.contains("home directory"),
+            "should mention home dir: {prompt}"
+        );
+        // Should mention available tools
+        assert!(
+            prompt.contains("claude") && prompt.contains("git"),
+            "should list tools: {prompt}"
+        );
+        // Should NOT expose internal paths like /tmp/.gleisner-inject
+        assert!(
+            !prompt.contains(".gleisner-inject"),
+            "should not expose internals: {prompt}"
+        );
+        // Should NOT enumerate denied paths
+        assert!(
+            !prompt.contains("/etc/shadow") && !prompt.contains("Landlock"),
+            "should not expose security internals: {prompt}"
+        );
+    }
+
+    #[test]
+    fn system_prompt_isolated_network() {
+        let task = TaskSandbox::new("/workspace");
+        let prompt = task.system_prompt_fragment();
+
+        assert!(
+            prompt.contains("No network access"),
+            "no-network task should say isolated: {prompt}"
+        );
+    }
+
+    #[test]
+    fn system_prompt_full_internet() {
+        let task = TaskSandbox::new("/workspace").needs_internet();
+        let prompt = task.system_prompt_fragment();
+
+        assert!(
+            prompt.contains("Unrestricted internet"),
+            "internet task should say unrestricted: {prompt}"
+        );
+    }
+
+    #[test]
+    fn explanation_to_system_prompt() {
+        let task = TaskSandbox::new("/workspace")
+            .needs_tools(["cargo"])
+            .needs_network(["crates.io"]);
+        let explanation = task.explain();
+        let prompt = explanation.to_system_prompt();
+
+        assert!(
+            prompt.contains("sandboxed environment"),
+            "should mention sandbox: {prompt}"
+        );
+        assert!(
+            prompt.contains("Landlock"),
+            "explanation prompt should mention Landlock: {prompt}"
         );
     }
 }

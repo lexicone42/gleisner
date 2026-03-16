@@ -9,6 +9,7 @@ repository.workspace = true
 
 [features]
 forge = ["gleisner-forge"]
+audit = ["gleisner-scapes"]
 attestation = ["gleisner-introdus"]
 lattice = ["gleisner-lacerta/lattice"]
 
@@ -23,10 +24,12 @@ thiserror.workspace = true
 tracing.workspace = true
 nix.workspace = true
 directories.workspace = true
+gleisner-scapes = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
 which.workspace = true
+chrono.workspace = true
 
 [lints]
 workspace = true
