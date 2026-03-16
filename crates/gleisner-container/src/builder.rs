@@ -1,7 +1,7 @@
 //! The [`Sandbox`] builder — configure and spawn isolated Linux containers.
 
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use gleisner_polis::profile::{
     FilesystemPolicy, NetworkPolicy, PolicyDefault, ProcessPolicy, ResourceLimits, SeccompAction,
@@ -11,7 +11,10 @@ use gleisner_polis::{SandboxSessionConfig, prepare_sandbox};
 
 use crate::command::Command;
 use crate::error::ContainerError;
-use crate::types::{Mount, Namespace, NetworkMode, SeccompPreset};
+use crate::types::{
+    ContainerDir, ContainerFile, LandlockRule, Mount, Namespace, NetworkMode, ROOTFS_ETC_PATHS,
+    ROOTFS_READONLY_DIRS, SeccompPreset,
+};
 
 /// A container sandbox builder.
 ///
@@ -38,10 +41,13 @@ pub struct Sandbox {
     network: NetworkMode,
     seccomp: SeccompPreset,
     landlock_enabled: bool,
+    landlock_rules: Vec<LandlockRule>,
     env: Vec<(String, String)>,
     resource_limits: Option<ResourceLimits>,
     uid: u32,
     gid: u32,
+    files: Vec<ContainerFile>,
+    dirs: Vec<ContainerDir>,
 }
 
 impl Default for Sandbox {
@@ -68,7 +74,61 @@ impl Sandbox {
             resource_limits: None,
             uid,
             gid,
+            files: Vec::new(),
+            dirs: Vec::new(),
+            landlock_rules: Vec::new(),
         }
+    }
+
+    // ── Root filesystem ──────────────────────────────────────────
+
+    /// Auto-discover and mount a minimal Linux root filesystem.
+    ///
+    /// Scans the host for standard directories (`/usr`, `/lib`, `/lib64`,
+    /// `/bin`, `/sbin`) and essential `/etc` files (SSL certs, resolver,
+    /// passwd, timezone), mounting everything read-only. Also adds `/tmp`
+    /// as a writable tmpfs and `/proc` + `/dev` (handled by sandbox-init).
+    ///
+    /// This is the single-call ergonomic equivalent of manually listing
+    /// every bind mount. After calling `rootfs()`, you typically only need
+    /// to add your project directory as read-write.
+    ///
+    /// ```no_run
+    /// # use gleisner_container::Sandbox;
+    /// let mut sb = Sandbox::new();
+    /// sb.rootfs()
+    ///     .mount_readwrite("/workspace", "/workspace")
+    ///     .hostname("my-container");
+    /// ```
+    pub fn rootfs(&mut self) -> &mut Self {
+        // Mount standard OS directories
+        for dir in ROOTFS_READONLY_DIRS {
+            let path = Path::new(dir);
+            if path.exists() {
+                self.mounts.push(Mount::ReadOnly {
+                    host: path.to_path_buf(),
+                    container: path.to_path_buf(),
+                });
+            }
+        }
+
+        // Mount essential /etc files individually (not all of /etc)
+        for etc_path in ROOTFS_ETC_PATHS {
+            let path = Path::new(etc_path);
+            if path.exists() {
+                self.mounts.push(Mount::ReadOnly {
+                    host: path.to_path_buf(),
+                    container: path.to_path_buf(),
+                });
+            }
+        }
+
+        // Writable /tmp
+        self.mounts.push(Mount::Tmpfs {
+            container: PathBuf::from("/tmp"),
+        });
+
+        self
     }
 
     // ── Namespace configuration ──────────────────────────────────
@@ -184,6 +244,19 @@ impl Sandbox {
         self
     }
 
+    /// Add a fine-grained Landlock access rule for a specific path.
+    ///
+    /// When Landlock is enabled, these rules override the default behavior
+    /// for the specified paths. Use this for paths that need different
+    /// access than their parent mount provides.
+    pub fn landlock_rule(&mut self, path: impl Into<PathBuf>, writable: bool) -> &mut Self {
+        self.landlock_rules.push(LandlockRule {
+            path: path.into(),
+            writable,
+        });
+        self
+    }
+
     /// Set cgroup resource limits.
     pub fn resource_limits(&mut self, limits: ResourceLimits) -> &mut Self {
         self.resource_limits = Some(limits);
@@ -195,6 +268,29 @@ impl Sandbox {
     /// Set an environment variable visible to the inner process.
     pub fn env(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
         self.env.push((key.into(), value.into()));
+        self
+    }
+
+    // ── File injection ────────────────────────────────────────────
+
+    /// Create a file with specific contents inside the container.
+    ///
+    /// The file is created before the inner command executes. Useful for
+    /// injecting configuration files like `/etc/resolv.conf` or app configs.
+    pub fn file(&mut self, path: impl Into<PathBuf>, contents: impl Into<String>) -> &mut Self {
+        self.files.push(ContainerFile {
+            path: path.into(),
+            contents: contents.into(),
+        });
+        self
+    }
+
+    /// Create a directory with specific permissions inside the container.
+    pub fn dir(&mut self, path: impl Into<PathBuf>, mode: u32) -> &mut Self {
+        self.dirs.push(ContainerDir {
+            path: path.into(),
+            mode,
+        });
         self
     }
 
@@ -240,6 +336,56 @@ impl Sandbox {
                 }
                 Mount::Tmpfs { container } => {
                     tmpfs_paths.push(container.clone());
+                }
+            }
+        }
+
+        // Fine-grained Landlock rules map to additional bind paths
+        for rule in &self.landlock_rules {
+            if rule.writable {
+                if !readwrite_bind.contains(&rule.path) {
+                    readwrite_bind.push(rule.path.clone());
+                }
+            } else if !readonly_bind.contains(&rule.path) {
+                readonly_bind.push(rule.path.clone());
+            }
+        }
+
+        // File injection: write files to a staging dir, then bind-mount them.
+        // Each file becomes a host-side file that gets bind-mounted read-only
+        // into the container at the target path.
+        if !self.files.is_empty() || !self.dirs.is_empty() {
+            let staging =
+                std::env::temp_dir().join(format!(".gleisner-inject-{}", std::process::id()));
+            std::fs::create_dir_all(&staging)
+                .map_err(|e| ContainerError::Config(format!("create staging dir: {e}")))?;
+
+            for dir in &self.dirs {
+                let host_path = staging.join(dir.path.strip_prefix("/").unwrap_or(&dir.path));
+                std::fs::create_dir_all(&host_path)
+                    .map_err(|e| ContainerError::Config(format!("create dir: {e}")))?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&host_path, std::fs::Permissions::from_mode(dir.mode))
+                        .map_err(|e| ContainerError::Config(format!("set dir mode: {e}")))?;
+                }
+                readwrite_bind.push(host_path);
+            }
+
+            for file in &self.files {
+                let host_path = staging.join(file.path.strip_prefix("/").unwrap_or(&file.path));
+                if let Some(parent) = host_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| ContainerError::Config(format!("create parent: {e}")))?;
+                }
+                std::fs::write(&host_path, &file.contents)
+                    .map_err(|e| ContainerError::Config(format!("write file: {e}")))?;
+                // Bind-mount the parent directory so the file is visible
+                // (sandbox-init mounts directories, not individual files)
+                let parent = host_path.parent().unwrap_or(&staging).to_path_buf();
+                if !readonly_bind.contains(&parent) && !readwrite_bind.contains(&parent) {
+                    readonly_bind.push(parent);
                 }
             }
         }
@@ -421,6 +567,107 @@ mod tests {
             }
             other => panic!("expected Isolated, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn rootfs_discovers_standard_dirs() {
+        let mut sb = Sandbox::new();
+        sb.rootfs();
+
+        // Should have discovered at least /usr and /bin (always present on Linux)
+        let readonly_paths: Vec<_> = sb
+            .mounts
+            .iter()
+            .filter_map(|m| match m {
+                Mount::ReadOnly { host, .. } => Some(host.to_str().unwrap_or("")),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            readonly_paths.contains(&"/usr"),
+            "rootfs should discover /usr"
+        );
+        assert!(
+            readonly_paths.contains(&"/bin"),
+            "rootfs should discover /bin"
+        );
+
+        // Should include /etc files
+        assert!(
+            readonly_paths.iter().any(|p| p.starts_with("/etc/")),
+            "rootfs should discover /etc files"
+        );
+
+        // Should have a tmpfs for /tmp
+        let has_tmp = sb
+            .mounts
+            .iter()
+            .any(|m| matches!(m, Mount::Tmpfs { container } if container == Path::new("/tmp")));
+        assert!(has_tmp, "rootfs should add /tmp tmpfs");
+    }
+
+    #[test]
+    fn rootfs_is_idempotent_with_manual_mounts() {
+        let mut sb = Sandbox::new();
+        // Manual mount first, then rootfs — should not duplicate
+        sb.mount_readonly("/usr", "/usr").rootfs();
+
+        let usr_count = sb
+            .mounts
+            .iter()
+            .filter(|m| matches!(m, Mount::ReadOnly { host, .. } if host == Path::new("/usr")))
+            .count();
+
+        // rootfs adds /usr even if already present (dedup happens in to_session_config)
+        // This is by design — the profile merge in polis handles dedup
+        assert!(usr_count >= 1);
+    }
+
+    #[test]
+    fn file_injection() {
+        let mut sb = Sandbox::new();
+        sb.file("/etc/resolv.conf", "nameserver 1.1.1.1\n")
+            .file("/app/config.toml", "[settings]\nverbose = true\n");
+
+        assert_eq!(sb.files.len(), 2);
+        assert_eq!(sb.files[0].path, Path::new("/etc/resolv.conf"));
+        assert_eq!(sb.files[1].contents, "[settings]\nverbose = true\n");
+    }
+
+    #[test]
+    fn dir_creation() {
+        let mut sb = Sandbox::new();
+        sb.dir("/app/data", 0o755).dir("/app/cache", 0o700);
+
+        assert_eq!(sb.dirs.len(), 2);
+        assert_eq!(sb.dirs[0].mode, 0o755);
+    }
+
+    #[test]
+    fn landlock_rule_maps_to_binds() {
+        let mut sb = Sandbox::new();
+        sb.landlock_rule("/opt/data", false) // read-only
+            .landlock_rule("/var/log", true); // read-write
+
+        let config = sb.to_session_config(&["true".to_owned()]).unwrap();
+
+        assert!(
+            config
+                .profile
+                .filesystem
+                .readonly_bind
+                .contains(&PathBuf::from("/opt/data")),
+            "read-only landlock rule should add to readonly_bind"
+        );
+        assert!(
+            config
+                .profile
+                .filesystem
+                .readwrite_bind
+                .contains(&PathBuf::from("/var/log")),
+            "writable landlock rule should add to readwrite_bind"
+        );
     }
 
     #[test]

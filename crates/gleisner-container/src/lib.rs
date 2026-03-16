@@ -11,11 +11,9 @@
 //! use gleisner_container::{Sandbox, Namespace};
 //!
 //! let mut sb = Sandbox::new();
-//! sb.namespace(Namespace::Pid)
-//!     .namespace(Namespace::Time)
-//!     .mount_readonly("/usr", "/usr")
+//! sb.rootfs()                             // auto-discover host OS dirs
+//!     .namespace(Namespace::Pid)
 //!     .mount_readwrite("/workspace", "/workspace")
-//!     .tmpfs("/tmp")
 //!     .hostname("my-sandbox");
 //!
 //! let output = sb
@@ -47,7 +45,9 @@ mod forge;
 pub use builder::Sandbox;
 pub use command::{Child, Command, Output};
 pub use error::ContainerError;
-pub use types::{LandlockAccess, Mount, Namespace, NetworkMode, SeccompPreset};
+pub use types::{
+    ContainerDir, ContainerFile, LandlockRule, Mount, Namespace, NetworkMode, SeccompPreset,
+};
 
 #[cfg(feature = "forge")]
 pub use forge::{ForgeComposition, detect_harness, resolve_harness};
