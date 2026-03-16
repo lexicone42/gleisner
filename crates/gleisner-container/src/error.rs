@@ -15,6 +15,10 @@ pub enum ContainerError {
     #[error("invalid configuration: {0}")]
     Config(String),
 
+    /// Command exceeded its configured timeout.
+    #[error("command timed out after {0:?}")]
+    Timeout(std::time::Duration),
+
     /// Forge composition parsing failed.
     #[cfg(feature = "forge")]
     #[error("forge composition error: {0}")]

@@ -46,7 +46,7 @@ mod forge;
 pub mod verify;
 
 pub use builder::Sandbox;
-pub use command::{Child, Command, Output};
+pub use command::{Child, Command, Output, Stdio};
 pub use error::ContainerError;
 pub use types::{
     ContainerDir, ContainerFile, ContainerSymlink, LandlockRule, Mount, Namespace, NetworkMode,

@@ -37,6 +37,7 @@ pub struct Sandbox {
     mounts: Vec<Mount>,
     deny_paths: Vec<PathBuf>,
     work_dir: Option<PathBuf>,
+    project_dir: Option<PathBuf>,
     hostname: String,
     network: NetworkMode,
     seccomp: SeccompPreset,
@@ -63,6 +64,10 @@ impl Default for Sandbox {
 
 impl Sandbox {
     /// Create a new sandbox builder with minimal defaults.
+    ///
+    /// Landlock is enabled by default, no mounts are configured.
+    /// Call [`rootfs()`](Sandbox::rootfs) for a quick Linux environment,
+    /// or add mounts manually.
     pub fn new() -> Self {
         let uid = nix::unistd::getuid().as_raw();
         let gid = nix::unistd::getgid().as_raw();
@@ -71,10 +76,51 @@ impl Sandbox {
             mounts: Vec::new(),
             deny_paths: Vec::new(),
             work_dir: None,
+            project_dir: None,
             hostname: "gleisner-sandbox".to_owned(),
             network: NetworkMode::None,
             seccomp: SeccompPreset::Disabled,
             landlock_enabled: true,
+            env: Vec::new(),
+            resource_limits: None,
+            uid,
+            gid,
+            files: Vec::new(),
+            dirs: Vec::new(),
+            symlinks: Vec::new(),
+            landlock_rules: Vec::new(),
+            mount_proc: true,
+            mount_dev: true,
+        }
+    }
+
+    /// Create an empty sandbox builder — nothing is configured.
+    ///
+    /// Unlike [`new()`](Sandbox::new) which enables Landlock by default,
+    /// `empty()` starts with everything disabled. Use this for reproducible
+    /// build environments where you want explicit control over every layer.
+    ///
+    /// ```no_run
+    /// # use gleisner_container::Sandbox;
+    /// let mut sb = Sandbox::empty();
+    /// sb.mount_readonly("/usr", "/usr")
+    ///     .mount_readonly("/lib", "/lib")
+    ///     .tmpfs("/tmp");
+    /// // No Landlock, no seccomp, no network — just namespaces + mounts
+    /// ```
+    pub fn empty() -> Self {
+        let uid = nix::unistd::getuid().as_raw();
+        let gid = nix::unistd::getgid().as_raw();
+        Self {
+            namespaces: HashSet::new(),
+            mounts: Vec::new(),
+            deny_paths: Vec::new(),
+            work_dir: None,
+            project_dir: None,
+            hostname: "gleisner-sandbox".to_owned(),
+            network: NetworkMode::None,
+            seccomp: SeccompPreset::Disabled,
+            landlock_enabled: false,
             env: Vec::new(),
             resource_limits: None,
             uid,
@@ -191,8 +237,24 @@ impl Sandbox {
     }
 
     /// Set the working directory for the inner process.
+    ///
+    /// This sets the CWD inside the container but does NOT automatically
+    /// mount the directory. Use [`project_dir()`](Sandbox::project_dir) to
+    /// set a directory that is both the CWD and mounted read-write.
     pub fn work_dir(&mut self, path: impl Into<PathBuf>) -> &mut Self {
         self.work_dir = Some(path.into());
+        self
+    }
+
+    /// Set the project directory — mounted read-write and used as the working directory.
+    ///
+    /// This is the common case for development workflows: one directory that is
+    /// both the CWD and writable. Equivalent to calling both
+    /// [`work_dir()`](Sandbox::work_dir) and [`mount_readwrite()`](Sandbox::mount_readwrite).
+    pub fn project_dir(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        let p: PathBuf = path.into();
+        self.work_dir = Some(p.clone());
+        self.project_dir = Some(p);
         self
     }
 
@@ -362,7 +424,7 @@ impl Sandbox {
 
         let config = self.to_session_config(&inner_command)?;
         let prepared = prepare_sandbox(config, &inner_command)?;
-        Ok(Command { prepared })
+        Ok(Command::new(prepared))
     }
 
     /// Convert builder state into a [`SandboxSessionConfig`] for gleisner-polis.
@@ -493,11 +555,19 @@ impl Sandbox {
             },
         };
 
-        let work_dir = self
-            .work_dir
+        let project_dir = self
+            .project_dir
             .clone()
+            .or_else(|| self.work_dir.clone())
             .or_else(|| std::env::current_dir().ok())
             .unwrap_or_else(|| PathBuf::from("/"));
+
+        // If project_dir was explicitly set, ensure it's mounted readwrite
+        if let Some(ref pd) = self.project_dir
+            && !readwrite_bind.contains(pd)
+        {
+            readwrite_bind.push(pd.clone());
+        }
 
         let profile = gleisner_polis::Profile {
             name: "container".to_owned(),
@@ -527,7 +597,7 @@ impl Sandbox {
 
         Ok(SandboxSessionConfig {
             profile,
-            project_dir: work_dir,
+            project_dir,
             extra_allow_network: Vec::new(),
             extra_allow_paths: Vec::new(),
             no_landlock: !self.landlock_enabled,
@@ -567,6 +637,54 @@ mod tests {
         assert_eq!(sb.mounts.len(), 3);
         assert_eq!(sb.hostname, "test");
         assert_eq!(sb.env.len(), 1);
+    }
+
+    #[test]
+    fn empty_constructor_disables_landlock() {
+        let sb = Sandbox::empty();
+        assert!(!sb.landlock_enabled);
+        assert!(!sb.is_landlock_enabled());
+        // Should still have sensible defaults
+        assert!(sb.mount_proc);
+        assert!(sb.mount_dev);
+        assert_eq!(sb.hostname, "gleisner-sandbox");
+    }
+
+    #[test]
+    fn project_dir_sets_work_dir_and_mount() {
+        let mut sb = Sandbox::new();
+        sb.project_dir("/workspace/myproject");
+
+        assert_eq!(sb.work_dir, Some(PathBuf::from("/workspace/myproject")));
+        assert_eq!(sb.project_dir, Some(PathBuf::from("/workspace/myproject")));
+
+        // Verify project_dir gets auto-mounted in the config
+        let config = sb.to_session_config(&["true".to_owned()]).unwrap();
+        assert!(
+            config
+                .profile
+                .filesystem
+                .readwrite_bind
+                .contains(&PathBuf::from("/workspace/myproject")),
+            "project_dir should be auto-mounted readwrite"
+        );
+    }
+
+    #[test]
+    fn work_dir_alone_does_not_auto_mount() {
+        let mut sb = Sandbox::new();
+        sb.work_dir("/some/path");
+
+        let config = sb.to_session_config(&["true".to_owned()]).unwrap();
+        // work_dir without project_dir should NOT auto-mount
+        assert!(
+            !config
+                .profile
+                .filesystem
+                .readwrite_bind
+                .contains(&PathBuf::from("/some/path")),
+            "work_dir alone should not auto-mount"
+        );
     }
 
     /// E2e: spawn a process inside a sandbox and verify isolation.
