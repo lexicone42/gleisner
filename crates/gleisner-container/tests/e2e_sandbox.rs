@@ -287,7 +287,59 @@ fn stdio_piped_captures_output() {
     );
 }
 
-// ── Gleisner-in-gleisner test ───────────────────────────────────
+// ── Task-oriented API tests ──────────────────────────────────────
+
+#[test]
+fn task_sandbox_echo() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let sb = gleisner_container::task::TaskSandbox::new("/tmp")
+        .needs_tools(["sh"])
+        .build()
+        .expect("build task sandbox");
+
+    let result = sb.command_with_args("/bin/echo", &["task sandbox works"]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let output = result.unwrap().output().expect("run");
+    assert!(output.stdout_str().contains("task sandbox works"));
+}
+
+#[test]
+fn task_sandbox_claude_code() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    if which::which("claude").is_err() {
+        eprintln!("skipping: claude binary not on PATH");
+        return;
+    }
+
+    let project_dir = Path::new("/datar/workspace/claude_code_experiments/gleisner");
+    let sb =
+        gleisner_container::task::claude_code_sandbox(project_dir).expect("build claude sandbox");
+
+    let result = sb.command_with_args("claude", &["--version"]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let output = result.unwrap().output().expect("run claude");
+    eprintln!("task API g-in-g: {}", output.stdout_str());
+    assert!(
+        output.status.success() || output.stdout_str().contains("Claude Code"),
+        "claude --version should work via task API"
+    );
+}
+
+// ── Gleisner-in-gleisner test (low-level API) ───────────────────
 
 #[test]
 fn gleisner_in_gleisner_claude_version() {

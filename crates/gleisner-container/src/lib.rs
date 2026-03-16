@@ -37,6 +37,7 @@
 mod builder;
 mod command;
 mod error;
+pub mod task;
 mod types;
 
 #[cfg(feature = "forge")]
