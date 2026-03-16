@@ -114,7 +114,24 @@ impl TaskSandbox {
     /// - `"npm"` / `"npx"` → adds `registry.npmjs.org` to domains
     /// - `"cargo"` / `"rustc"` → adds home dir for `.cargo`
     pub fn needs_tools(mut self, tools: impl IntoIterator<Item = impl Into<String>>) -> Self {
-        self.tools.extend(tools.into_iter().map(Into::into));
+        for tool in tools {
+            let name = tool.into();
+            // Validate tool names — reject path traversal and injection attempts
+            if name.contains('/')
+                || name.contains('\\')
+                || name.contains('\0')
+                || name.contains(';')
+                || name.contains('\'')
+                || name.contains('`')
+            {
+                tracing::warn!(
+                    tool = %name,
+                    "rejecting tool name with suspicious characters"
+                );
+                continue;
+            }
+            self.tools.push(name);
+        }
         self
     }
 
@@ -232,6 +249,12 @@ impl TaskSandbox {
         // ── Network ─────────────────────────────────────────────
 
         if self.needs_internet {
+            // NetworkMode::Host gives full host network access including localhost.
+            // This is the widest permission — prefer specific domains when possible.
+            // Note: localhost services (databases, caches) are reachable.
+            tracing::info!(
+                "needs_internet: granting full host network access (prefer allow_domains for production)"
+            );
             sb.network(NetworkMode::Host);
         } else if !auto_domains.is_empty() {
             sb.allow_domains(auto_domains);
@@ -315,6 +338,12 @@ impl TaskSandbox {
             if !self.domains.contains(&domain) {
                 self.domains.push(domain);
             }
+        }
+        if !self.needs_internet && other.needs_internet {
+            tracing::warn!(
+                "merge() escalating to needs_internet — all domain restrictions from the \
+                 first task are now overridden by the second task's unrestricted internet access"
+            );
         }
         self.needs_internet = self.needs_internet || other.needs_internet;
         for tool in other.tools {

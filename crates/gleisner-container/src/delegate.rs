@@ -76,15 +76,12 @@ pub struct DelegationResult {
 impl Delegation {
     /// Start building a delegation to a project directory.
     ///
-    /// By default includes `claude` and `node` as tools. Forwards
-    /// `ANTHROPIC_API_KEY` if present (the inner Claude needs it for API access).
+    /// By default includes `claude` and `node` as tools. Does NOT forward
+    /// `ANTHROPIC_API_KEY` — call [`.forward_api_key()`](Delegation::forward_api_key)
+    /// explicitly to grant the inner Claude API access.
     pub fn to(project_dir: impl Into<PathBuf>) -> Self {
         let project_dir = project_dir.into();
-        let mut task = TaskSandbox::new(&project_dir).needs_tools(["claude", "node"]);
-        // Forward API key — inner Claude needs it for API calls
-        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
-            task = task.env("ANTHROPIC_API_KEY", key);
-        }
+        let task = TaskSandbox::new(&project_dir).needs_tools(["claude", "node"]);
         Self {
             task,
             project_dir,
@@ -129,6 +126,21 @@ impl Delegation {
     /// Declare paths the inner Claude needs to write.
     pub fn allow_write(mut self, paths: impl IntoIterator<Item = impl Into<PathBuf>>) -> Self {
         self.task = self.task.needs_write(paths);
+        self
+    }
+
+    /// Forward the `ANTHROPIC_API_KEY` environment variable to the inner Claude.
+    ///
+    /// This is required for the inner Claude to make API calls. It is NOT
+    /// forwarded by default because the API key is a sensitive credential
+    /// that the inner process could exfiltrate if compromised.
+    ///
+    /// Only call this when the inner Claude genuinely needs API access
+    /// (e.g., for `--print` mode or interactive sessions).
+    pub fn forward_api_key(mut self) -> Self {
+        if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+            self.task = self.task.env("ANTHROPIC_API_KEY", key);
+        }
         self
     }
 

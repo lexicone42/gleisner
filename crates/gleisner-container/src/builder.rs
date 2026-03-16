@@ -655,6 +655,15 @@ impl Sandbox {
                 )
             })?;
 
+        // Sharp edge: warn when Landlock is disabled with readwrite mounts
+        if !self.landlock_enabled && !readwrite_bind.is_empty() {
+            tracing::warn!(
+                readwrite_count = readwrite_bind.len(),
+                "Landlock is disabled — readwrite mounts have no filesystem access control. \
+                 Call .landlock(true) for production use."
+            );
+        }
+
         // If project_dir was explicitly set, ensure it's mounted readwrite
         if let Some(ref pd) = self.project_dir
             && !readwrite_bind.contains(pd)

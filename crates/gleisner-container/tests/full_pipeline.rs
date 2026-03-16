@@ -240,6 +240,7 @@ fn delegation_to_claude() {
     )
     .task("What is 2+2? Reply with just the number.")
     .allow_network(["api.anthropic.com"])
+    .forward_api_key()
     .timeout(Duration::from_secs(60))
     .build()
     .expect("build delegation");

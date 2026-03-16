@@ -47,6 +47,10 @@ pub enum Mount {
 #[derive(Debug, Clone)]
 pub enum NetworkMode {
     /// Full host network access (no network namespace).
+    ///
+    /// **Warning**: This exposes localhost services (databases, caches,
+    /// admin interfaces) to the sandboxed process. Prefer [`Isolated`](NetworkMode::Isolated)
+    /// with specific domain allowlists for production use.
     Host,
     /// Isolated network via pasta with optional domain allowlist.
     Isolated {
