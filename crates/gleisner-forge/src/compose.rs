@@ -168,14 +168,14 @@ impl ComposedEnvironment {
         // domain list and per-domain provenance attribution.
         if let Some(deps) = json.get("build_deps").and_then(|d| d.as_array()) {
             for dep in deps {
-                if let Some(url) = dep.get("url").and_then(|u| u.as_str()) {
-                    if let Some(domain) = extract_domain(url) {
-                        self.source_domains.push(SourceDomain {
-                            domain,
-                            package: name.to_string(),
-                            source_url: url.to_string(),
-                        });
-                    }
+                if let Some(url) = dep.get("url").and_then(|u| u.as_str())
+                    && let Some(domain) = extract_domain(url)
+                {
+                    self.source_domains.push(SourceDomain {
+                        domain,
+                        package: name.to_string(),
+                        source_url: url.to_string(),
+                    });
                 }
             }
         }

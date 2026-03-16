@@ -349,6 +349,7 @@ async fn run_query(
             // and only works via the explicit /cosign TUI command.
             false,
             None,
+            sandbox_cfg.no_landlock,
         ) {
             Ok(state) => Some(state),
             Err(e) => {
@@ -685,6 +686,12 @@ struct AttestationState {
     /// Only read when the `keyless` feature is enabled.
     #[cfg_attr(not(feature = "keyless"), expect(dead_code))]
     sigstore_token: Option<String>,
+    /// Landlock enforcement level for attestation metadata.
+    landlock_enforcement: String,
+    /// Seccomp-BPF preset for attestation metadata.
+    seccomp_preset: String,
+    /// Namespace types active in the sandbox.
+    namespaces: Vec<String>,
 }
 
 /// Result of a successful attestation finalization.
@@ -706,6 +713,7 @@ fn setup_attestation(
     profile: &gleisner_polis::profile::Profile,
     use_sigstore: bool,
     sigstore_token: Option<String>,
+    no_landlock: bool,
 ) -> color_eyre::Result<AttestationState> {
     use chrono::Utc;
     use color_eyre::eyre::eyre;
@@ -782,6 +790,26 @@ fn setup_attestation(
         filesystem_deny_count: profile.filesystem.deny.len(),
         use_sigstore,
         sigstore_token,
+        landlock_enforcement: if no_landlock {
+            "Disabled".to_owned()
+        } else {
+            "Requested".to_owned()
+        },
+        seccomp_preset: format!("{:?}", profile.process.seccomp.preset),
+        namespaces: {
+            let mut ns = vec![
+                "user".to_owned(),
+                "mount".to_owned(),
+                "ipc".to_owned(),
+                "uts".to_owned(),
+                "time".to_owned(),
+            ];
+            if profile.process.pid_namespace {
+                ns.push("pid".to_owned());
+            }
+            ns.push("net".to_owned());
+            ns
+        },
     })
 }
 
@@ -1005,6 +1033,9 @@ async fn finalize_attestation(
                     sandboxed: true,
                     profile: state.profile_name,
                     api_base_url,
+                    landlock_enforcement: Some(state.landlock_enforcement),
+                    seccomp_preset: Some(state.seccomp_preset),
+                    namespaces: Some(state.namespaces),
                 },
             },
             metadata: BuildMetadata {
@@ -1087,12 +1118,12 @@ fn hash_profile_by_name(name: &str) -> Option<String> {
 
     for dir in search_dirs.into_iter().flatten() {
         let candidate = dir.join(format!("{name}.toml"));
-        if candidate.exists() {
-            if let Ok(data) = std::fs::read(&candidate) {
-                let mut hasher = Sha256::new();
-                hasher.update(&data);
-                return Some(format!("{:x}", hasher.finalize()));
-            }
+        if candidate.exists()
+            && let Ok(data) = std::fs::read(&candidate)
+        {
+            let mut hasher = Sha256::new();
+            hasher.update(&data);
+            return Some(format!("{:x}", hasher.finalize()));
         }
     }
     None

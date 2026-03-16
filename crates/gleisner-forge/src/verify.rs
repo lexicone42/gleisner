@@ -124,12 +124,12 @@ pub fn detect_lake() -> Option<PathBuf> {
 /// Detect a tool by name from PATH or ~/.elan/bin/.
 fn detect_tool(name: &str) -> Option<PathBuf> {
     // Check PATH first
-    if let Ok(output) = Command::new("which").arg(name).output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(PathBuf::from(path));
-            }
+    if let Ok(output) = Command::new("which").arg(name).output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
         }
     }
 
@@ -280,10 +280,10 @@ pub fn verify_proof_repo(
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .output();
-        if let Ok(output) = pull {
-            if !output.status.success() {
-                tracing::warn!("git pull failed, continuing with cached version");
-            }
+        if let Ok(output) = pull
+            && !output.status.success()
+        {
+            tracing::warn!("git pull failed, continuing with cached version");
         }
     } else {
         tracing::info!(repo = %repo_url, dir = %clone_dir.display(), "cloning proof repo");

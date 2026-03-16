@@ -6,7 +6,7 @@ exclude = ["fuzz"]
 [workspace.package]
 authors = ["Bryan <bryan@lexicone.org>"]
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.93"
 license = "Apache-2.0"
 repository = "https://github.com/lexicone42/gleisner"
 homepage = "https://github.com/lexicone42/gleisner"

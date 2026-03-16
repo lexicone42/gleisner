@@ -460,6 +460,27 @@ mod linux_impl {
         };
 
         // ── 12. Assemble and sign ────────────────────────────────────────
+        let landlock_enforcement = if args.wrap.no_landlock {
+            "Disabled".to_owned()
+        } else {
+            "Requested".to_owned()
+        };
+        let seccomp_preset = format!("{:?}", profile.process.seccomp.preset);
+        let namespaces = {
+            let mut ns = vec![
+                "user".to_owned(),
+                "mount".to_owned(),
+                "ipc".to_owned(),
+                "uts".to_owned(),
+                "time".to_owned(),
+            ];
+            if profile.process.pid_namespace {
+                ns.push("pid".to_owned());
+            }
+            ns.push("net".to_owned());
+            ns
+        };
+
         let statement = assemble_statement(
             recorder_output,
             audit_log_digest,
@@ -468,6 +489,9 @@ mod linux_impl {
             sandbox_summary,
             exit_code,
             chain_metadata,
+            landlock_enforcement,
+            seccomp_preset,
+            namespaces,
         );
 
         #[cfg(feature = "keyless")]
@@ -500,6 +524,7 @@ mod linux_impl {
     }
 
     /// Assemble the in-toto attestation statement from recorder output.
+    #[allow(clippy::too_many_arguments)]
     fn assemble_statement(
         recorder_output: RecorderOutput,
         audit_log_digest: String,
@@ -508,6 +533,9 @@ mod linux_impl {
         sandbox_summary: SandboxProfileSummary,
         exit_code: i32,
         chain: Option<ChainMetadata>,
+        landlock_enforcement: String,
+        seccomp_preset: String,
+        namespaces: Vec<String>,
     ) -> InTotoStatement {
         let mut materials = recorder_output.materials;
         if let Some(gs) = git_state {
@@ -544,6 +572,9 @@ mod linux_impl {
                         sandboxed: true,
                         profile: sandbox_summary.name.clone(),
                         api_base_url,
+                        landlock_enforcement: Some(landlock_enforcement),
+                        seccomp_preset: Some(seccomp_preset),
+                        namespaces: Some(namespaces),
                     },
                 },
                 metadata: BuildMetadata {

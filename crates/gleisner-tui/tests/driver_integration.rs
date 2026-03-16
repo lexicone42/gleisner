@@ -223,13 +223,13 @@ fn process_messages(app: &mut App, messages: &[DriverMessage]) {
             DriverMessage::Exited(code) => {
                 if app.session_state != SessionState::Idle {
                     app.session_state = SessionState::Idle;
-                    if let Some(code) = code {
-                        if *code != 0 {
-                            app.push_message(
-                                Role::System,
-                                format!("[process exited with code {code}]"),
-                            );
-                        }
+                    if let Some(code) = code
+                        && *code != 0
+                    {
+                        app.push_message(
+                            Role::System,
+                            format!("[process exited with code {code}]"),
+                        );
                     }
                 }
             }

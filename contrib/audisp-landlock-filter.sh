@@ -11,7 +11,11 @@ LOG_FILE="/var/log/gleisner/landlock-audit.log"
 
 while IFS= read -r line; do
     case "$line" in
-        *"UNKNOWN[1423]"* | *"LANDLOCK_ACCESS"*)
+        *"UNKNOWN[1423]"*)
+            # Normalise to the canonical type name (libaudit < 4.1 lacks the mapping)
+            printf '%s\n' "${line%%UNKNOWN\[1423\]*}LANDLOCK_ACCESS${line#*UNKNOWN\[1423\]}" >> "$LOG_FILE"
+            ;;
+        *"LANDLOCK_ACCESS"*)
             printf '%s\n' "$line" >> "$LOG_FILE"
             ;;
     esac

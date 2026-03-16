@@ -169,10 +169,10 @@ fn read_children_fallback(parent_pid: u32) -> Vec<u32> {
             continue;
         };
 
-        if let Some(ppid) = read_ppid(pid) {
-            if ppid == parent_pid {
-                children.push(pid);
-            }
+        if let Some(ppid) = read_ppid(pid)
+            && ppid == parent_pid
+        {
+            children.push(pid);
         }
     }
 

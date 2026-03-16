@@ -80,12 +80,12 @@ pub struct Hash {
 /// For path deps: `pkg:cargo/name@version` (no qualifier)
 pub fn to_purl(pkg: &CargoPackage) -> String {
     let base = format!("pkg:cargo/{}@{}", pkg.name, pkg.version);
-    if pkg.is_git_dep() {
-        if let Some(source) = &pkg.source {
-            // Strip "git+" prefix for the VCS URL
-            let vcs_url = source.strip_prefix("git+").unwrap_or(source);
-            return format!("{base}?vcs_url={vcs_url}");
-        }
+    if pkg.is_git_dep()
+        && let Some(source) = &pkg.source
+    {
+        // Strip "git+" prefix for the VCS URL
+        let vcs_url = source.strip_prefix("git+").unwrap_or(source);
+        return format!("{base}?vcs_url={vcs_url}");
     }
     base
 }

@@ -226,14 +226,14 @@ fn add_bind_path(fs: &mut ForgeFilesystemPolicy, path: &PathBuf, read_only: bool
 
 /// Expand `~` prefix to the user's home directory.
 fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home).join(rest);
-        }
-    } else if path == "~" {
-        if let Ok(home) = std::env::var("HOME") {
-            return PathBuf::from(home);
-        }
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home).join(rest);
+    } else if path == "~"
+        && let Ok(home) = std::env::var("HOME")
+    {
+        return PathBuf::from(home);
     }
     PathBuf::from(path)
 }

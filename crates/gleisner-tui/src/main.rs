@@ -222,10 +222,10 @@ async fn run(
 
     // Pre-flight: check nft log support for audit2allow network observability.
     #[cfg(target_os = "linux")]
-    if sandbox.is_some() {
-        if let Err(msg) = gleisner_polis::NetworkFilter::check_log_available() {
-            app.push_message(Role::System, format!("[warn] {msg}"));
-        }
+    if sandbox.is_some()
+        && let Err(msg) = gleisner_polis::NetworkFilter::check_log_available()
+    {
+        app.push_message(Role::System, format!("[warn] {msg}"));
     }
 
     // Active query handle — holds the message receiver and abort handle.
@@ -240,111 +240,100 @@ async fn run(
 
         // Poll for terminal events (keyboard) with a short timeout
         // so we also check for stream events frequently.
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    if let Some(action) = app.handle_key(key) {
-                        match action {
-                            UserAction::Prompt(prompt) => {
-                                info!(prompt_len = prompt.len(), session = ?app.session_id, "submitting prompt");
-                                let mut config = QueryConfig::from_profile(&profile);
-                                config.prompt = prompt;
-                                config.resume_session.clone_from(&app.session_id);
-                                config.sandbox.clone_from(&sandbox);
-                                config.use_sigstore = use_sigstore;
-                                config.sigstore_token = sigstore_token.map(String::from);
-                                config.no_mcp = no_mcp;
-                                if let Some(bin) = claude_bin {
-                                    bin.clone_into(&mut config.claude_bin);
-                                }
-                                if config.sandbox.is_some() {
-                                    app.security.recording = true;
-                                    attestation_pending = true;
-                                }
-                                query = Some(spawn_query(config, 256));
-                            }
-                            UserAction::Command(TuiCommand::Cosign(ref path_arg)) => {
-                                if cosign.is_some() {
-                                    app.push_message(
-                                        Role::System,
-                                        "[error] Cosign already in progress. Use /cosigncode <code> to complete.",
-                                    );
-                                } else {
-                                    cosign =
-                                        start_cosign(&mut app, path_arg.as_deref(), project_dir);
-                                }
-                            }
-                            UserAction::Command(TuiCommand::CosignCode(ref code)) => {
-                                if let Some(ref cs) = cosign {
-                                    info!("sending authorization code to cosign flow");
-                                    if cs.code_tx.send(code.clone()).is_err() {
-                                        app.push_message(
-                                            Role::System,
-                                            "[error] Cosign flow has ended. Try /cosign again.",
-                                        );
-                                        cosign = None;
-                                    } else {
-                                        app.push_message(
-                                            Role::System,
-                                            "Code submitted, signing...",
-                                        );
-                                    }
-                                } else {
-                                    app.push_message(
-                                        Role::System,
-                                        "[error] No cosign in progress. Start with /cosign first.",
-                                    );
-                                }
-                            }
-                            UserAction::Command(TuiCommand::End) => {
-                                if app.session_state == SessionState::Streaming {
-                                    app.push_message(
-                                        Role::System,
-                                        "[error] Cannot /end while streaming. Use Ctrl-C to interrupt first.",
-                                    );
-                                } else if attestation_pending {
-                                    app.push_message(
-                                        Role::System,
-                                        "Attestation still finalizing — please wait for it to complete, then /end.",
-                                    );
-                                } else {
-                                    let log_count = app.audit_logs.len();
-                                    app.session_id = None;
-                                    app.push_message(
-                                        Role::System,
-                                        format!(
-                                            "Session ended. {log_count} audit log(s) available for /learn.\n\
-                                             Next prompt will start a fresh Claude session."
-                                        ),
-                                    );
-                                    info!(audit_logs = log_count, "user ended session via /end");
-                                }
-                            }
-                            UserAction::Command(TuiCommand::Learn) => {
-                                handle_learn_command(
-                                    &mut app,
-                                    &mut profile,
-                                    &mut sandbox,
-                                    project_dir,
-                                );
-                            }
-                            UserAction::Command(cmd) => {
-                                handle_command(&mut app, cmd, project_dir);
-                            }
-                            UserAction::Interrupt => {
-                                info!("user interrupt — aborting current query");
-                                if let Some(handle) = query.take() {
-                                    handle.force_kill();
-                                    handle.task.abort();
-                                }
-                                app.session_state = SessionState::Idle;
-                                app.streaming_buffer.clear();
-                                app.security.recording = false;
-                                attestation_pending = false;
-                                app.push_message(Role::System, "[interrupted]");
-                            }
-                        }
+        if event::poll(Duration::from_millis(50))?
+            && let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+            && let Some(action) = app.handle_key(key)
+        {
+            match action {
+                UserAction::Prompt(prompt) => {
+                    info!(prompt_len = prompt.len(), session = ?app.session_id, "submitting prompt");
+                    let mut config = QueryConfig::from_profile(&profile);
+                    config.prompt = prompt;
+                    config.resume_session.clone_from(&app.session_id);
+                    config.sandbox.clone_from(&sandbox);
+                    config.use_sigstore = use_sigstore;
+                    config.sigstore_token = sigstore_token.map(String::from);
+                    config.no_mcp = no_mcp;
+                    if let Some(bin) = claude_bin {
+                        bin.clone_into(&mut config.claude_bin);
                     }
+                    if config.sandbox.is_some() {
+                        app.security.recording = true;
+                        attestation_pending = true;
+                    }
+                    query = Some(spawn_query(config, 256));
+                }
+                UserAction::Command(TuiCommand::Cosign(ref path_arg)) => {
+                    if cosign.is_some() {
+                        app.push_message(
+                            Role::System,
+                            "[error] Cosign already in progress. Use /cosigncode <code> to complete.",
+                        );
+                    } else {
+                        cosign = start_cosign(&mut app, path_arg.as_deref(), project_dir);
+                    }
+                }
+                UserAction::Command(TuiCommand::CosignCode(ref code)) => {
+                    if let Some(ref cs) = cosign {
+                        info!("sending authorization code to cosign flow");
+                        if cs.code_tx.send(code.clone()).is_err() {
+                            app.push_message(
+                                Role::System,
+                                "[error] Cosign flow has ended. Try /cosign again.",
+                            );
+                            cosign = None;
+                        } else {
+                            app.push_message(Role::System, "Code submitted, signing...");
+                        }
+                    } else {
+                        app.push_message(
+                            Role::System,
+                            "[error] No cosign in progress. Start with /cosign first.",
+                        );
+                    }
+                }
+                UserAction::Command(TuiCommand::End) => {
+                    if app.session_state == SessionState::Streaming {
+                        app.push_message(
+                            Role::System,
+                            "[error] Cannot /end while streaming. Use Ctrl-C to interrupt first.",
+                        );
+                    } else if attestation_pending {
+                        app.push_message(
+                            Role::System,
+                            "Attestation still finalizing — please wait for it to complete, then /end.",
+                        );
+                    } else {
+                        let log_count = app.audit_logs.len();
+                        app.session_id = None;
+                        app.push_message(
+                            Role::System,
+                            format!(
+                                "Session ended. {log_count} audit log(s) available for /learn.\n\
+                                 Next prompt will start a fresh Claude session."
+                            ),
+                        );
+                        info!(audit_logs = log_count, "user ended session via /end");
+                    }
+                }
+                UserAction::Command(TuiCommand::Learn) => {
+                    handle_learn_command(&mut app, &mut profile, &mut sandbox, project_dir);
+                }
+                UserAction::Command(cmd) => {
+                    handle_command(&mut app, cmd, project_dir);
+                }
+                UserAction::Interrupt => {
+                    info!("user interrupt — aborting current query");
+                    if let Some(handle) = query.take() {
+                        handle.force_kill();
+                        handle.task.abort();
+                    }
+                    app.session_state = SessionState::Idle;
+                    app.streaming_buffer.clear();
+                    app.security.recording = false;
+                    attestation_pending = false;
+                    app.push_message(Role::System, "[interrupted]");
                 }
             }
         }
@@ -383,13 +372,13 @@ async fn run(
                         if app.session_state != SessionState::Idle {
                             app.session_state = SessionState::Idle;
                             app.security.recording = false;
-                            if let Some(code) = code {
-                                if code != 0 {
-                                    app.push_message(
-                                        Role::System,
-                                        format!("[process exited with code {code}]"),
-                                    );
-                                }
+                            if let Some(code) = code
+                                && code != 0
+                            {
+                                app.push_message(
+                                    Role::System,
+                                    format!("[process exited with code {code}]"),
+                                );
                             }
                         }
                     }
@@ -461,12 +450,13 @@ async fn run(
         // attestation is finalizing, because dropping it aborts the
         // background task (which is still doing snapshot reconciliation,
         // signing, and bundle writing).
-        if app.session_state == SessionState::Idle && !attestation_pending && query.is_some() {
-            if let Some(ref mut handle) = query {
-                if handle.rx.try_recv().is_err() {
-                    query = None;
-                }
-            }
+        if app.session_state == SessionState::Idle
+            && !attestation_pending
+            && query.is_some()
+            && let Some(ref mut handle) = query
+            && handle.rx.try_recv().is_err()
+        {
+            query = None;
         }
 
         if app.should_quit {
@@ -1043,6 +1033,7 @@ impl sigstore_oidc::AuthCallback for TuiAuthCallback {
 /// Returns `(env_vars, extra_rw_paths)` to inject into the sandbox.
 /// Merges the composed filesystem/network policy into the profile in-place.
 #[cfg(target_os = "linux")]
+#[allow(clippy::type_complexity)]
 fn run_forge_pipeline(
     pkgs_dir: &std::path::Path,
     stdlib_dir: &std::path::Path,

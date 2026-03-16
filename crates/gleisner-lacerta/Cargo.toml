@@ -31,5 +31,9 @@ z3 = { workspace = true, optional = true }
 tempfile.workspace = true
 proptest.workspace = true
 
+[[example]]
+name = "analyze_composition"
+required-features = ["lattice"]
+
 [lints]
 workspace = true

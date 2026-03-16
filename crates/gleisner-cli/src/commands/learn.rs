@@ -342,11 +342,11 @@ async fn watch_loop(args: LearnArgs) -> Result<()> {
             }
             () = tokio::time::sleep(timeout) => {
                 // Debounce timer fired — write intermediate profile
-                if let Some(ref out_path) = output {
-                    if matches!(emit_profile(&learner, output.as_ref(), true, 0), Ok(()))
-                        && !quiet {
-                            eprintln!("  [updated] {}", out_path.display());
-                        }
+                if let Some(ref out_path) = output
+                    && matches!(emit_profile(&learner, output.as_ref(), true, 0), Ok(()))
+                    && !quiet
+                {
+                    eprintln!("  [updated] {}", out_path.display());
                 }
                 last_write = None;
                 new_entries = 0;

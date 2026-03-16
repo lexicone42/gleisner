@@ -283,10 +283,10 @@ impl App {
             }
             // Detect exo-self from hook events too (fires before init)
             "hook_started" => {
-                if let Some(ref name) = sys.hook_name {
-                    if name.contains("exo-self") || name.contains("exo_self") {
-                        self.security.exo_self_active = true;
-                    }
+                if let Some(ref name) = sys.hook_name
+                    && (name.contains("exo-self") || name.contains("exo_self"))
+                {
+                    self.security.exo_self_active = true;
                 }
             }
             _ => {}
@@ -301,14 +301,13 @@ impl App {
     fn handle_stream_delta(&mut self, delta: &crate::stream::StreamDeltaEvent) {
         if let Some(ref event) = delta.event {
             // content_block_delta with text_delta contains partial text
-            if event.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
-                if let Some(text) = event
+            if event.get("type").and_then(|t| t.as_str()) == Some("content_block_delta")
+                && let Some(text) = event
                     .get("delta")
                     .and_then(|d| d.get("text"))
                     .and_then(|t| t.as_str())
-                {
-                    self.streaming_buffer.push_str(text);
-                }
+            {
+                self.streaming_buffer.push_str(text);
             }
         }
     }

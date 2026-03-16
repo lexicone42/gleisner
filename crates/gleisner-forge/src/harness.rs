@@ -567,9 +567,10 @@ fn navigate_path<'a>(value: &'a serde_json::Value, path: &str) -> Option<&'a ser
     while !remaining.is_empty() {
         let (key, rest) = if remaining.starts_with('"') {
             // Quoted key: ."some-key".rest
-            let end = remaining[1..].find('"')?;
-            let key = &remaining[1..=end];
-            let rest = remaining[end + 2..].strip_prefix('.').unwrap_or("");
+            let inner = remaining.strip_prefix('"')?;
+            let end = inner.find('"')?;
+            let key = &inner[..end];
+            let rest = inner[end + 1..].strip_prefix('.').unwrap_or("");
             (key, rest)
         } else {
             // Unquoted key

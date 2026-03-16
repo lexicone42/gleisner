@@ -341,17 +341,17 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
         let is_user_subdir = home_dir
             .as_ref()
             .is_some_and(|home| path.starts_with(home) && path != home);
-        if is_user_subdir && path.is_dir() {
-            if let Ok(entries) = fs::read_dir(path) {
-                for entry in entries.flatten() {
-                    let entry_path = entry.path();
-                    if entry_path.is_symlink() {
-                        if let Ok(resolved) = fs::canonicalize(&entry_path) {
-                            if resolved.exists() {
-                                deferred_symlink_targets.push(resolved);
-                            }
-                        }
-                    }
+        if is_user_subdir
+            && path.is_dir()
+            && let Ok(entries) = fs::read_dir(path)
+        {
+            for entry in entries.flatten() {
+                let entry_path = entry.path();
+                if entry_path.is_symlink()
+                    && let Ok(resolved) = fs::canonicalize(&entry_path)
+                    && resolved.exists()
+                {
+                    deferred_symlink_targets.push(resolved);
                 }
             }
         }

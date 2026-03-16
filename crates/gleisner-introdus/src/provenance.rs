@@ -80,6 +80,15 @@ pub struct ClaudeCodeEnvironment {
     pub profile: String,
     /// Anthropic API base URL used.
     pub api_base_url: String,
+    /// Landlock enforcement level (e.g. "FullyEnforced", "BestEffort", "Disabled").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub landlock_enforcement: Option<String>,
+    /// Seccomp-BPF preset applied (e.g. "Nodejs", "Custom", "Disabled").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seccomp_preset: Option<String>,
+    /// Namespace isolation types active in the sandbox.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespaces: Option<Vec<String>>,
 }
 
 /// Timing and completeness metadata.

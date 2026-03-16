@@ -185,19 +185,19 @@ impl PolicyEngine for BuiltinPolicy {
             });
         }
 
-        if let Some(max_denials) = self.max_denial_count {
-            if let Some(count) = input.denial_count {
-                let passed = count <= max_denials;
-                results.push(PolicyResult {
-                    rule: "max_denial_count".to_owned(),
-                    passed,
-                    message: if passed {
-                        format!("{count} denial(s) within limit of {max_denials}")
-                    } else {
-                        format!("{count} denial(s) exceeds limit of {max_denials}")
-                    },
-                });
-            }
+        if let Some(max_denials) = self.max_denial_count
+            && let Some(count) = input.denial_count
+        {
+            let passed = count <= max_denials;
+            results.push(PolicyResult {
+                rule: "max_denial_count".to_owned(),
+                passed,
+                message: if passed {
+                    format!("{count} denial(s) within limit of {max_denials}")
+                } else {
+                    format!("{count} denial(s) exceeds limit of {max_denials}")
+                },
+            });
         }
 
         Ok(results)

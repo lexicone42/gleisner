@@ -451,6 +451,9 @@ mod tests {
                         sandboxed: true,
                         profile: "test".to_owned(),
                         api_base_url: "https://api.anthropic.com".to_owned(),
+                        landlock_enforcement: None,
+                        seccomp_preset: None,
+                        namespaces: None,
                     },
                 },
                 metadata: BuildMetadata {

@@ -548,12 +548,11 @@ pub fn find_child_pid(parent_pid: u32) -> Option<u32> {
         };
 
         for line in status.lines() {
-            if let Some(ppid_str) = line.strip_prefix("PPid:\t") {
-                if let Ok(ppid) = ppid_str.trim().parse::<u32>() {
-                    if ppid == parent_pid {
-                        return Some(pid);
-                    }
-                }
+            if let Some(ppid_str) = line.strip_prefix("PPid:\t")
+                && let Ok(ppid) = ppid_str.trim().parse::<u32>()
+                && ppid == parent_pid
+            {
+                return Some(pid);
             }
         }
     }
