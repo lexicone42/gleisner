@@ -1,0 +1,28 @@
+[package]
+name = "gleisner-container"
+version = "0.1.0"
+description = "Builder-pattern Linux container library with Landlock V7, seccomp, and attestation"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+forge = ["gleisner-forge"]
+attestation = ["gleisner-introdus"]
+
+[dependencies]
+gleisner-polis.workspace = true
+gleisner-forge = { workspace = true, optional = true }
+gleisner-introdus = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+nix.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
