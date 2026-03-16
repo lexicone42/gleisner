@@ -285,6 +285,7 @@ The `gleisner-lacerta` crate includes a Z3-powered policy lattice module (behind
 | `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.6 JSON |
 | `gleisner-scapes` | Events: tokio broadcast bus, JSONL audit writer, session recorder |
 | `gleisner-sandbox-init` | Container runtime: creates namespaces, bind mounts, pivot_root, applies Landlock, execs inner command |
+| `gleisner-container` | Library: builder-pattern sandbox API, auto-configures from forge compositions and harness detection |
 
 ## Documentation
 

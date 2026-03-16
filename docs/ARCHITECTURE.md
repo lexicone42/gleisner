@@ -49,7 +49,7 @@ Supporting capabilities include SBOM generation (`gleisner sbom`), attestation i
 
 ## Workspace Structure
 
-The project is a Cargo workspace with nine crates. All version numbers and lint configuration are centralized in the root `Cargo.toml` via workspace inheritance.
+The project is a Cargo workspace with ten crates. All version numbers and lint configuration are centralized in the root `Cargo.toml` via workspace inheritance.
 
 ### Crate Map
 
@@ -64,6 +64,7 @@ The project is a Cargo workspace with nine crates. All version numbers and lint 
 | `gleisner-scapes` | Event infrastructure. Audit event types, broadcast channel event bus, JSONL audit log writer. | `EventBus`, `EventPublisher`, `AuditEvent`, `EventKind`, `JsonlWriter` |
 | `gleisner-forge` | Nickel package evaluation for minimal.dev. Content-addressed evaluation, topological dependency ordering, sandbox policy composition, Lean 4 proof verification (via `lake build`), CycloneDX 1.6 SBOM with proof-carrying Declarations, attestation metadata extraction. | `ForgeConfig`, `EvalContext`, `ComposedEnvironment`, `VerifyConfig`, `PackageVerification`, `PolicyComplianceProof` |
 | `gleisner-bridger` | SBOM generation. Cargo.lock parsing, CycloneDX 1.6 JSON output. | `Sbom`, `Component` |
+| `gleisner-container` | Builder-pattern container library. Wraps sandbox internals from `gleisner-polis` into an ergonomic API with Landlock V7, seccomp-BPF, and configurable hostname. Optional `forge` feature auto-configures sandboxes from minimal.dev package compositions via harness detection. | `Sandbox`, `Command`, `Child`, `ForgeComposition`, `Namespace`, `NetworkMode` |
 
 ### Dependency Graph
 
@@ -78,6 +79,7 @@ graph TD
     LACERTA[gleisner-lacerta]
     SCAPES[gleisner-scapes]
     BRIDGER[gleisner-bridger]
+    CONTAINER[gleisner-container]
 
     CLI --> POLIS
     CLI --> FORGE
@@ -98,6 +100,9 @@ graph TD
     INTRODUS --> SCAPES
     LACERTA --> INTRODUS
 
+    CONTAINER --> POLIS
+    CONTAINER -.->|forge feature| FORGE
+
     style SCAPES fill:#e8f5e9,stroke:#2e7d32
     style CLI fill:#e3f2fd,stroke:#1565c0
     style TUI fill:#e3f2fd,stroke:#1565c0
@@ -107,12 +112,14 @@ graph TD
     style INTRODUS fill:#fce4ec,stroke:#c62828
     style LACERTA fill:#f3e5f5,stroke:#6a1b9a
     style BRIDGER fill:#f1f8e9,stroke:#558b2f
+    style CONTAINER fill:#ede7f6,stroke:#4527a0
 ```
 
 Key observations:
 
 - **`gleisner-scapes`** is the foundation -- it has no internal dependencies and provides the event vocabulary that `polis` and `introdus` both consume.
 - **`gleisner-bridger`** is fully independent -- no internal crate dependencies at all. It only needs `serde`, `toml`, and `sha2`.
+- **`gleisner-container`** is the library API layer -- it wraps `gleisner-polis` into a builder pattern for programmatic use. The optional `forge` feature connects it to `gleisner-forge` for automatic sandbox configuration from package metadata.
 - **`gleisner-lacerta`** depends on `gleisner-introdus` (for `AttestationBundle` and chain types) but not on `polis` or `scapes`.
 - **`gleisner-cli`** and **`gleisner-tui`** are the two entry points -- both depend on all library crates and orchestrate the full pipeline.
 - **`gleisner-sandbox-init`** depends only on `gleisner-polis` (for `LandlockPolicy` and `apply_landlock`) -- it is a minimal trampoline binary.
