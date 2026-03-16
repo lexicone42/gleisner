@@ -118,9 +118,14 @@ pub(crate) fn run(spec: SandboxSpec) -> Result<(), String> {
         }
     }
 
-    // Set a distinctive hostname inside the UTS namespace.
+    // Set hostname inside the UTS namespace.
     // Visible in shell prompts and logs — makes it obvious you're sandboxed.
-    sethostname("gleisner-sandbox").map_err(|e| format!("sethostname failed: {e}"))?;
+    let hostname = if spec.hostname.is_empty() {
+        "gleisner-sandbox"
+    } else {
+        &spec.hostname
+    };
+    sethostname(hostname).map_err(|e| format!("sethostname failed: {e}"))?;
 
     eprintln!("gleisner-sandbox-init: namespaces created (ipc+uts isolated)");
 

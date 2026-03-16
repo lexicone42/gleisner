@@ -82,6 +82,10 @@ pub struct SandboxSpec {
     /// and before `fork_and_exec`. The filter is inherited by the child.
     #[serde(default)]
     pub seccomp: crate::profile::SeccompPolicy,
+    /// Hostname to set inside the UTS namespace.
+    /// Defaults to `"gleisner-sandbox"` if empty.
+    #[serde(default)]
+    pub hostname: String,
 }
 
 /// The type of file access being evaluated.

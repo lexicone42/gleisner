@@ -308,6 +308,7 @@ impl Sandbox {
             no_landlock: !self.landlock_enabled,
             no_cgroups: self.resource_limits.is_none(),
             extra_env: self.env.clone(),
+            hostname: self.hostname.clone(),
         })
     }
 }

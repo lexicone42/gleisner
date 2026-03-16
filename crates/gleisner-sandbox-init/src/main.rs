@@ -100,6 +100,7 @@ mod tests {
             resource_limits: None,
             extra_env: vec![],
             seccomp: Default::default(),
+            hostname: String::new(),
         };
 
         let json = serde_json::to_string(&spec).unwrap();

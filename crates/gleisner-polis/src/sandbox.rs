@@ -37,6 +37,8 @@ pub struct DirectSandbox {
     init_bin: PathBuf,
     /// Extra environment variables to pass to the inner command.
     extra_env: Vec<(String, String)>,
+    /// Hostname for the UTS namespace.
+    hostname: String,
 }
 
 impl DirectSandbox {
@@ -72,6 +74,7 @@ impl DirectSandbox {
             no_cgroups: false,
             init_bin,
             extra_env: Vec::new(),
+            hostname: String::new(),
         })
     }
 
@@ -98,6 +101,11 @@ impl DirectSandbox {
     /// Add extra environment variables to pass to the inner command.
     pub fn set_extra_env(&mut self, env: Vec<(String, String)>) {
         self.extra_env = env;
+    }
+
+    /// Set the hostname inside the UTS namespace.
+    pub fn set_hostname(&mut self, hostname: String) {
+        self.hostname = hostname;
     }
 
     /// Build the sandbox spec and launch command.
@@ -174,6 +182,7 @@ impl DirectSandbox {
             },
             extra_env: self.extra_env.clone(),
             seccomp: self.profile.process.seccomp.clone(),
+            hostname: self.hostname.clone(),
         }
     }
 
@@ -328,6 +337,7 @@ mod tests {
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         let spec = sandbox.build_spec(&["echo".to_owned(), "hello".to_owned()], false);
@@ -361,6 +371,7 @@ mod tests {
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         let spec = sandbox.build_spec(&["true".to_owned()], false);
@@ -407,6 +418,7 @@ mod tests {
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         let spec = sandbox.build_spec(&["true".to_owned()], true);
@@ -425,6 +437,7 @@ mod tests {
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         sandbox.disable_landlock();
@@ -464,6 +477,7 @@ mod tests {
             resource_limits: None,
             extra_env: vec![],
             seccomp: Default::default(),
+            hostname: String::new(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");
@@ -549,6 +563,7 @@ mod tests {
             resource_limits: None,
             extra_env: vec![],
             seccomp: Default::default(),
+            hostname: String::new(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize spec");
@@ -857,6 +872,7 @@ mod tests {
             resource_limits: None,
             extra_env: vec![],
             seccomp: Default::default(),
+            hostname: String::new(),
         };
 
         // Write spec to tempfile
@@ -943,6 +959,7 @@ mod tests {
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         // apply_rlimits should succeed (no-op since all limits are zero/skipped)
@@ -988,6 +1005,7 @@ mod tests {
                 ("NODE_DEBUG".to_owned(), "net,tls".to_owned()),
             ],
             seccomp: Default::default(),
+            hostname: String::new(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");
@@ -1038,6 +1056,7 @@ mod tests {
             resource_limits: None,
             extra_env: vec![],
             seccomp: Default::default(),
+            hostname: String::new(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");
@@ -1059,6 +1078,7 @@ mod tests {
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         sandbox.set_extra_env(vec![
@@ -1083,6 +1103,7 @@ mod tests {
             no_cgroups: false,
             init_bin: PathBuf::from("/usr/bin/gleisner-sandbox-init"),
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         // use_external_netns=false (normal path)
@@ -1148,6 +1169,7 @@ mod tests {
             resource_limits: None,
             extra_env: vec![("MYVAR".to_owned(), "hello_from_extra_env".to_owned())],
             seccomp: Default::default(),
+            hostname: String::new(),
         };
 
         let json = serde_json::to_string(&spec).expect("serialize");

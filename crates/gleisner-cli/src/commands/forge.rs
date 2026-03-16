@@ -573,6 +573,7 @@ fn run_in_composed_sandbox(
         no_landlock: false,
         no_cgroups: false,
         extra_env: forge_env,
+        hostname: String::new(),
     };
 
     let mut prepared = gleisner_polis::prepare_sandbox(config, &inner_command)?;

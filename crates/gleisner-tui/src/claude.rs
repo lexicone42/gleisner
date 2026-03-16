@@ -521,6 +521,7 @@ fn build_sandboxed_command(
         no_landlock: sandbox_cfg.no_landlock,
         no_cgroups: false,
         extra_env: sandbox_cfg.extra_env.clone(),
+        hostname: String::new(),
     };
 
     let prepared = gleisner_polis::prepare_sandbox(session_config, &full_inner)?;

@@ -32,6 +32,9 @@ pub struct SandboxSessionConfig {
     pub no_cgroups: bool,
     /// Extra environment variables to pass to the inner command.
     pub extra_env: Vec<(String, String)>,
+    /// Hostname inside the sandbox (empty = default "gleisner-sandbox").
+    #[allow(clippy::doc_markdown)]
+    pub hostname: String,
 }
 
 /// A fully prepared sandbox, ready to spawn.
@@ -122,6 +125,9 @@ pub fn prepare_sandbox(
     }
     if !config.extra_env.is_empty() {
         sandbox.set_extra_env(config.extra_env);
+    }
+    if !config.hostname.is_empty() {
+        sandbox.set_hostname(config.hostname);
     }
 
     // ── 6. Resolve network filter ─────────────────────────────────
@@ -258,6 +264,7 @@ mod tests {
             no_landlock: true,
             no_cgroups: true,
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         let inner = vec!["/bin/echo".to_owned(), "hello".to_owned()];
@@ -289,6 +296,7 @@ mod tests {
             no_landlock: true,
             no_cgroups: true,
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         let inner = vec!["/bin/true".to_owned()];
@@ -314,6 +322,7 @@ mod tests {
             no_landlock: true,
             no_cgroups: true,
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         let inner = vec!["/bin/true".to_owned()];

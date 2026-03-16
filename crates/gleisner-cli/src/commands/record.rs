@@ -218,6 +218,7 @@ mod linux_impl {
             no_landlock: args.wrap.no_landlock,
             no_cgroups: args.no_cgroups,
             extra_env: vec![],
+            hostname: String::new(),
         };
 
         let prepared = gleisner_polis::prepare_sandbox(sandbox_config, &inner_command)?;

@@ -1077,6 +1077,7 @@ fn sandboxed_query_builds_sandbox_command() {
         no_landlock: true,
         no_cgroups: true,
         extra_env: vec![],
+        hostname: String::new(),
     };
 
     let inner = vec![
@@ -1216,6 +1217,7 @@ fn extra_env_flows_through_session_to_spec() {
             ("FOO".to_owned(), "bar".to_owned()),
             ("BAZ".to_owned(), "qux".to_owned()),
         ],
+        hostname: String::new(),
     };
 
     let inner = vec!["echo".to_owned(), "test".to_owned()];

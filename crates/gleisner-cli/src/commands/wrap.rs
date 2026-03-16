@@ -96,6 +96,7 @@ pub async fn execute(args: WrapArgs) -> Result<()> {
         no_landlock: args.no_landlock,
         no_cgroups: false,
         extra_env: vec![],
+        hostname: String::new(),
     };
 
     let mut prepared = gleisner_polis::prepare_sandbox(config, &inner_command)?;
