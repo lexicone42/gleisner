@@ -245,11 +245,21 @@ pub fn eval_package(
             message: format!("{e:?}"),
         })?;
 
-    let json_str =
-        serialize::to_string(ExportFormat::Json, &result).map_err(|e| ForgeError::NickelEval {
+    let json_str = serialize::to_string(ExportFormat::Json, &result).map_err(|e| {
+        let msg = format!("{e:?}");
+        // Provide actionable guidance for common Nickel serialization issues
+        let hint = if msg.contains("cannot serialize enum variant") {
+            " (hint: Nickel enum variants with arguments like 'Tag {field} \
+                 cannot be serialized to JSON — use plain enum tags like 'Tag \
+                 or move the data to a separate field)"
+        } else {
+            ""
+        };
+        ForgeError::NickelEval {
             package: package_name.clone(),
-            message: format!("serialization failed: {e:?}"),
-        })?;
+            message: format!("serialization failed: {msg}{hint}"),
+        }
+    })?;
 
     let json: serde_json::Value =
         serde_json::from_str(&json_str).map_err(|e| ForgeError::NickelEval {

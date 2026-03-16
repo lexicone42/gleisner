@@ -105,6 +105,11 @@ pub enum SeccompPreset {
     /// No syscall filtering.
     #[default]
     Disabled,
+    /// Conservative baseline that blocks dangerous syscalls (`ptrace`, `mount`,
+    /// `bpf`, kernel modules, `io_uring`) while allowing common operations.
+    /// Uses the same allowlist as `Nodejs` (which covers the superset of
+    /// syscalls needed by most userspace tools including cargo, python, etc.).
+    Baseline,
     /// Allowlist tuned for Node.js / V8 runtimes.
     Nodejs,
     /// Explicit syscall allowlist.

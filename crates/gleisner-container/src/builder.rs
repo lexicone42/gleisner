@@ -50,6 +50,9 @@ pub struct Sandbox {
     files: Vec<ContainerFile>,
     dirs: Vec<ContainerDir>,
     symlinks: Vec<ContainerSymlink>,
+    /// Whether the caller has acknowledged running without Landlock.
+    /// Required by `empty()` before `command()` can be called.
+    landlock_acknowledged: bool,
     /// Whether to mount /proc inside the container (default: true via sandbox-init).
     mount_proc: bool,
     /// Whether to mount /dev inside the container (default: true via sandbox-init).
@@ -81,6 +84,7 @@ impl Sandbox {
             network: NetworkMode::None,
             seccomp: SeccompPreset::Disabled,
             landlock_enabled: true,
+            landlock_acknowledged: true, // Landlock is on, no ack needed
             env: Vec::new(),
             resource_limits: None,
             uid,
@@ -100,13 +104,16 @@ impl Sandbox {
     /// `empty()` starts with everything disabled. Use this for reproducible
     /// build environments where you want explicit control over every layer.
     ///
+    /// You must call `.landlock(true)` or `.no_landlock()` before creating
+    /// commands — this ensures you've explicitly acknowledged the security posture.
+    ///
     /// ```no_run
     /// # use gleisner_container::Sandbox;
     /// let mut sb = Sandbox::empty();
     /// sb.mount_readonly("/usr", "/usr")
     ///     .mount_readonly("/lib", "/lib")
-    ///     .tmpfs("/tmp");
-    /// // No Landlock, no seccomp, no network — just namespaces + mounts
+    ///     .tmpfs("/tmp")
+    ///     .no_landlock(); // explicit acknowledgment
     /// ```
     pub fn empty() -> Self {
         let uid = nix::unistd::getuid().as_raw();
@@ -121,6 +128,7 @@ impl Sandbox {
             network: NetworkMode::None,
             seccomp: SeccompPreset::Disabled,
             landlock_enabled: false,
+            landlock_acknowledged: false, // Must call .no_landlock() to acknowledge
             env: Vec::new(),
             resource_limits: None,
             uid,
@@ -253,7 +261,7 @@ impl Sandbox {
     /// Convenience for mounting many directories at once:
     /// ```no_run
     /// # use gleisner_container::Sandbox;
-    /// let mut sb = Sandbox::empty();
+    /// let mut sb = Sandbox::new();
     /// sb.bind_ro_all(["/usr", "/lib", "/lib64", "/bin"]);
     /// ```
     pub fn bind_ro_all(
@@ -379,6 +387,20 @@ impl Sandbox {
     /// Enable or disable Landlock filesystem restrictions.
     pub fn landlock(&mut self, enabled: bool) -> &mut Self {
         self.landlock_enabled = enabled;
+        if enabled {
+            self.landlock_acknowledged = true;
+        }
+        self
+    }
+
+    /// Explicitly acknowledge running without Landlock.
+    ///
+    /// Required when using [`Sandbox::empty()`] — the builder refuses to
+    /// create commands until you either call `.landlock(true)` or `.no_landlock()`
+    /// to confirm you understand the security implications.
+    pub fn no_landlock(&mut self) -> &mut Self {
+        self.landlock_enabled = false;
+        self.landlock_acknowledged = true;
         self
     }
 
@@ -501,6 +523,15 @@ impl Sandbox {
         program: impl AsRef<str>,
         args: &[impl AsRef<str>],
     ) -> Result<Command, ContainerError> {
+        // Require explicit Landlock acknowledgment from empty() sandboxes
+        if !self.landlock_acknowledged {
+            return Err(ContainerError::Config(
+                "Sandbox::empty() requires calling .landlock(true) or .no_landlock() \
+                 before creating commands — explicitly acknowledge the security posture"
+                    .to_owned(),
+            ));
+        }
+
         let mut inner_command = vec![program.as_ref().to_owned()];
         inner_command.extend(args.iter().map(|a| a.as_ref().to_owned()));
 
@@ -632,6 +663,13 @@ impl Sandbox {
 
         let seccomp = match &self.seccomp {
             SeccompPreset::Disabled => SeccompPolicy::default(),
+            SeccompPreset::Baseline => SeccompPolicy {
+                // Baseline uses the Nodejs allowlist — it's the broadest
+                // implemented allowlist and covers most userspace tools.
+                preset: gleisner_polis::profile::SeccompPreset::Nodejs,
+                default_action: SeccompAction::Errno,
+                allow_syscalls: Vec::new(),
+            },
             SeccompPreset::Nodejs => SeccompPolicy {
                 preset: gleisner_polis::profile::SeccompPreset::Nodejs,
                 default_action: SeccompAction::Errno,

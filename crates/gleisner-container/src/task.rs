@@ -266,7 +266,7 @@ impl TaskSandbox {
         let seccomp = self.seccomp.clone().unwrap_or(if uses_nodejs {
             SeccompPreset::Nodejs
         } else {
-            SeccompPreset::Disabled
+            SeccompPreset::Baseline
         });
         sb.seccomp(seccomp);
 
