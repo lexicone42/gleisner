@@ -183,7 +183,13 @@ impl Delegation {
     /// on the result.
     pub fn build(self) -> Result<PreparedDelegation, ContainerError> {
         // Write context file to project dir
-        let context_file = self.task.write_context_file().ok();
+        let context_file = match self.task.write_context_file() {
+            Ok(path) => Some(path),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to write sandbox-context.md — inner agent will lack boundary awareness");
+                None
+            }
+        };
 
         // Build the sandbox
         let sandbox = self.task.build()?;

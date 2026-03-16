@@ -549,6 +549,13 @@ impl Sandbox {
         if !self.files.is_empty() || !self.dirs.is_empty() || !self.symlinks.is_empty() {
             let staging =
                 std::env::temp_dir().join(format!(".gleisner-inject-{}", std::process::id()));
+            // Prevent symlink race: if the path exists and is a symlink, refuse
+            if staging.is_symlink() {
+                return Err(ContainerError::Config(format!(
+                    "staging path {} is a symlink — refusing to follow",
+                    staging.display()
+                )));
+            }
             std::fs::create_dir_all(&staging)
                 .map_err(|e| ContainerError::Config(format!("create staging dir: {e}")))?;
 
@@ -642,7 +649,11 @@ impl Sandbox {
             .clone()
             .or_else(|| self.work_dir.clone())
             .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("/"));
+            .ok_or_else(|| {
+                ContainerError::Config(
+                    "no project_dir, work_dir, or current directory available".to_owned(),
+                )
+            })?;
 
         // If project_dir was explicitly set, ensure it's mounted readwrite
         if let Some(ref pd) = self.project_dir

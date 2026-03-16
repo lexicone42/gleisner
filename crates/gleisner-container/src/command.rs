@@ -69,8 +69,12 @@ impl Command {
 
     /// Set a timeout for the command. If the process doesn't exit within
     /// this duration, it will be killed and an error returned.
+    ///
+    /// Minimum effective timeout is 100ms — shorter values are clamped.
+    /// `Duration::ZERO` is treated as 100ms (not "kill immediately").
     pub fn timeout(mut self, duration: Duration) -> Self {
-        self.timeout = Some(duration);
+        let min_timeout = Duration::from_millis(100);
+        self.timeout = Some(duration.max(min_timeout));
         self
     }
 

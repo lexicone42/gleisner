@@ -41,7 +41,19 @@ pub fn observe_from_audit_log(
     let mut contacted_domains = BTreeSet::new();
     let mut executed_tools = BTreeSet::new();
 
-    while let Ok(Some(event)) = reader.next_event() {
+    loop {
+        let event = match reader.next_event() {
+            Ok(Some(event)) => event,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(
+                    line = reader.line_number(),
+                    error = %e,
+                    "skipping malformed audit event"
+                );
+                continue;
+            }
+        };
         match event.event {
             EventKind::FileRead { ref path, .. } => {
                 // Normalize to parent directory (we track dir-level access)

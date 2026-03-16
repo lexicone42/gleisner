@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc dd16934f11de36215e3b10203a0ccb11c489ba88094b68cb4eda21df9f64e8e5 # shrinks to task = TaskSandbox { project_dir: "/workspace/proptest", read_paths: ["/a"], write_paths: [], domains: [], needs_internet: false, tools: [], env: [], needs_home: false, hostname: None, seccomp: None }
+cc 45035218b71b2b34968227b97be1c483f9cae14d5e55bced7dae44fbb4d5930c # shrinks to a = TaskSandbox { project_dir: "/workspace/proptest", read_paths: [], write_paths: [], domains: [], needs_internet: false, tools: [], env: [], needs_home: false, hostname: None, seccomp: None }, b = TaskSandbox { project_dir: "/workspace/proptest", read_paths: [], write_paths: [], domains: [], needs_internet: false, tools: ["git", "git"], env: [], needs_home: false, hostname: None, seccomp: None }

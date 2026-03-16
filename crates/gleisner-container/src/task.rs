@@ -800,6 +800,7 @@ impl TaskSandbox {
                     }
                     "pip" | "uv" | "uvx" => {
                         all_domains.insert("pypi.org".to_owned());
+                        all_domains.insert("files.pythonhosted.org".to_owned());
                     }
                     _ => {}
                 }
