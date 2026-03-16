@@ -289,31 +289,36 @@ The `gleisner-lacerta` crate includes a Z3-powered policy lattice module (behind
 
 ## Container Library
 
-`gleisner-container` provides three API tiers:
+`gleisner-container` provides four API layers:
 
 ```rust
-// Task API — for agents and automation (declare needs, get minimal sandbox)
-let sb = TaskSandbox::new("/workspace")
+// Task API — declare needs, sandbox derives itself
+let task = TaskSandbox::new("/workspace")
     .needs_tools(["claude", "git"])
-    .needs_network(["api.anthropic.com"])
-    .build()?;
+    .needs_network(["api.anthropic.com"]);
+println!("{}", task.explain());           // audit: why each permission
+println!("{}", task.system_prompt_fragment()); // for inner agent
+let sb = task.build()?;
 
-// One-liner for Claude Code
-let sb = claude_code_sandbox("/workspace")?;
+// Delegation API — Claude-to-Claude coordination
+let result = Delegation::to("/workspace")
+    .task("Fix the auth bug in src/auth.rs")
+    .context("JWT expiry check skipped on line 42")
+    .allow_tools(["cargo", "git"])
+    .forward_api_key()
+    .timeout(Duration::from_secs(300))
+    .build()?.execute()?;
 
-// Builder API — for explicit control
+// Builder API — explicit control
 let mut sb = Sandbox::new();
-sb.rootfs()
-    .bind_ro_all(["/usr", "/lib"])
-    .project_dir("/workspace")
-    .allow_domains(["api.anthropic.com"])
-    .seccomp(SeccompPreset::Nodejs);
+sb.rootfs().project_dir("/workspace")
+    .allow_domains(["api.anthropic.com"]);
 
 // Forge API — auto-configure from package metadata
 let sb = ForgeComposition::new(report, project_dir).sandbox()?;
 ```
 
-Key capabilities: `explain()` audits why each permission was granted, `narrow()` compares declared vs observed usage to suggest tighter configs, `merge()` combines multi-agent requirements.
+Key capabilities: `explain()` audits grants, `narrow()` tightens configs from observed usage, `merge()` combines multi-agent needs, `is_scoped_within()` proves delegation safety, `system_prompt_fragment()` generates boundary-aware prompts for inner agents.
 
 ## Documentation
 

@@ -529,6 +529,15 @@ Practical steps for users setting up Gleisner in a new environment.
       either task alone.
 - [ ] **Use Z3 `verify_against_policy()`** (with `lattice` feature) to
       formally prove a container config satisfies your security baseline.
+- [ ] **Use `is_scoped_within()`** before delegation to prove the inner
+      sandbox can't do anything the outer sandbox can't. Catches privilege
+      escalation in multi-agent setups.
+- [ ] **Use `Delegation` with `.forward_api_key()`** only when needed.
+      API key forwarding is opt-in — the inner process could exfiltrate it.
+- [ ] **Use `narrow_is_sufficient()`** to verify a tighter config still
+      covers observed behavior before deploying it.
+- [ ] **Validate tool names** — the task API rejects `/`, `\`, `;`, `'`,
+      backtick, and null characters in tool names to prevent injection.
 
 ### Verification
 
