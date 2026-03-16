@@ -2783,6 +2783,7 @@ dependencies = [
 name = "gleisner-container"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "gleisner-forge",
  "gleisner-introdus",
  "gleisner-lacerta",

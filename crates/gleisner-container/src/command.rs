@@ -121,6 +121,8 @@ impl Command {
         self.stdin = Stdio::Null;
         self.apply_stdio();
 
+        let start = std::time::Instant::now();
+
         if let Some(timeout) = self.timeout {
             let mut child = self.prepared.command.spawn()?;
             let status = wait_with_timeout(&mut child, timeout)?;
@@ -137,6 +139,7 @@ impl Command {
                 status,
                 stdout,
                 stderr,
+                elapsed: start.elapsed(),
             });
         }
 
@@ -145,6 +148,7 @@ impl Command {
             status: child_output.status,
             stdout: child_output.stdout,
             stderr: child_output.stderr,
+            elapsed: start.elapsed(),
         })
     }
 
@@ -180,6 +184,8 @@ pub struct Output {
     pub stdout: Vec<u8>,
     /// Captured stderr bytes.
     pub stderr: Vec<u8>,
+    /// Wall-clock duration of the process.
+    pub elapsed: Duration,
 }
 
 impl Output {
@@ -191,6 +197,23 @@ impl Output {
     /// Stderr as a UTF-8 string, trimmed.
     pub fn stderr_str(&self) -> String {
         String::from_utf8_lossy(&self.stderr).trim().to_string()
+    }
+
+    /// The exit code, or `None` if terminated by signal.
+    pub fn exit_code(&self) -> Option<i32> {
+        self.status.code()
+    }
+
+    /// The signal that terminated the process, if any (Unix only).
+    #[cfg(unix)]
+    pub fn signal(&self) -> Option<i32> {
+        std::os::unix::process::ExitStatusExt::signal(&self.status)
+    }
+
+    /// Whether the process was killed by a signal (e.g., OOM killer, SIGKILL).
+    #[cfg(unix)]
+    pub fn was_signaled(&self) -> bool {
+        self.signal().is_some()
     }
 }
 

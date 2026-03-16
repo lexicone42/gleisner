@@ -197,6 +197,8 @@ impl Sandbox {
     // ── Filesystem configuration ─────────────────────────────────
 
     /// Bind-mount a host path as read-only inside the container.
+    ///
+    /// The `host` path is bound to `container` path inside the sandbox.
     pub fn mount_readonly(
         &mut self,
         host: impl Into<PathBuf>,
@@ -219,6 +221,59 @@ impl Sandbox {
             host: host.into(),
             container: container.into(),
         });
+        self
+    }
+
+    /// Bind-mount a path read-only, using the same path inside the container.
+    ///
+    /// Shorthand for `.mount_readonly(path, path)` — the most common pattern.
+    pub fn bind_ro(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        let p: PathBuf = path.into();
+        self.mounts.push(Mount::ReadOnly {
+            host: p.clone(),
+            container: p,
+        });
+        self
+    }
+
+    /// Bind-mount a path read-write, using the same path inside the container.
+    ///
+    /// Shorthand for `.mount_readwrite(path, path)`.
+    pub fn bind_rw(&mut self, path: impl Into<PathBuf>) -> &mut Self {
+        let p: PathBuf = path.into();
+        self.mounts.push(Mount::ReadWrite {
+            host: p.clone(),
+            container: p,
+        });
+        self
+    }
+
+    /// Bind-mount multiple paths read-only (same path inside container).
+    ///
+    /// Convenience for mounting many directories at once:
+    /// ```no_run
+    /// # use gleisner_container::Sandbox;
+    /// let mut sb = Sandbox::empty();
+    /// sb.bind_ro_all(["/usr", "/lib", "/lib64", "/bin"]);
+    /// ```
+    pub fn bind_ro_all(
+        &mut self,
+        paths: impl IntoIterator<Item = impl Into<PathBuf>>,
+    ) -> &mut Self {
+        for path in paths {
+            self.bind_ro(path);
+        }
+        self
+    }
+
+    /// Bind-mount multiple paths read-write (same path inside container).
+    pub fn bind_rw_all(
+        &mut self,
+        paths: impl IntoIterator<Item = impl Into<PathBuf>>,
+    ) -> &mut Self {
+        for path in paths {
+            self.bind_rw(path);
+        }
         self
     }
 
@@ -275,6 +330,19 @@ impl Sandbox {
     /// Map a specific GID inside the user namespace.
     pub fn gid(&mut self, gid: u32) -> &mut Self {
         self.gid = gid;
+        self
+    }
+
+    /// Bind-mount the current user's home directory as read-only.
+    ///
+    /// Common pattern for tools that need `~/.config`, `~/.claude`, etc.
+    /// Resolves `$HOME` (with passwd fallback) and adds it as a read-only mount.
+    pub fn mount_home_readonly(&mut self) -> &mut Self {
+        if let Ok(home) = std::env::var("HOME") {
+            self.bind_ro(home);
+        } else if let Some(base) = directories::BaseDirs::new() {
+            self.bind_ro(base.home_dir());
+        }
         self
     }
 
@@ -402,6 +470,20 @@ impl Sandbox {
     /// Whether Landlock is enabled in this sandbox configuration.
     pub fn is_landlock_enabled(&self) -> bool {
         self.landlock_enabled
+    }
+
+    /// Clean up any staging directories created by file/dir/symlink injection.
+    ///
+    /// Called automatically on [`Drop`], but can be called explicitly if you
+    /// want to control cleanup timing.
+    pub fn cleanup(&self) {
+        if self.files.is_empty() && self.dirs.is_empty() && self.symlinks.is_empty() {
+            return;
+        }
+        let staging = std::env::temp_dir().join(format!(".gleisner-inject-{}", std::process::id()));
+        if staging.exists() {
+            std::fs::remove_dir_all(&staging).ok();
+        }
     }
 
     // ── Build and execute ────────────────────────────────────────
@@ -605,6 +687,12 @@ impl Sandbox {
             extra_env: self.env.clone(),
             hostname: self.hostname.clone(),
         })
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        self.cleanup();
     }
 }
 
@@ -1070,5 +1158,51 @@ mod tests {
             config.profile.process.seccomp.preset,
             gleisner_polis::profile::SeccompPreset::Nodejs
         );
+    }
+
+    #[test]
+    fn bind_ro_shorthand() {
+        let mut sb = Sandbox::new();
+        sb.bind_ro("/usr");
+
+        assert!(matches!(&sb.mounts[0], Mount::ReadOnly { host, container }
+            if host == Path::new("/usr") && container == Path::new("/usr")));
+    }
+
+    #[test]
+    fn bind_ro_all_batch() {
+        let mut sb = Sandbox::new();
+        sb.bind_ro_all(["/usr", "/lib", "/bin"]);
+        assert_eq!(sb.mounts.len(), 3);
+    }
+
+    #[test]
+    fn mount_home_readonly_adds_home() {
+        let mut sb = Sandbox::new();
+        sb.mount_home_readonly();
+
+        // Should have at least one mount (if $HOME is set)
+        if std::env::var("HOME").is_ok() {
+            assert!(
+                !sb.mounts.is_empty(),
+                "mount_home_readonly should add home dir"
+            );
+        }
+    }
+
+    #[test]
+    fn cleanup_removes_staging() {
+        let mut sb = Sandbox::new();
+        sb.file("/test/config", "content");
+
+        // Create the staging dir by calling to_session_config
+        let _ = sb.to_session_config(&["true".to_owned()]);
+
+        let staging = std::env::temp_dir().join(format!(".gleisner-inject-{}", std::process::id()));
+        // Staging might exist from to_session_config
+        if staging.exists() {
+            sb.cleanup();
+            assert!(!staging.exists(), "cleanup should remove staging dir");
+        }
     }
 }

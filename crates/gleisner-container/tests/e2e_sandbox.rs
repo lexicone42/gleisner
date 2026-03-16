@@ -183,6 +183,110 @@ fn file_injection_visible_inside_container() {
     );
 }
 
+// ── Ergonomics tests ────────────────────────────────────────────
+
+#[test]
+fn bind_ro_shorthand_e2e() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let mut sb = Sandbox::new();
+    sb.bind_ro_all(["/usr", "/lib", "/lib64", "/bin", "/sbin"])
+        .tmpfs("/tmp")
+        .namespace(Namespace::Pid)
+        .landlock(false);
+
+    let result = sb.command_with_args("/bin/echo", &["bind_ro works"]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let output = result.unwrap().output().expect("run");
+    assert!(output.stdout_str().contains("bind_ro works"));
+    assert!(output.elapsed.as_millis() < 5000, "should finish quickly");
+}
+
+#[test]
+fn timeout_kills_long_process() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let mut sb = Sandbox::new();
+    sb.rootfs().namespace(Namespace::Pid).landlock(false);
+
+    let result = sb.command_with_args("/bin/sleep", &["60"]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let cmd = result.unwrap().timeout(std::time::Duration::from_secs(1));
+    let err = cmd.output();
+
+    match err {
+        Err(gleisner_container::ContainerError::Timeout(d)) => {
+            assert!(d.as_secs() <= 2, "timeout should be ~1s, got {d:?}");
+        }
+        Ok(output) => {
+            // Process may have exited with signal
+            assert!(!output.status.success(), "should not succeed");
+        }
+        Err(e) => panic!("expected Timeout error, got: {e}"),
+    }
+}
+
+#[test]
+fn output_has_elapsed_time() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let mut sb = Sandbox::new();
+    sb.rootfs().namespace(Namespace::Pid).landlock(false);
+
+    let result = sb.command_with_args("/bin/true", &[] as &[&str]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let output = result.unwrap().output().expect("run");
+    assert!(output.elapsed.as_millis() < 5000);
+    assert!(output.status.success());
+}
+
+#[test]
+fn stdio_piped_captures_output() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let mut sb = Sandbox::new();
+    sb.rootfs().namespace(Namespace::Pid).landlock(false);
+
+    let result = sb.command_with_args("/bin/sh", &["-c", "echo stdout_msg; echo stderr_msg >&2"]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    // output() defaults to piped for both — should capture both streams
+    let output = result.unwrap().output().expect("run");
+    assert!(
+        output.stdout_str().contains("stdout_msg"),
+        "should capture stdout: {}",
+        output.stdout_str()
+    );
+    assert!(
+        output.stderr_str().contains("stderr_msg"),
+        "should capture stderr: {}",
+        output.stderr_str()
+    );
+}
+
 // ── Gleisner-in-gleisner test ───────────────────────────────────
 
 #[test]
