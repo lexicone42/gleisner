@@ -224,16 +224,32 @@ fn add_bind_path(fs: &mut ForgeFilesystemPolicy, path: &PathBuf, read_only: bool
     }
 }
 
+/// Resolve the user's home directory, falling back to passwd lookup when
+/// `$HOME` is not set (e.g. inside sandboxes that scrub the environment).
+fn resolve_home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .or_else(|| directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf()))
+}
+
 /// Expand `~` prefix to the user's home directory.
+///
+/// Uses [`resolve_home_dir`] so it works even when `$HOME` is unset.
+/// Logs a warning and returns the path unchanged if resolution fails.
 fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/")
-        && let Ok(home) = std::env::var("HOME")
-    {
-        return PathBuf::from(home).join(rest);
-    } else if path == "~"
-        && let Ok(home) = std::env::var("HOME")
-    {
-        return PathBuf::from(home);
+    if path.starts_with('~') {
+        let Some(home) = resolve_home_dir() else {
+            tracing::warn!(
+                path,
+                "$HOME is not set and passwd lookup failed — tilde path will not be expanded"
+            );
+            return PathBuf::from(path);
+        };
+        if let Some(rest) = path.strip_prefix("~/") {
+            return home.join(rest);
+        } else if path == "~" {
+            return home;
+        }
     }
     PathBuf::from(path)
 }

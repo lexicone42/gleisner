@@ -246,24 +246,32 @@ mod linux_impl {
             }
         }
 
-        let child_pid = child.id().unwrap_or(0);
+        let child_pid = child.id();
+
+        if child_pid.is_none() {
+            tracing::warn!("child process has no PID — skipping cgroup and process monitor setup");
+        }
 
         // ── 6. Optionally create cgroup scope ────────────────────────────
-        let cgroup_scope = if !args.no_cgroups && child_pid > 0 {
-            match gleisner_polis::CgroupScope::create(&profile.resources) {
-                Ok(scope) => {
-                    if let Err(e) = scope.add_pid(child_pid) {
-                        tracing::warn!(error = %e, "failed to add child to cgroup — rlimits will still apply");
+        let cgroup_scope = if let Some(pid) = child_pid {
+            if !args.no_cgroups {
+                match gleisner_polis::CgroupScope::create(&profile.resources) {
+                    Ok(scope) => {
+                        if let Err(e) = scope.add_pid(pid) {
+                            tracing::warn!(error = %e, "failed to add child to cgroup — rlimits will still apply");
+                            None
+                        } else {
+                            tracing::info!(pid, "applied cgroup resource limits");
+                            Some(scope)
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "failed to create cgroup — rlimits will still apply");
                         None
-                    } else {
-                        tracing::info!(pid = child_pid, "applied cgroup resource limits");
-                        Some(scope)
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "failed to create cgroup — rlimits will still apply");
-                    None
-                }
+            } else {
+                None
             }
         } else {
             None
@@ -310,9 +318,11 @@ mod linux_impl {
             monitor_handles.push(handle);
         }
 
-        if !args.no_proc_monitor && child_pid > 0 {
+        if let Some(pid) = child_pid
+            && !args.no_proc_monitor
+        {
             let proc_config = gleisner_polis::ProcMonitorConfig {
-                root_pid: child_pid,
+                root_pid: pid,
                 poll_interval: gleisner_polis::ProcMonitorConfig::DEFAULT_POLL_INTERVAL,
             };
             let proc_publisher = publisher.clone();

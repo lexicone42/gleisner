@@ -156,6 +156,20 @@ impl Sandbox {
         self
     }
 
+    /// Restrict network to specific domains with DNS enabled.
+    ///
+    /// Shorthand for `.network(NetworkMode::Isolated { allow_domains, allow_dns: true })`.
+    pub fn allow_domains(
+        &mut self,
+        domains: impl IntoIterator<Item = impl Into<String>>,
+    ) -> &mut Self {
+        self.network = NetworkMode::Isolated {
+            allow_domains: domains.into_iter().map(Into::into).collect(),
+            allow_dns: true,
+        };
+        self
+    }
+
     // ── Security policies ────────────────────────────────────────
 
     /// Set the seccomp-BPF filtering preset.
@@ -388,6 +402,25 @@ mod tests {
             stdout.contains("gleisner-sandbox") || output.status.success(),
             "expected hostname in output or success, got: {stdout}"
         );
+    }
+
+    #[test]
+    fn allow_domains_convenience() {
+        let mut sb = Sandbox::new();
+        sb.allow_domains(["api.anthropic.com", "registry.npmjs.org"]);
+
+        match &sb.network {
+            NetworkMode::Isolated {
+                allow_domains,
+                allow_dns,
+            } => {
+                assert_eq!(allow_domains.len(), 2);
+                assert_eq!(allow_domains[0], "api.anthropic.com");
+                assert_eq!(allow_domains[1], "registry.npmjs.org");
+                assert!(*allow_dns);
+            }
+            other => panic!("expected Isolated, got: {other:?}"),
+        }
     }
 
     #[test]

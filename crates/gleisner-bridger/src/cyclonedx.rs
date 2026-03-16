@@ -1,6 +1,6 @@
-//! `CycloneDX` 1.5 output format.
+//! `CycloneDX` 1.6 output format.
 //!
-//! Generates SBOM documents conforming to the `CycloneDX` 1.5 specification
+//! Generates SBOM documents conforming to the `CycloneDX` 1.6 specification
 //! in JSON format. Covers the subset needed for Cargo dependency reporting:
 //! components with Package URLs and SHA-256 hashes.
 

@@ -322,7 +322,11 @@ pub fn eval_file(file: &Path, ctx: &EvalContext) -> Result<serde_json::Value, Fo
 /// versions: each entry that has a `name` field is replaced with a
 /// `{ name, ty, _stub = true }` stub. Non-package entries (Source,
 /// Local, etc.) are kept as-is.
-pub fn flatten_for_injection(value: &serde_json::Value) -> serde_json::Value {
+///
+/// Superseded by [`project_for_injection`] in the hot path; retained for
+/// property-based test coverage of the flattening logic.
+#[cfg(test)]
+fn flatten_for_injection(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {
             let mut out = serde_json::Map::new();

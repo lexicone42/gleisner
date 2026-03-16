@@ -386,7 +386,11 @@ async fn run_query(
     // ── Start attestation monitors (needs child PID) ────────────
     #[cfg(target_os = "linux")]
     if let Some(ref mut state) = attest_state {
-        start_attestation_monitors(state, child.id().unwrap_or(0));
+        if let Some(pid) = child.id() {
+            start_attestation_monitors(state, pid);
+        } else {
+            warn!("child process has no PID — skipping attestation monitor startup");
+        }
     }
 
     let stdout = child

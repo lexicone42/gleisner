@@ -6,7 +6,7 @@
 //! assembly into an in-toto statement.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
@@ -171,7 +171,7 @@ fn classify_event(
 }
 
 /// Hash a file with SHA-256 and return the hex digest.
-pub fn hash_file(path: &PathBuf) -> Option<String> {
+pub fn hash_file(path: &Path) -> Option<String> {
     let content = std::fs::read(path).ok()?;
     let hash = Sha256::digest(&content);
     Some(hex::encode(hash))

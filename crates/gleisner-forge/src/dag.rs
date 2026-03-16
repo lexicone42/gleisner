@@ -126,6 +126,22 @@ impl PackageGraph {
     /// Self-edges (a package importing itself, common with `replace_on_cycle`)
     /// are always removed. If cycles remain, edges *into* packages with
     /// `has_cycle_fallback` are removed until the graph is acyclic.
+    ///
+    /// ## Cycle-breaking semantics
+    ///
+    /// Only packages with `has_cycle_fallback` act as circuit breakers. A package
+    /// has this flag when it declares both `replace_on_cycle` and a `prebuilt`
+    /// fallback in its Nickel definition.
+    ///
+    /// For a cycle A -> B -> C -> A, if only A has a fallback, all of A's
+    /// *incoming* edges are removed (here: C -> A), which breaks the cycle.
+    /// The other packages in the cycle (B, C) are then free to be sorted
+    /// normally because the cycle no longer exists.
+    ///
+    /// If a cycle has *no* packages with fallbacks, or if removing fallback
+    /// edges is insufficient to break all cycles (e.g., B -> C -> B where
+    /// neither has a fallback), the final `toposort` will fail with
+    /// [`ForgeError::NotADag`].
     pub fn topological_order(&self) -> Result<Vec<&PackageNode>, ForgeError> {
         // Clone the graph so we can mutate edges for cycle-breaking
         let mut work = self.graph.clone();
@@ -139,9 +155,11 @@ impl PackageGraph {
             work.remove_edge(e);
         }
 
-        // Try toposort; if it fails, break cycles at packages with fallbacks
+        // Try toposort; if it fails, break cycles at fallback-enabled packages.
+        // Only packages with has_cycle_fallback (i.e., replace_on_cycle + prebuilt)
+        // can serve as circuit breakers. Their incoming edges are severed so that
+        // dependents use the prebuilt fallback instead of the freshly-built output.
         if toposort(&work, None).is_err() {
-            // Remove incoming edges to packages with cycle fallbacks
             let fallback_nodes: Vec<NodeIndex> = work
                 .node_indices()
                 .filter(|&idx| work[idx].has_cycle_fallback)
@@ -159,6 +177,8 @@ impl PackageGraph {
             }
         }
 
+        // If cycles remain after removing fallback edges, the graph is not a DAG.
+        // This happens when a sub-cycle has no fallback-enabled packages.
         let sorted = toposort(&work, None).map_err(|_| ForgeError::NotADag)?;
         Ok(sorted.iter().map(|idx| &self.graph[*idx]).collect())
     }

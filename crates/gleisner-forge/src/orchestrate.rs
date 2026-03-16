@@ -139,9 +139,12 @@ pub fn evaluate_packages(config: &ForgeConfig) -> Result<ForgeOutput, ForgeError
                 tracing::warn!(
                     package = %node.name,
                     error = %e,
-                    "package evaluation failed"
+                    "package evaluation failed; injecting error stub for dependents"
                 );
-                // Insert error stub so dependents can still evaluate
+                // Insert an error stub so that dependent packages can still be
+                // evaluated (they receive this object as their dependency input).
+                // Dependents should check for `_error: true` and handle gracefully
+                // — e.g., skip optional integration or propagate the failure.
                 json_cache.insert(
                     node.name.clone(),
                     serde_json::json!({"name": node.name, "_error": true}),

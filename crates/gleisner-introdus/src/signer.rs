@@ -277,9 +277,16 @@ impl SigstoreSigner {
             .to_owned();
         let rekor_log_id = bundle_value
             .pointer("/verificationMaterial/tlogEntries/0/logIndex")
-            .and_then(|v| v.as_str().or_else(|| v.as_i64().map(|_| "")))
-            .unwrap_or("")
-            .to_owned();
+            .map(|v| {
+                if let Some(s) = v.as_str() {
+                    s.to_owned()
+                } else if let Some(n) = v.as_i64() {
+                    n.to_string()
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default();
 
         // Decode the base64 certificate to PEM for our format
         let cert_pem = if !certificate_chain.is_empty() {

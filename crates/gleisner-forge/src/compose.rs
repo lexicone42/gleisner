@@ -213,8 +213,13 @@ impl ComposedEnvironment {
         if let Some(existing) = self.state_wirings.iter().find(|w| w.env_var == new.env_var) {
             if existing.prefix != new.prefix {
                 self.warnings.push(format!(
-                    "state wiring conflict for ${}: {} wants prefix '{}', {} wants '{}' — keeping first",
-                    new.env_var, existing.package, existing.prefix, package, new.prefix,
+                    "state wiring conflict for ${env}: keeping prefix '{kept}' (from {keeper}) \
+                     over '{dropped}' (from {dropper})",
+                    env = new.env_var,
+                    kept = existing.prefix,
+                    keeper = existing.package,
+                    dropped = new.prefix,
+                    dropper = package,
                 ));
             }
             // Same env_var already wired — skip duplicate
