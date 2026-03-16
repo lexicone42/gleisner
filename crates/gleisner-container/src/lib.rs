@@ -36,6 +36,7 @@
 
 mod builder;
 mod command;
+pub mod delegate;
 mod error;
 pub mod task;
 mod types;

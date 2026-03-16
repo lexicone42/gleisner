@@ -184,6 +184,96 @@ fn claude_code_sandbox_full_pipeline() {
     );
 }
 
+/// Test delegation protocol with a simple command
+#[test]
+fn delegation_execute_echo() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let prepared = gleisner_container::delegate::Delegation::to(
+        "/datar/workspace/claude_code_experiments/gleisner",
+    )
+    .task("Say hello")
+    .context("This is a test delegation")
+    .allow_tools(["sh"])
+    .claude_bin("echo") // Use echo as a stand-in for Claude
+    .timeout(Duration::from_secs(10))
+    .build()
+    .expect("build delegation");
+
+    eprintln!("\n=== DELEGATION PROMPT ===\n{}", prepared.system_prompt());
+    eprintln!(
+        "=== DELEGATION CAPABILITIES ({} grants) ===",
+        prepared.capabilities().grants.len()
+    );
+
+    let result = prepared.execute().expect("execute delegation");
+
+    eprintln!("=== DELEGATION RESULT ===");
+    eprintln!("success: {}", result.success());
+    eprintln!("response: {}", result.response());
+    eprintln!("elapsed: {:?}", result.output.elapsed);
+
+    assert!(result.success());
+    // echo receives "--print" "Say hello" as args
+    assert!(
+        result.response().contains("Say hello"),
+        "should echo the task: {}",
+        result.response()
+    );
+}
+
+/// Test delegation to real Claude (if available)
+#[test]
+fn delegation_to_claude() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+    if which::which("claude").is_err() {
+        eprintln!("skipping: claude not on PATH");
+        return;
+    }
+
+    let prepared = gleisner_container::delegate::Delegation::to(
+        "/datar/workspace/claude_code_experiments/gleisner",
+    )
+    .task("What is 2+2? Reply with just the number.")
+    .allow_network(["api.anthropic.com"])
+    .timeout(Duration::from_secs(60))
+    .build()
+    .expect("build delegation");
+
+    eprintln!("\n=== CLAUDE DELEGATION ===");
+    eprintln!("prompt: {}", prepared.system_prompt());
+
+    let result = prepared.execute().expect("execute delegation");
+
+    eprintln!("response: {}", result.response());
+    eprintln!("elapsed: {:?}", result.output.elapsed);
+    eprintln!(
+        "context_file: {:?}",
+        result
+            .context_file
+            .as_ref()
+            .map(|p| p.display().to_string())
+    );
+
+    // Claude should respond with "4" somewhere
+    if result.success() {
+        assert!(
+            result.response().contains('4'),
+            "Claude should answer 2+2=4: {}",
+            result.response()
+        );
+    } else {
+        eprintln!(
+            "Claude delegation failed (API key may not be available): {:?}",
+            result.output.exit_code()
+        );
+    }
+}
+
 /// Test that merge + explain works for multi-agent scenario
 #[test]
 fn multi_agent_merge_and_explain() {
