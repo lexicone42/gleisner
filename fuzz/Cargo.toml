@@ -21,6 +21,9 @@ path = "../crates/gleisner-scapes"
 [dependencies.gleisner-polis]
 path = "../crates/gleisner-polis"
 
+[dependencies.gleisner-container]
+path = "../crates/gleisner-container"
+
 # ── Fuzz targets ───────────────────────────────────────────
 
 [[bin]]
@@ -47,6 +50,20 @@ bench = false
 [[bin]]
 name = "fuzz_expand_tilde"
 path = "fuzz_targets/fuzz_expand_tilde.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_task_sandbox"
+path = "fuzz_targets/fuzz_task_sandbox.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_system_prompt"
+path = "fuzz_targets/fuzz_system_prompt.rs"
 test = false
 doc = false
 bench = false
