@@ -512,6 +512,24 @@ Practical steps for users setting up Gleisner in a new environment.
 - [ ] **Set resource limits** (`max_memory_mb`, `max_pids`, `max_cpu_percent`)
       to prevent resource exhaustion.
 
+### Container Library (`gleisner-container`)
+
+- [ ] **Prefer `TaskSandbox` over `Sandbox`** for agent-driven workflows.
+      The task API enforces least privilege by default — Landlock is always
+      enabled, and capabilities must be explicitly declared.
+- [ ] **Use `explain()` before launching** to audit what permissions a task
+      sandbox will grant and why. Log the output for audit trails.
+- [ ] **Use `narrow()` after runs** to identify over-declared capabilities.
+      The narrowing report suggests a tighter config based on observed usage.
+- [ ] **Use `claude_code_sandbox()`** for sandboxing Claude Code instances.
+      It grants exactly: project rw, home ro, `api.anthropic.com`, Nodejs
+      seccomp, Landlock enforced.
+- [ ] **Review `merge()` results carefully.** Merging two tasks produces the
+      union of their permissions — this is always less restrictive than
+      either task alone.
+- [ ] **Use Z3 `verify_against_policy()`** (with `lattice` feature) to
+      formally prove a container config satisfies your security baseline.
+
 ### Verification
 
 - [ ] **Verify attestations before trusting session output.**

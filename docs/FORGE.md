@@ -326,3 +326,35 @@ let report = compose_to_policy(&output.environment);
 // report.network -- DNS/internet policy
 // report.credential_paths -- paths excluded from mounts
 ```
+
+### Container Integration
+
+With the `forge` feature on `gleisner-container`, sandboxes auto-configure from forge output:
+
+```rust
+use gleisner_container::ForgeComposition;
+
+let composition = ForgeComposition::new(report, project_dir);
+let sandbox = composition.sandbox()?;  // fully configured from package metadata
+
+// Harness detection adds build tools + env vars automatically
+let harness = detect_harness(&harness_specs, project_dir);
+composition.apply_harness(&mut sandbox, &resolved_harness);
+
+let output = sandbox.command("claude").run()?;
+```
+
+The task API also integrates with forge for agent-driven workflows:
+
+```rust
+use gleisner_container::task::TaskSandbox;
+
+let sb = TaskSandbox::new(project_dir)
+    .needs_tools(["cargo", "git"])
+    .needs_network(["crates.io"])
+    .build()?;
+
+// After the run, narrow the config based on what was actually used
+let report = task.narrow(&observed_capabilities);
+eprintln!("{}", report.summary);  // "Unused capabilities: tools [git]"
+```

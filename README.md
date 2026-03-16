@@ -285,7 +285,35 @@ The `gleisner-lacerta` crate includes a Z3-powered policy lattice module (behind
 | `gleisner-bridger` | SBOM: Cargo.lock parsing, CycloneDX 1.6 JSON |
 | `gleisner-scapes` | Events: tokio broadcast bus, JSONL audit writer, session recorder |
 | `gleisner-sandbox-init` | Container runtime: creates namespaces, bind mounts, pivot_root, applies Landlock, execs inner command |
-| `gleisner-container` | Library: builder-pattern sandbox API, auto-configures from forge compositions and harness detection |
+| `gleisner-container` | Library: task-oriented + builder sandbox API with `rootfs()`, timeouts, Stdio control, capability auditing, runtime narrowing, and `claude_code_sandbox()` one-liner |
+
+## Container Library
+
+`gleisner-container` provides three API tiers:
+
+```rust
+// Task API — for agents and automation (declare needs, get minimal sandbox)
+let sb = TaskSandbox::new("/workspace")
+    .needs_tools(["claude", "git"])
+    .needs_network(["api.anthropic.com"])
+    .build()?;
+
+// One-liner for Claude Code
+let sb = claude_code_sandbox("/workspace")?;
+
+// Builder API — for explicit control
+let mut sb = Sandbox::new();
+sb.rootfs()
+    .bind_ro_all(["/usr", "/lib"])
+    .project_dir("/workspace")
+    .allow_domains(["api.anthropic.com"])
+    .seccomp(SeccompPreset::Nodejs);
+
+// Forge API — auto-configure from package metadata
+let sb = ForgeComposition::new(report, project_dir).sandbox()?;
+```
+
+Key capabilities: `explain()` audits why each permission was granted, `narrow()` compares declared vs observed usage to suggest tighter configs, `merge()` combines multi-agent requirements.
 
 ## Documentation
 
