@@ -10,7 +10,7 @@
 use gleisner_forge::orchestrate::{ForgeConfig, evaluate_packages};
 use gleisner_lacerta::composition_analysis::{
     CompositionInput, PackageCapabilities, analyze, find_minimum_zero_excess_groups,
-    find_optimal_partition,
+    find_optimal_partition, find_optimal_partition_with_timeout,
 };
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -139,16 +139,11 @@ fn z3_composition_analysis_276_packages() {
         "should have multiple capability classes"
     );
 
-    // Z3 optimal partitioning
-    // NOTE: K>1 with 275 packages requires --release (ILP solver is ~100x slower in debug)
-    eprintln!("\n--- Z3 Optimal Partitioning ---");
-    let max_k = if cfg!(debug_assertions) { 1 } else { 5 };
+    // Z3 optimal partitioning (120s timeout per K value)
+    eprintln!("\n--- Z3 Optimal Partitioning (120s timeout per K) ---");
     for k in [1, 2, 3, 5] {
-        if k > max_k {
-            eprintln!("  K={k}: skipped (use --release for K>{max_k})");
-            continue;
-        }
-        if let Some(result) = find_optimal_partition(&input, k) {
+        let timeout = std::time::Duration::from_secs(120);
+        if let Some(result) = find_optimal_partition_with_timeout(&input, k, timeout) {
             eprintln!(
                 "  K={}: {} groups, {} excess, zero_excess={}",
                 k, result.group_count, result.total_excess, result.zero_excess
@@ -170,11 +165,7 @@ fn z3_composition_analysis_276_packages() {
         }
     }
 
-    // Minimum zero-excess partition (expensive — skip in debug builds)
-    if cfg!(debug_assertions) {
-        eprintln!("\n--- Minimum Zero-Excess Partition: skipped (use --release) ---");
-        return;
-    }
+    // Minimum zero-excess partition (K = |classes|, always fast)
     eprintln!("\n--- Minimum Zero-Excess Partition ---");
     let min_result = find_minimum_zero_excess_groups(&input);
     eprintln!(

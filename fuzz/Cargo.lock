@@ -992,10 +992,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
 
 [[package]]
+name = "gleisner-container"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "gleisner-polis",
+ "nix",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "gleisner-forge"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "directories",
  "hex",
  "indexmap",
  "nickel-lang-core",
@@ -1015,6 +1029,7 @@ name = "gleisner-fuzz"
 version = "0.0.0"
 dependencies = [
  "arbitrary",
+ "gleisner-container",
  "gleisner-forge",
  "gleisner-polis",
  "gleisner-scapes",
