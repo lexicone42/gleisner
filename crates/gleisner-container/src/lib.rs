@@ -50,4 +50,4 @@ pub use error::ContainerError;
 pub use types::{LandlockAccess, Mount, Namespace, NetworkMode, SeccompPreset};
 
 #[cfg(feature = "forge")]
-pub use forge::ForgeComposition;
+pub use forge::{ForgeComposition, detect_harness, resolve_harness};

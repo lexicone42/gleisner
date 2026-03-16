@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use gleisner_forge::bridge::BridgeReport;
+use gleisner_forge::harness::{self, HarnessMatch, HarnessSpec};
 
 use crate::builder::Sandbox;
 use crate::error::ContainerError;
@@ -113,5 +114,43 @@ impl ForgeComposition {
     /// The project directory.
     pub fn project_dir(&self) -> &Path {
         &self.project_dir
+    }
+
+    /// Apply a harness match to the sandbox configuration.
+    ///
+    /// Harnesses provide build-time environment variables (e.g. `CC=gcc`,
+    /// `CARGO_HOME`) that packages need. This method expands template
+    /// variables in the harness env vars using the state wirings from the
+    /// forge composition.
+    pub fn apply_harness(&self, sandbox: &mut Sandbox, harness_match: &HarnessMatch) {
+        for (key, value) in &harness_match.env_vars {
+            sandbox.env(key, value);
+        }
+    }
+}
+
+/// Detect the project type and match a harness from a loaded harness set.
+///
+/// Returns `None` if no harness matches the project directory.
+pub fn detect_harness<'a>(
+    harnesses: &'a [HarnessSpec],
+    project_dir: &Path,
+) -> Option<&'a HarnessSpec> {
+    harness::match_harness(harnesses, project_dir)
+}
+
+/// Create a [`HarnessMatch`] with expanded environment variables.
+///
+/// Resolves `{prefix-cache-home}` template variables using state wirings
+/// from the forge composition.
+pub fn resolve_harness(
+    harness: &HarnessSpec,
+    state_wirings: &[gleisner_forge::compose::StateWiring],
+    state_root: &Path,
+) -> HarnessMatch {
+    let env_vars = harness::expand_env_vars(harness, state_wirings, state_root);
+    HarnessMatch {
+        harness: harness.clone(),
+        env_vars,
     }
 }
