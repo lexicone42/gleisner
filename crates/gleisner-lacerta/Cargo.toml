@@ -30,6 +30,7 @@ z3 = { workspace = true, optional = true }
 [dev-dependencies]
 tempfile.workspace = true
 proptest.workspace = true
+gleisner-forge.workspace = true
 
 [[example]]
 name = "analyze_composition"

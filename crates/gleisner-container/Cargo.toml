@@ -10,11 +10,13 @@ repository.workspace = true
 [features]
 forge = ["gleisner-forge"]
 attestation = ["gleisner-introdus"]
+lattice = ["gleisner-lacerta/lattice"]
 
 [dependencies]
 gleisner-polis.workspace = true
 gleisner-forge = { workspace = true, optional = true }
 gleisner-introdus = { workspace = true, optional = true }
+gleisner-lacerta = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -42,6 +42,9 @@ mod types;
 #[cfg(feature = "forge")]
 mod forge;
 
+#[cfg(feature = "lattice")]
+pub mod verify;
+
 pub use builder::Sandbox;
 pub use command::{Child, Command, Output};
 pub use error::ContainerError;

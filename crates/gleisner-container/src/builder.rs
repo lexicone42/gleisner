@@ -335,6 +335,13 @@ impl Sandbox {
         self
     }
 
+    // ── Introspection ─────────────────────────────────────────────
+
+    /// Whether Landlock is enabled in this sandbox configuration.
+    pub fn is_landlock_enabled(&self) -> bool {
+        self.landlock_enabled
+    }
+
     // ── Build and execute ────────────────────────────────────────
 
     /// Create a [`Command`] that will execute the given program inside this
