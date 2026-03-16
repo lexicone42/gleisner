@@ -151,7 +151,7 @@ impl TaskSandbox {
     /// - Network: only declared domains (or full internet if declared)
     /// - Seccomp: auto-detected from tool list
     /// - Namespaces: PID + Time always enabled for isolation
-    pub fn build(self) -> Result<Sandbox, ContainerError> {
+    pub fn build(&self) -> Result<Sandbox, ContainerError> {
         let mut sb = Sandbox::new();
 
         // Always: rootfs for basic Linux functionality
@@ -230,7 +230,7 @@ impl TaskSandbox {
 
         // ── Seccomp ─────────────────────────────────────────────
 
-        let seccomp = self.seccomp.unwrap_or(if uses_nodejs {
+        let seccomp = self.seccomp.clone().unwrap_or(if uses_nodejs {
             SeccompPreset::Nodejs
         } else {
             SeccompPreset::Disabled

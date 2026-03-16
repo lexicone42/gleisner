@@ -120,13 +120,8 @@ fn full_lifecycle_cargo_build_task() {
     observed.executed_tools.insert("hostname".to_owned());
     // No network used, no extra reads/writes
 
-    // ── 7. NARROW ───────────────────────────────────────────────
-    // Re-create the task for narrowing (build() consumed it)
-    let task_for_narrow = TaskSandbox::new("/datar/workspace/claude_code_experiments/gleisner")
-        .needs_tools(["sh", "echo", "hostname"])
-        .hostname("lifecycle-test");
-
-    let report = task_for_narrow.narrow(&observed);
+    // ── 7. NARROW (reuses the original task — build() takes &self) ─
+    let report = task.narrow(&observed);
     eprintln!("\n=== NARROW ===");
     eprintln!("{}", report.summary);
 
