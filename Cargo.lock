@@ -2792,6 +2792,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
+ "which 7.0.3",
 ]
 
 [[package]]

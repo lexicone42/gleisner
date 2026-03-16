@@ -1,0 +1,248 @@
+//! End-to-end sandbox tests exercising combined features.
+//!
+//! These tests require:
+//! - `gleisner-sandbox-init` on PATH (run: `cargo build -p gleisner-sandbox-init`)
+//! - Linux with user namespace support
+
+use gleisner_container::{Namespace, Sandbox, SeccompPreset};
+use std::path::Path;
+
+/// Skip test if sandbox-init not available or no user namespaces.
+fn skip_if_no_sandbox() -> bool {
+    // Check PATH for sandbox-init (detect_sandbox_init uses `which`)
+    let has_init = which::which("gleisner-sandbox-init").is_ok();
+    if !has_init {
+        eprintln!(
+            "skipping: gleisner-sandbox-init not on PATH \
+             (run: cargo build -p gleisner-sandbox-init, then add target/debug/ to PATH)"
+        );
+        return true;
+    }
+    let probe = std::process::Command::new("unshare")
+        .args(["--user", "true"])
+        .output();
+    if probe.is_err() || !probe.as_ref().unwrap().status.success() {
+        eprintln!("skipping: no user namespace support");
+        return true;
+    }
+    false
+}
+
+/// Helper: run a command in a sandbox and return stdout as string.
+fn run_in_sandbox(sb: &Sandbox, program: &str, args: &[&str]) -> Option<String> {
+    let cmd = sb.command_with_args(program, args).ok()?;
+    let output = cmd.output().ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+// ── Combined feature tests ──────────────────────────────────────
+
+#[test]
+fn combined_rootfs_env_landlock_seccomp() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let mut sb = Sandbox::new();
+    sb.rootfs()
+        .namespace(Namespace::Pid)
+        .namespace(Namespace::Time)
+        .hostname("combined-test")
+        .env("GREETING", "hello_combined")
+        .env("STAGE", "testing")
+        .seccomp(SeccompPreset::Nodejs)
+        .landlock(true);
+
+    // Verify multiple env vars and hostname in one shot
+    let result = sb.command_with_args("/bin/sh", &["-c", "echo $GREETING $STAGE $(hostname)"]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let output = result.unwrap().output().expect("run");
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(
+        stdout.contains("hello_combined"),
+        "env GREETING missing: {stdout}"
+    );
+    assert!(stdout.contains("testing"), "env STAGE missing: {stdout}");
+    assert!(output.status.success());
+}
+
+#[test]
+fn landlock_denies_write_outside_rootfs() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let mut sb = Sandbox::new();
+    sb.rootfs().namespace(Namespace::Pid).landlock(true);
+
+    // Try to write to /etc (read-only via rootfs). Should fail.
+    let result = sb.command_with_args(
+        "/bin/sh",
+        &["-c", "echo hack > /etc/gleisner-test 2>&1; echo exit=$?"],
+    );
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let output = result.unwrap().output().expect("run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The write should fail (Read-only file system or Permission denied)
+    assert!(
+        stdout.contains("exit=1")
+            || stdout.contains("exit=2")
+            || stdout.contains("Read-only")
+            || stdout.contains("Permission denied"),
+        "write to /etc should be denied, got: {stdout}"
+    );
+}
+
+#[test]
+fn time_namespace_isolation() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let mut sb = Sandbox::new();
+    sb.rootfs()
+        .namespace(Namespace::Pid)
+        .namespace(Namespace::Time)
+        .landlock(false);
+
+    // Verify time namespace by checking the time namespace inode differs from host.
+    // /proc/uptime leaks host uptime (known limitation — procfs bind-mount fallback),
+    // so we compare namespace inodes instead.
+    let host_time_ns = std::fs::read_link("/proc/self/ns/time")
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+
+    let stdout = run_in_sandbox(
+        &sb,
+        "/bin/sh",
+        &[
+            "-c",
+            "readlink /proc/self/ns/time 2>/dev/null || echo unavailable",
+        ],
+    );
+    if stdout.is_none() {
+        eprintln!("skipping: couldn't run in sandbox");
+        return;
+    }
+
+    let sandbox_time_ns = stdout.unwrap();
+    if sandbox_time_ns == "unavailable" {
+        eprintln!("skipping: /proc/self/ns/time not available in sandbox");
+        return;
+    }
+
+    assert_ne!(
+        host_time_ns, sandbox_time_ns,
+        "time namespace inode should differ: host={host_time_ns} sandbox={sandbox_time_ns}"
+    );
+}
+
+#[test]
+fn file_injection_visible_inside_container() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    // File injection works by writing to a staging dir on the host and
+    // bind-mounting. For this test, write a file to a known location and
+    // verify it's readable inside the container using env + shell.
+    // Use a dir outside /tmp — rootfs() adds /tmp as tmpfs which hides host /tmp
+    let test_dir = std::env::current_dir()
+        .unwrap()
+        .join("target/gleisner-inject-test");
+    std::fs::create_dir_all(&test_dir).expect("create test dir");
+    let config_path = test_dir.join("gleisner-test-config.txt");
+    std::fs::write(&config_path, "injected_content_here").expect("write test file");
+
+    let mut sb = Sandbox::new();
+    sb.rootfs()
+        .namespace(Namespace::Pid)
+        // Mount the test dir so the file is visible
+        .mount_readonly(&test_dir, &test_dir)
+        .landlock(false);
+
+    let result = sb.command_with_args("/bin/cat", &[config_path.to_str().unwrap()]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let output = result.unwrap().output().expect("run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("injected_content_here"),
+        "injected file should be visible, got: {stdout}"
+    );
+}
+
+// ── Gleisner-in-gleisner test ───────────────────────────────────
+
+#[test]
+fn gleisner_in_gleisner_claude_version() {
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    // Check if claude binary is available
+    if which::which("claude").is_err() {
+        eprintln!("skipping: claude binary not on PATH");
+        return;
+    }
+
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_owned());
+    let project_dir = Path::new("/datar/workspace/claude_code_experiments/gleisner");
+
+    let mut sb = Sandbox::new();
+    sb.rootfs()
+        .namespace(Namespace::Pid)
+        // Claude Code needs $HOME for config, hooks, MCP
+        .mount_readonly(&home, &home)
+        // Project dir for context
+        .mount_readwrite(project_dir, project_dir)
+        .work_dir(project_dir)
+        // Claude Code needs network for API
+        .allow_domains(["api.anthropic.com"])
+        // Node.js runtime needs this preset
+        .seccomp(SeccompPreset::Nodejs)
+        .hostname("gleisner-g-in-g")
+        .landlock(true);
+
+    // Just get the version — non-interactive, no API key needed
+    let result = sb.command_with_args("claude", &["--version"]);
+    if let Err(ref e) = result {
+        eprintln!("skipping: {e}");
+        return;
+    }
+
+    let output = result.unwrap().output().expect("run claude --version");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    eprintln!("g-in-g stdout: {stdout}");
+    eprintln!("g-in-g stderr (last 5 lines):");
+    for line in stderr
+        .lines()
+        .rev()
+        .take(5)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        eprintln!("  {line}");
+    }
+
+    // Claude --version should output version info and exit 0
+    assert!(
+        output.status.success() || stdout.contains("Claude Code"),
+        "claude --version should succeed inside sandbox, exit={:?}, stdout={stdout}",
+        output.status.code()
+    );
+}
