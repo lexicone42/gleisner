@@ -39,6 +39,7 @@ mod command;
 pub mod delegate;
 mod error;
 pub mod minimal_toml;
+pub mod probe;
 pub mod task;
 mod types;
 
