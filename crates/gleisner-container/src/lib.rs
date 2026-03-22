@@ -38,6 +38,7 @@ mod builder;
 mod command;
 pub mod delegate;
 mod error;
+pub mod minimal_toml;
 pub mod task;
 mod types;
 
