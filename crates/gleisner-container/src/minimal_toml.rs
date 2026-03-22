@@ -303,6 +303,37 @@ impl MinimalConfig {
     }
 }
 
+impl MinimalConfig {
+    /// Derive the primary tool name for a task (for attestation).
+    ///
+    /// Extracts from the task's `exec` command or falls back to the harness name.
+    pub fn task_tool_name(&self, task_name: &str) -> Option<String> {
+        let task = self.tasks.get(task_name)?;
+        // Use the first word of exec as the tool name
+        if let Some(ref exec) = task.exec {
+            let cmd = match exec {
+                StringOrArray::String(s) => s.split_whitespace().next().map(str::to_owned),
+                StringOrArray::Array(a) => a.first().cloned(),
+            };
+            if let Some(c) = cmd {
+                // Extract basename
+                return Some(
+                    Path::new(&c)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(&c)
+                        .to_owned(),
+                );
+            }
+        }
+        if let Some(ref _bash) = task.bash {
+            return Some("bash".to_owned());
+        }
+        // Fall back to harness name
+        self.harness.as_ref().and_then(|h| h.use_harness.clone())
+    }
+}
+
 /// Map harness names to the tool binaries they provide.
 fn harness_to_tools(harness: &str) -> Vec<String> {
     match harness {

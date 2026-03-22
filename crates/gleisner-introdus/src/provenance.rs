@@ -40,8 +40,10 @@ pub struct GleisnerProvenance {
 }
 
 impl GleisnerProvenance {
-    /// The Gleisner build type URI.
+    /// The Gleisner build type URI for Claude Code sessions.
     pub const BUILD_TYPE: &str = "https://gleisner.dev/claude-code/v1";
+    /// The Gleisner build type URI for generic sandboxed builds.
+    pub const BUILD_TYPE_GENERIC: &str = "https://gleisner.dev/build/v1";
 }
 
 /// Identifies the build system.
@@ -56,30 +58,27 @@ pub struct Builder {
 pub struct Invocation {
     /// Invocation parameters.
     pub parameters: serde_json::Value,
-    /// Claude Code environment metadata.
-    pub environment: ClaudeCodeEnvironment,
+    /// Build environment metadata.
+    pub environment: BuildEnvironment,
 }
 
-/// Claude Code session metadata captured during the sandboxed run.
+/// Build environment metadata captured during a sandboxed run.
+///
+/// Tool-agnostic: works for Claude Code sessions, package builds,
+/// CI steps, or any sandboxed process. Tool-specific fields (model,
+/// API base URL, etc.) are optional and only populated when relevant.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ClaudeCodeEnvironment {
-    /// Always `"claude-code"`.
-    pub tool: &'static str,
-    /// Claude Code CLI version.
-    pub claude_code_version: Option<String>,
-    /// Model used by the session.
-    pub model: Option<String>,
-    /// SHA-256 of the CLAUDE.md file, if present.
-    pub claude_md_hash: Option<String>,
-    /// SHA-256 of the initial conversation context.
-    pub context_hash: Option<String>,
-    /// Whether the session ran inside a Gleisner sandbox.
+pub struct BuildEnvironment {
+    /// The primary tool or build system (e.g. `"claude-code"`, `"cargo"`, `"pnpm"`).
+    pub tool: String,
+    /// Tool version string (e.g. `"2.1.76 (Claude Code)"`, `"1.93.0"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_version: Option<String>,
+    /// Whether the session ran inside a sandbox.
     pub sandboxed: bool,
     /// Name of the sandbox profile used.
     pub profile: String,
-    /// Anthropic API base URL used.
-    pub api_base_url: String,
     /// Landlock enforcement level (e.g. `"FullyEnforced"`, `"BestEffort"`, `"Disabled"`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub landlock_enforcement: Option<String>,
@@ -89,6 +88,94 @@ pub struct ClaudeCodeEnvironment {
     /// Namespace isolation types active in the sandbox.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespaces: Option<Vec<String>>,
+    /// AI model used (Claude Code sessions only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// SHA-256 of the CLAUDE.md file, if present (Claude Code only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_md_hash: Option<String>,
+    /// API base URL (Claude Code only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_base_url: Option<String>,
+}
+
+/// Backwards-compatible alias.
+pub type ClaudeCodeEnvironment = BuildEnvironment;
+
+impl BuildEnvironment {
+    /// Create a `BuildEnvironment` for a Claude Code session.
+    pub fn claude_code(
+        version: Option<String>,
+        model: Option<String>,
+        claude_md_hash: Option<String>,
+        api_base_url: Option<String>,
+        profile: String,
+    ) -> Self {
+        Self {
+            tool: "claude-code".to_owned(),
+            tool_version: version,
+            sandboxed: true,
+            profile,
+            landlock_enforcement: None,
+            seccomp_preset: None,
+            namespaces: None,
+            model,
+            claude_md_hash,
+            api_base_url,
+        }
+    }
+
+    /// Create a `BuildEnvironment` for a generic build tool (cargo, pnpm, etc.).
+    pub fn build_tool(tool: impl Into<String>, version: Option<String>, profile: String) -> Self {
+        Self {
+            tool: tool.into(),
+            tool_version: version,
+            sandboxed: true,
+            profile,
+            landlock_enforcement: None,
+            seccomp_preset: None,
+            namespaces: None,
+            model: None,
+            claude_md_hash: None,
+            api_base_url: None,
+        }
+    }
+
+    /// Create a `BuildEnvironment` from a minimal.toml task definition.
+    ///
+    /// The tool name comes from the task's exec command or the harness.
+    pub fn from_minimal_task(
+        tool: impl Into<String>,
+        version: Option<String>,
+        profile: String,
+        sandboxed: bool,
+    ) -> Self {
+        Self {
+            tool: tool.into(),
+            tool_version: version,
+            sandboxed,
+            profile,
+            landlock_enforcement: None,
+            seccomp_preset: None,
+            namespaces: None,
+            model: None,
+            claude_md_hash: None,
+            api_base_url: None,
+        }
+    }
+
+    /// Set the sandbox enforcement details.
+    pub fn with_enforcement(
+        mut self,
+        landlock: impl Into<String>,
+        seccomp: impl Into<String>,
+        namespaces: Vec<String>,
+    ) -> Self {
+        self.landlock_enforcement = Some(landlock.into());
+        self.seccomp_preset = Some(seccomp.into());
+        self.namespaces = Some(namespaces);
+        self
+    }
 }
 
 /// Timing and completeness metadata.

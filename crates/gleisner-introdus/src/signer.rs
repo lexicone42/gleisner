@@ -450,14 +450,13 @@ mod tests {
                 invocation: Invocation {
                     parameters: serde_json::json!({}),
                     environment: ClaudeCodeEnvironment {
-                        tool: "claude-code",
-                        claude_code_version: None,
+                        tool: "claude-code".to_owned(),
+                        tool_version: None,
                         model: None,
                         claude_md_hash: None,
-                        context_hash: None,
                         sandboxed: true,
                         profile: "test".to_owned(),
-                        api_base_url: "https://api.anthropic.com".to_owned(),
+                        api_base_url: Some("https://api.anthropic.com".to_owned()),
                         landlock_enforcement: None,
                         seccomp_preset: None,
                         namespaces: None,
