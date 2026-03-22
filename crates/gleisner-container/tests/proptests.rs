@@ -243,4 +243,43 @@ proptest! {
             }
         }
     }
+
+    // ── Property: state_key creates valid path ────────────────────
+
+    #[test]
+    fn state_key_produces_valid_sandbox(
+        key in "[a-z][a-z0-9_-]{0,15}",
+    ) {
+        let task = TaskSandbox::new("/workspace")
+            .state_key(&key);
+        let sb = task.build();
+        prop_assert!(sb.is_ok(), "state_key '{key}' should produce valid sandbox");
+    }
+
+    // ── Property: minimal_toml parse never panics ─────────────────
+
+    #[test]
+    fn minimal_toml_parse_never_panics(
+        content in "\\PC{0,500}",
+    ) {
+        // Arbitrary strings should not panic, just return Err
+        let _ = gleisner_container::minimal_toml::MinimalConfig::parse(&content);
+    }
+
+    // ── Property: pool accepts any concurrency ────────────────────
+
+    #[test]
+    fn pool_accepts_any_concurrency(n in 0usize..100) {
+        let pool = gleisner_container::pool::SandboxPool::new(n);
+        // max_concurrent is clamped to at least 1
+        pool.submit("test", TaskSandbox::new("/tmp"), "true", &[] as &[&str]);
+    }
+
+    // ── Property: error suggestions are non-empty ─────────────────
+
+    #[test]
+    fn error_suggestions_are_nonempty(msg in "\\PC{0,50}") {
+        let err = gleisner_container::ContainerError::Config(msg);
+        prop_assert!(!err.suggestion().is_empty(), "suggestion should not be empty");
+    }
 }

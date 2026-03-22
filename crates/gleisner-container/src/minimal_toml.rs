@@ -241,6 +241,16 @@ impl MinimalConfig {
 
         for (path, mode) in patches.file.iter().chain(patches.dir.iter()) {
             let expanded = expand_path(path);
+
+            // Validate: reject path traversal and suspicious absolute paths
+            if expanded
+                .components()
+                .any(|c| matches!(c, std::path::Component::ParentDir))
+            {
+                tracing::warn!(path = %path, "rejecting patch path with '..' traversal");
+                continue;
+            }
+
             match mode.as_str() {
                 "read-only" | "ro" => read_paths.push(expanded),
                 "read-write" | "rw" => write_paths.push(expanded),

@@ -150,7 +150,9 @@ impl SandboxPool {
             }
 
             for handle in handles {
-                handle.join().expect("task thread panicked");
+                if handle.join().is_err() {
+                    tracing::error!("sandbox task thread panicked — collecting partial results");
+                }
             }
         });
 
