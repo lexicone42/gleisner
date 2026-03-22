@@ -1,4 +1,13 @@
-//! SLSA v1.0-compatible provenance with Gleisner/Claude Code extensions.
+//! SLSA v1.0-compatible provenance for sandboxed builds.
+//!
+//! Supports Claude Code sessions, package builds, CI steps, and any
+//! sandboxed process. Tool-specific metadata is optional; the core
+//! provenance format works for any build system.
+//!
+//! SLSA levels:
+//! - L1-L2: Base [`GleisnerProvenance`] with signed provenance
+//! - L3: [`ExtendedProvenance`] with [`HermeticMaterials`] (requires sandbox cooperation)
+//! - L4: [`ExtendedProvenance`] + [`ReproducibilityAttestation`] (requires rebuild verification)
 //!
 //! See: <https://slsa.dev/spec/v1.0/provenance>
 
@@ -202,7 +211,7 @@ pub struct Completeness {
 }
 
 /// A material (input) to the build.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Material {
     /// URI identifying the material.
     pub uri: String,
@@ -222,6 +231,133 @@ pub struct SandboxProfileSummary {
     pub network_policy: String,
     /// Number of denied filesystem paths.
     pub filesystem_deny_count: usize,
+}
+
+// ── Gap-closing extensions for SLSA L3+ ─────────────────────
+
+/// Hermetic material declaration — a sealed, complete list of build inputs.
+///
+/// When a sandbox can guarantee that ONLY these materials were accessible
+/// during the build (no network, no unmounted paths), the attestation can
+/// set `completeness.materials = true`.
+///
+/// This is the bridge between minimal.dev's sandbox (which controls inputs)
+/// and gleisner's attestation (which signs the claim).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HermeticMaterials {
+    /// Complete list of inputs with content digests.
+    pub materials: Vec<Material>,
+    /// How hermiticity was enforced.
+    pub enforcement: HermeticEnforcement,
+    /// Whether the sandbox guarantees no other inputs were accessible.
+    pub sealed: bool,
+}
+
+/// How hermetic enforcement was achieved.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum HermeticEnforcement {
+    /// Sandbox-provided: the sandbox declares the complete input set
+    /// and enforces it via namespaces + Landlock.
+    SandboxDeclared,
+    /// Observed: file-access monitoring captured all reads and no
+    /// undeclared reads occurred (weaker — race conditions possible).
+    Observed,
+    /// Self-reported: the build tool reported its inputs (weakest —
+    /// trusts the build tool).
+    SelfReported,
+}
+
+/// Reproducibility claim — asserts that rebuilding from the same inputs
+/// produces the same outputs.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReproducibilityAttestation {
+    /// The spec hash (content-addressed build recipe).
+    pub spec_hash: String,
+    /// SHA-256 of the build outputs.
+    pub output_digest: String,
+    /// Number of independent rebuilds that produced the same digest.
+    pub rebuild_count: u32,
+    /// Whether all rebuilds matched.
+    pub reproducible: bool,
+    /// Timestamp of the verification.
+    pub verified_at: DateTime<Utc>,
+}
+
+/// Per-step attestation for multi-step build pipelines.
+///
+/// Each step (eval, build, test, deploy) gets its own attestation that
+/// references the prior step's attestation via `depends_on`. This enables
+/// fine-grained supply chain auditing: "the test step consumed the build
+/// step's outputs and produced a pass/fail result."
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildStep {
+    /// Step name (e.g., "eval", "build", "test", "deploy").
+    pub name: String,
+    /// Index in the pipeline (0-based).
+    pub index: u32,
+    /// Total steps in the pipeline.
+    pub total_steps: u32,
+    /// SHA-256 of the prior step's attestation payload (if not the first step).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depends_on: Option<String>,
+    /// What this step consumed (subset of the pipeline's materials).
+    pub step_materials: Vec<Material>,
+    /// What this step produced.
+    pub step_subjects: Vec<Material>,
+}
+
+/// Extended provenance for builds with hermetic materials and/or
+/// reproducibility claims. Wraps [`GleisnerProvenance`] with additional fields.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtendedProvenance {
+    /// The base SLSA provenance.
+    #[serde(flatten)]
+    pub base: GleisnerProvenance,
+
+    /// Hermetic materials declaration (if the sandbox can guarantee completeness).
+    #[serde(
+        rename = "gleisner:hermeticMaterials",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub hermetic_materials: Option<HermeticMaterials>,
+
+    /// Reproducibility attestation (if rebuild verification was performed).
+    #[serde(
+        rename = "gleisner:reproducibility",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub reproducibility: Option<ReproducibilityAttestation>,
+
+    /// Build step metadata (for multi-step pipelines).
+    #[serde(rename = "gleisner:buildStep", skip_serializing_if = "Option::is_none")]
+    pub build_step: Option<BuildStep>,
+
+    /// Per-package attestation references (for composed environments).
+    /// Each entry maps a package name to the digest of its individual attestation.
+    #[serde(
+        rename = "gleisner:packageAttestations",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub package_attestations: Option<Vec<PackageAttestationRef>>,
+}
+
+/// Reference to an individual package's attestation within a composed environment.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageAttestationRef {
+    /// Package name.
+    pub name: String,
+    /// Package version.
+    pub version: Option<String>,
+    /// SHA-256 of the package's individual attestation payload.
+    pub attestation_digest: String,
+    /// Whether the package was individually verified (vs trusted from cache).
+    pub individually_verified: bool,
 }
 
 /// Chain metadata linking this attestation to its predecessor.
