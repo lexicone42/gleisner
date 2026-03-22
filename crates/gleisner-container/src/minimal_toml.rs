@@ -343,6 +343,80 @@ impl MinimalConfig {
     }
 }
 
+impl MinimalConfig {
+    /// Generate a lightweight SBOM (component list) for a task's environment.
+    ///
+    /// Each package in the task becomes an SBOM component. This is a
+    /// quick inventory — not a full CycloneDX SBOM with proofs (use
+    /// `gleisner forge --sbom` for that). Useful for audit trails:
+    /// "what was in the sandbox when Claude ran?"
+    pub fn task_components(&self, task_name: &str) -> Vec<SbomComponent> {
+        let task = match self.tasks.get(task_name) {
+            Some(t) => t,
+            None => return Vec::new(),
+        };
+
+        let mut components = Vec::new();
+
+        // Task packages
+        for pkg in &task.packages {
+            components.push(SbomComponent {
+                name: pkg.clone(),
+                source: ComponentSource::TaskPackage,
+            });
+        }
+
+        // Harness packages
+        if let Some(ref harness) = self.harness {
+            for pkg in &harness.build_packages {
+                components.push(SbomComponent {
+                    name: pkg.clone(),
+                    source: ComponentSource::HarnessBuild,
+                });
+            }
+            for pkg in &harness.runtime_packages {
+                components.push(SbomComponent {
+                    name: pkg.clone(),
+                    source: ComponentSource::HarnessRuntime,
+                });
+            }
+            // Implicit harness packages
+            if let Some(ref name) = harness.use_harness {
+                for tool in harness_to_tools(name) {
+                    components.push(SbomComponent {
+                        name: tool,
+                        source: ComponentSource::HarnessImplicit,
+                    });
+                }
+            }
+        }
+
+        components
+    }
+}
+
+/// A component in a task's sandbox environment.
+#[derive(Debug, Clone)]
+pub struct SbomComponent {
+    /// Package or tool name.
+    pub name: String,
+    /// Where this component came from.
+    pub source: ComponentSource,
+}
+
+/// Source of a component in the environment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComponentSource {
+    /// Explicitly listed in `tasks.*.packages`.
+    TaskPackage,
+    /// From `[harness] build_packages`.
+    HarnessBuild,
+    /// From `[harness] runtime_packages`.
+    HarnessRuntime,
+    /// Implicitly provided by the harness (e.g., rust harness → cargo).
+    HarnessImplicit,
+}
+
 /// Map harness names to the tool binaries they provide.
 fn harness_to_tools(harness: &str) -> Vec<String> {
     match harness {
