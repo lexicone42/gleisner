@@ -538,6 +538,12 @@ Practical steps for users setting up Gleisner in a new environment.
       covers observed behavior before deploying it.
 - [ ] **Validate tool names** — the task API rejects `/`, `\`, `;`, `'`,
       backtick, and null characters in tool names to prevent injection.
+- [ ] **Use `SandboxCapabilities::probe()`** before creating sandboxes
+      to detect kernel support and degrade gracefully.
+- [ ] **Use `SandboxPool`** for concurrent builds with bounded parallelism
+      and per-task timeouts. Thread panics are handled gracefully.
+- [ ] **Use `state_key()`** for persistent cache across runs — state dirs
+      live under `.gleisner/state/<key>/`.
 
 ### Verification
 

@@ -320,6 +320,8 @@ let sb = ForgeComposition::new(report, project_dir).sandbox()?;
 
 Key capabilities: `explain()` audits grants, `narrow()` tightens configs from observed usage, `merge()` combines multi-agent needs, `is_scoped_within()` proves delegation safety, `system_prompt_fragment()` generates boundary-aware prompts for inner agents.
 
+Additional modules: `SandboxPool` for concurrent builds (`-j N`), `SandboxCapabilities::probe()` for system capability detection, `MinimalConfig` for parsing `minimal.toml` directly, `observe_from_audit_log()` for audit trail analysis (feature: `audit`), `verify_against_policy()` for Z3 formal proofs (feature: `lattice`).
+
 ## Documentation
 
 | Document | Description |
