@@ -266,6 +266,15 @@ impl MinimalConfig {
         // Packages that need network access get auto-detected by TaskSandbox
         // through the tool derivation logic (npm → registry, pip → pypi, etc.)
 
+        // ── State persistence ───────────────────────────────────
+        let state_key = task
+            .state_key
+            .as_ref()
+            .or(self.defaults.as_ref().and_then(|d| d.state_key.as_ref()));
+        if let Some(key) = state_key {
+            sb = sb.state_key(key);
+        }
+
         // ── Hostname ────────────────────────────────────────────
         sb = sb.hostname(format!("minimal-{task_name}"));
 

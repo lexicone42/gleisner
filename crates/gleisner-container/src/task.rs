@@ -60,6 +60,21 @@ pub struct TaskSandbox {
     hostname: Option<String>,
     /// Custom seccomp preset (auto-detected from tools if not set).
     seccomp: Option<SeccompPreset>,
+    /// Package paths to mount read-only (from binary cache).
+    packages: Vec<PackageMount>,
+    /// State key for persistent cache sharing across runs.
+    state_key: Option<String>,
+}
+
+/// A package mounted into the sandbox from a content-addressed store.
+#[derive(Debug, Clone)]
+pub struct PackageMount {
+    /// Package name.
+    pub name: String,
+    /// Path on the host (in binary cache).
+    pub host_path: PathBuf,
+    /// Mount point inside the sandbox.
+    pub container_path: PathBuf,
 }
 
 impl TaskSandbox {
@@ -79,7 +94,29 @@ impl TaskSandbox {
             needs_home: false,
             hostname: None,
             seccomp: None,
+            packages: Vec::new(),
+            state_key: None,
         }
+    }
+
+    /// Declare packages to mount from the binary cache.
+    ///
+    /// Each package is a read-only bind mount from the host's content-addressed
+    /// store into the sandbox. This is how minimal.dev's `tasks.*.packages`
+    /// field works — prebuilt packages are mounted, not installed.
+    pub fn needs_packages(mut self, packages: impl IntoIterator<Item = PackageMount>) -> Self {
+        self.packages.extend(packages);
+        self
+    }
+
+    /// Set a state key for persistent cache sharing across sandbox runs.
+    ///
+    /// Tasks with the same `state_key` share a persistent directory at
+    /// `.gleisner/state/<key>/`, surviving across runs. Equivalent to
+    /// minimal.dev's `[defaults] state_key = "dev"`.
+    pub fn state_key(mut self, key: impl Into<String>) -> Self {
+        self.state_key = Some(key.into());
+        self
     }
 
     /// Declare that the task needs to read from these paths.
@@ -274,6 +311,20 @@ impl TaskSandbox {
 
         for (key, value) in &self.env {
             sb.env(key, value);
+        }
+
+        // ── Packages from binary cache ────────────────────────
+
+        for pkg in &self.packages {
+            sb.mount_readonly(&pkg.host_path, &pkg.container_path);
+        }
+
+        // ── State persistence ─────────────────────────────────
+
+        if let Some(ref key) = self.state_key {
+            let state_dir = self.project_dir.join(format!(".gleisner/state/{key}"));
+            std::fs::create_dir_all(&state_dir).ok();
+            sb.bind_rw(&state_dir);
         }
 
         // Landlock always on — this is the principle of least privilege
