@@ -402,3 +402,183 @@ fn gleisner_in_gleisner_claude_version() {
         output.status.code()
     );
 }
+
+// NOTE: These tests use real paths under target/ (not /tmp) because
+// the sandbox replaces /tmp with a fresh tmpfs. tempfile::tempdir()
+// creates dirs under /tmp which aren't visible inside the sandbox.
+
+const TEST_DIR: &str = "/datar/workspace/claude_code_experiments/gleisner/target/e2e-test-scratch";
+
+fn test_project_dir(name: &str) -> std::path::PathBuf {
+    let dir = Path::new(TEST_DIR).join(name);
+    // Clean and recreate
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).unwrap();
+    dir
+}
+
+// ── state_key e2e ──────────────────────────────────────────────
+
+#[test]
+fn state_key_creates_persistent_directory() {
+    use gleisner_container::task::TaskSandbox;
+
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let project_path = test_project_dir("state-key");
+
+    let task = TaskSandbox::new(&project_path)
+        .needs_tools(["sh"])
+        .state_key("test-persist");
+
+    let sb = task.build().expect("build sandbox with state_key");
+
+    // The state dir should have been created on the host
+    let state_dir = project_path.join(".gleisner/state/test-persist");
+    assert!(
+        state_dir.exists(),
+        "state_key should create .gleisner/state/test-persist: {}",
+        state_dir.display()
+    );
+
+    // Write a marker file from inside the sandbox
+    let output = run_in_sandbox(
+        &sb,
+        "sh",
+        &[
+            "-c",
+            &format!(
+                "echo 'persisted' > {}/marker.txt && cat {}/marker.txt",
+                state_dir.display(),
+                state_dir.display()
+            ),
+        ],
+    );
+
+    assert_eq!(
+        output.as_deref(),
+        Some("persisted"),
+        "should write and read from state dir inside sandbox"
+    );
+
+    // Verify persistence on host after sandbox exits
+    let marker = std::fs::read_to_string(state_dir.join("marker.txt")).unwrap();
+    assert_eq!(marker.trim(), "persisted", "state should persist on host");
+
+    // Clean up
+    std::fs::remove_dir_all(&project_path).ok();
+}
+
+// ── needs_packages e2e ─────────────────────────────────────────
+
+#[test]
+fn package_mount_is_readable_inside_sandbox() {
+    use gleisner_container::task::{PackageMount, TaskSandbox};
+
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let project_path = test_project_dir("pkg-mount");
+
+    // Create a fake "package" directory under /usr/local (a real path
+    // that exists outside the sandbox's tmpfs)
+    let pkg_dir = Path::new(TEST_DIR).join("fake-pkg-data");
+    std::fs::create_dir_all(&pkg_dir).unwrap();
+    std::fs::write(pkg_dir.join("hello.txt"), "from-package").unwrap();
+
+    let task = TaskSandbox::new(&project_path)
+        .needs_tools(["sh"])
+        .needs_packages([PackageMount {
+            name: "test-pkg".to_owned(),
+            host_path: pkg_dir.clone(),
+            container_path: pkg_dir.clone(), // same path (bind_ro pattern)
+        }]);
+
+    let sb = task.build().expect("build sandbox with package mount");
+
+    // Read the package file from inside the sandbox
+    let output = run_in_sandbox(
+        &sb,
+        "sh",
+        &["-c", &format!("cat {}/hello.txt", pkg_dir.display())],
+    );
+
+    assert_eq!(
+        output.as_deref(),
+        Some("from-package"),
+        "package content should be readable inside sandbox"
+    );
+
+    // Clean up
+    std::fs::remove_dir_all(&project_path).ok();
+    std::fs::remove_dir_all(&pkg_dir).ok();
+}
+
+// ── pool e2e ───────────────────────────────────────────────────
+
+#[test]
+fn pool_runs_concurrent_sandboxes() {
+    use gleisner_container::pool::SandboxPool;
+    use gleisner_container::task::TaskSandbox;
+
+    if skip_if_no_sandbox() {
+        return;
+    }
+
+    let project_path = test_project_dir("pool");
+
+    let pool = SandboxPool::new(2).task_timeout(std::time::Duration::from_secs(10));
+
+    pool.submit(
+        "echo-one",
+        TaskSandbox::new(&project_path).needs_tools(["sh"]),
+        "sh",
+        &["-c", "echo one"],
+    );
+    pool.submit(
+        "echo-two",
+        TaskSandbox::new(&project_path).needs_tools(["sh"]),
+        "sh",
+        &["-c", "echo two"],
+    );
+    pool.submit(
+        "echo-three",
+        TaskSandbox::new(&project_path).needs_tools(["sh"]),
+        "sh",
+        &["-c", "echo three"],
+    );
+
+    let results = pool.run_all();
+
+    eprintln!(
+        "Pool: {} succeeded, {} failed, elapsed {:?}",
+        results.succeeded, results.failed, results.elapsed
+    );
+
+    assert_eq!(
+        results.succeeded, 3,
+        "all 3 tasks should produce Ok results"
+    );
+    assert_eq!(results.failed, 0);
+
+    // Verify output from each task
+    for (name, expected) in [
+        ("echo-one", "one"),
+        ("echo-two", "two"),
+        ("echo-three", "three"),
+    ] {
+        let output = results.results[name].as_ref().expect("Ok result");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.trim(),
+            expected,
+            "{name} should output '{expected}', got: {stdout}"
+        );
+    }
+
+    // Clean up
+    std::fs::remove_dir_all(&project_path).ok();
+}

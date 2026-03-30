@@ -334,6 +334,33 @@ mod tests {
     }
 
     #[test]
+    fn forward_api_key_is_opt_in() {
+        // Default: API key is NOT forwarded
+        let d = Delegation::to("/workspace")
+            .task("Test")
+            .allow_tools(["sh"]);
+
+        let prompt = d.system_prompt();
+        assert!(
+            !prompt.contains("ANTHROPIC_API_KEY"),
+            "API key should not be in prompt by default: {prompt}"
+        );
+
+        // The task's env should not contain the key by default
+        // (We test this indirectly via the explain output)
+        let explanation = d.explain();
+        let has_api_key_grant = explanation
+            .grants
+            .iter()
+            .any(|g| g.capability.contains("ANTHROPIC_API_KEY"));
+        assert!(
+            !has_api_key_grant,
+            "API key should not be in grants by default: {:?}",
+            explanation.grants
+        );
+    }
+
+    #[test]
     fn delegation_explain() {
         let d = Delegation::to("/workspace")
             .task("Run tests")

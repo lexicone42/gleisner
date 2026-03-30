@@ -316,7 +316,7 @@ impl TaskSandbox {
         // ── Packages from binary cache ────────────────────────
 
         for pkg in &self.packages {
-            sb.mount_readonly(&pkg.host_path, &pkg.container_path);
+            sb.bind_ro(&pkg.host_path);
         }
 
         // ── State persistence ─────────────────────────────────
