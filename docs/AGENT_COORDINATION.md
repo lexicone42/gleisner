@@ -237,16 +237,41 @@ let tighter_task = report.suggested_config;
 // This sandbox only grants cargo + crates.io
 ```
 
+### `run_and_narrow()` — Automated feedback loop
+
+Instead of manually collecting observations, use `run_and_narrow()` to
+execute and narrow in one call:
+
+```rust
+let task = TaskSandbox::new("/workspace")
+    .needs_tools(["cargo", "git", "npm"])
+    .needs_network(["crates.io", "registry.npmjs.org"]);
+
+let result = task.run_and_narrow("cargo", &["test"])?;
+println!("{}", result.narrowing.summary);
+// "Unused capabilities: tools: [git, npm], domains: [registry.npmjs.org]"
+
+// Use the tighter config next time:
+let tighter = result.narrowing.suggested_config;
+```
+
+For richer observation data (from `gleisner record` or the audit pipeline),
+use `narrow_with_observations()`:
+
+```rust
+let result = task.narrow_with_observations(output, observed_from_audit_log);
+```
+
 The narrowing loop:
 
 ```
 Run 1: Declare [cargo, git, npm] + [crates.io, registry.npmjs.org]
-        Observe: only cargo + crates.io used
-        narrow() → suggested: [cargo] + [crates.io]
+        run_and_narrow("cargo", &["test"])
+        → "Unused capabilities: tools: [git, npm], domains: [registry.npmjs.org]"
 
-Run 2: Declare [cargo] + [crates.io]
-        Observe: cargo + crates.io used
-        narrow() → "All declared capabilities were used — configuration is already minimal."
+Run 2: Use suggested_config → [cargo] + [crates.io]
+        run_and_narrow("cargo", &["test"])
+        → "All declared capabilities were used — configuration is already minimal."
 ```
 
 ### `merge(other)` — Combine multi-agent needs
