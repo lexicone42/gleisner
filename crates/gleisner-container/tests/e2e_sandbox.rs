@@ -489,27 +489,34 @@ fn package_mount_is_readable_inside_sandbox() {
     std::fs::create_dir_all(&pkg_dir).unwrap();
     std::fs::write(pkg_dir.join("hello.txt"), "from-package").unwrap();
 
+    // Mount the package at a DIFFERENT container path (the real use case:
+    // binary cache at /var/cache/minimal/... appears at /opt/packages/...)
+    let container_mount = project_path.join("packages/test-pkg");
+
     let task = TaskSandbox::new(&project_path)
         .needs_tools(["sh"])
         .needs_packages([PackageMount {
             name: "test-pkg".to_owned(),
             host_path: pkg_dir.clone(),
-            container_path: pkg_dir.clone(), // same path (bind_ro pattern)
+            container_path: container_mount.clone(),
         }]);
 
     let sb = task.build().expect("build sandbox with package mount");
 
-    // Read the package file from inside the sandbox
+    // Read the package file at the CONTAINER path (not host path)
     let output = run_in_sandbox(
         &sb,
         "sh",
-        &["-c", &format!("cat {}/hello.txt", pkg_dir.display())],
+        &[
+            "-c",
+            &format!("cat {}/hello.txt", container_mount.display()),
+        ],
     );
 
     assert_eq!(
         output.as_deref(),
         Some("from-package"),
-        "package content should be readable inside sandbox"
+        "package content should be readable at container_path (different from host_path)"
     );
 
     // Clean up

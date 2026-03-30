@@ -316,7 +316,12 @@ impl TaskSandbox {
         // ── Packages from binary cache ────────────────────────
 
         for pkg in &self.packages {
-            sb.bind_ro(&pkg.host_path);
+            // Ensure the container mount point exists on the host so
+            // sandbox-init doesn't skip it as "nonexistent path".
+            if pkg.host_path != pkg.container_path {
+                std::fs::create_dir_all(&pkg.container_path).ok();
+            }
+            sb.mount_readonly(&pkg.host_path, &pkg.container_path);
         }
 
         // ── State persistence ─────────────────────────────────
@@ -953,6 +958,92 @@ impl TaskSandbox {
             .map_err(|e| ContainerError::Config(format!("write sandbox-context.md: {e}")))?;
 
         Ok(context_path)
+    }
+}
+
+// ── Automated narrow loop ──────────────────────────────────────
+
+/// Result of running a task and collecting narrowing feedback.
+#[derive(Debug)]
+pub struct RunAndNarrowResult {
+    /// The command output.
+    pub output: crate::command::Output,
+    /// What capabilities were actually used.
+    pub observed: ObservedCapabilities,
+    /// The narrowing report (declared vs. observed).
+    pub narrowing: NarrowingReport,
+}
+
+impl TaskSandbox {
+    /// Execute a command in this sandbox and automatically narrow.
+    ///
+    /// This is the automated feedback loop: build sandbox → run command →
+    /// collect what was actually used → produce narrowing report.
+    ///
+    /// ```no_run
+    /// # use gleisner_container::task::TaskSandbox;
+    /// let task = TaskSandbox::new("/workspace")
+    ///     .needs_tools(["cargo", "git", "npm"])
+    ///     .needs_network(["crates.io", "registry.npmjs.org"]);
+    ///
+    /// let result = task.run_and_narrow("cargo", &["test"])?;
+    /// eprintln!("{}", result.narrowing.summary);
+    /// // "Unused capabilities: tools: [git, npm], domains: [registry.npmjs.org]"
+    ///
+    /// // Use the tighter config next time:
+    /// let tighter = result.narrowing.suggested_config;
+    /// # Ok::<(), gleisner_container::ContainerError>(())
+    /// ```
+    pub fn run_and_narrow(
+        &self,
+        program: &str,
+        args: &[&str],
+    ) -> Result<RunAndNarrowResult, ContainerError> {
+        let sandbox = self.build()?;
+
+        let cmd = sandbox.command_with_args(program, args)?;
+        let output = cmd.output()?;
+
+        // Collect observations from the command output.
+        // Without a full audit log, we can observe which tool was invoked
+        // (the program itself) and parse basic process info from stdout/stderr.
+        let mut observed = ObservedCapabilities::default();
+
+        // The program itself was executed
+        let tool_name = std::path::Path::new(program)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(program);
+        observed.executed_tools.insert(tool_name.to_owned());
+
+        // The project directory was always accessed
+        observed.write_paths.insert(self.project_dir.clone());
+
+        let narrowing = self.narrow(&observed);
+
+        Ok(RunAndNarrowResult {
+            output,
+            observed,
+            narrowing,
+        })
+    }
+
+    /// Like [`run_and_narrow`](Self::run_and_narrow) but accepts pre-collected
+    /// observations (e.g., from a full audit log or Landlock denial events).
+    ///
+    /// Use this when you have richer observation data from `gleisner record`
+    /// or the audit pipeline.
+    pub fn narrow_with_observations(
+        &self,
+        output: crate::command::Output,
+        observed: ObservedCapabilities,
+    ) -> RunAndNarrowResult {
+        let narrowing = self.narrow(&observed);
+        RunAndNarrowResult {
+            output,
+            observed,
+            narrowing,
+        }
     }
 }
 

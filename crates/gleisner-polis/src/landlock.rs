@@ -257,6 +257,20 @@ fn add_filesystem_rules(
         orch_rw.push(gc.clone());
     }
 
+    // Extra bind mounts (host → container path remapping)
+    let mut extra_ro: Vec<&Path> = Vec::new();
+    let mut extra_rw_bind: Vec<&Path> = Vec::new();
+    for bm in &filesystem.extra_bind_mounts {
+        // Allow both host and container paths in Landlock
+        if bm.readonly {
+            extra_ro.push(&bm.host);
+            extra_ro.push(&bm.container);
+        } else {
+            extra_rw_bind.push(&bm.host);
+            extra_rw_bind.push(&bm.container);
+        }
+    }
+
     // Apply all rules
     let ruleset = add_rules_tracking_skips(ruleset, &ro_paths, read_access, skipped_paths)
         .map_err(|e| map_ruleset_error(&e, require))?;
@@ -265,6 +279,12 @@ fn add_filesystem_rules(
         .map_err(|e| map_ruleset_error(&e, require))?;
 
     let ruleset = add_rules_tracking_skips(ruleset, &tmpfs_paths, full_access, skipped_paths)
+        .map_err(|e| map_ruleset_error(&e, require))?;
+
+    let ruleset = add_rules_tracking_skips(ruleset, &extra_ro, read_access, skipped_paths)
+        .map_err(|e| map_ruleset_error(&e, require))?;
+
+    let ruleset = add_rules_tracking_skips(ruleset, &extra_rw_bind, full_access, skipped_paths)
         .map_err(|e| map_ruleset_error(&e, require))?;
 
     let ruleset = add_rules_tracking_skips(ruleset, &[project_dir], full_access, skipped_paths)
@@ -538,6 +558,7 @@ mod tests {
             readwrite_bind: vec![],
             deny: vec![PathBuf::from("/home/.ssh")],
             tmpfs: vec![],
+            extra_bind_mounts: Vec::new(),
         };
 
         // The function only emits warnings; verify it doesn't panic
@@ -552,6 +573,7 @@ mod tests {
             readwrite_bind: vec![],
             deny: vec![PathBuf::from("/home/.ssh")],
             tmpfs: vec![],
+            extra_bind_mounts: Vec::new(),
         };
 
         check_deny_conflicts(&fs);
@@ -577,6 +599,7 @@ mod tests {
             readwrite_bind: vec![],
             deny: vec![],
             tmpfs: vec![PathBuf::from("/tmp")],
+            extra_bind_mounts: Vec::new(),
         };
 
         let net = NetworkPolicy {
@@ -617,6 +640,7 @@ mod tests {
             readwrite_bind: vec![],
             deny: vec![],
             tmpfs: vec![PathBuf::from("/tmp")],
+            extra_bind_mounts: Vec::new(),
         };
 
         let net = NetworkPolicy {

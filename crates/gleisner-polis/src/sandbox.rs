@@ -301,6 +301,7 @@ mod tests {
                 readwrite_bind: vec![],
                 deny: vec![],
                 tmpfs: vec![PathBuf::from("/tmp")],
+                extra_bind_mounts: Vec::new(),
             },
             network: NetworkPolicy {
                 default: network_default,
@@ -453,6 +454,7 @@ mod tests {
                 readwrite_bind: vec![],
                 deny: vec![],
                 tmpfs: vec![PathBuf::from("/tmp")],
+                extra_bind_mounts: Vec::new(),
             },
             network: NetworkPolicy {
                 default: PolicyDefault::Deny,
@@ -539,6 +541,7 @@ mod tests {
                 readwrite_bind: vec![],
                 deny: vec![],
                 tmpfs: vec![PathBuf::from("/tmp")],
+                extra_bind_mounts: Vec::new(),
             },
             network: NetworkPolicy {
                 default: PolicyDefault::Allow,
@@ -848,6 +851,7 @@ mod tests {
                 readwrite_bind: vec![],
                 deny: vec![],
                 tmpfs: vec![PathBuf::from("/tmp")],
+                extra_bind_mounts: Vec::new(),
             },
             network: policy,
             process: ProcessPolicy {
@@ -978,6 +982,7 @@ mod tests {
                 readwrite_bind: vec![],
                 deny: vec![],
                 tmpfs: vec![],
+                extra_bind_mounts: Vec::new(),
             },
             network: NetworkPolicy {
                 default: PolicyDefault::Allow,
@@ -1032,6 +1037,7 @@ mod tests {
                 readwrite_bind: vec![],
                 deny: vec![],
                 tmpfs: vec![],
+                extra_bind_mounts: Vec::new(),
             },
             network: NetworkPolicy {
                 default: PolicyDefault::Allow,
@@ -1145,6 +1151,7 @@ mod tests {
                 readwrite_bind: vec![],
                 deny: vec![],
                 tmpfs: vec![PathBuf::from("/tmp")],
+                extra_bind_mounts: Vec::new(),
             },
             network: NetworkPolicy {
                 default: PolicyDefault::Allow,

@@ -69,6 +69,21 @@ pub struct FilesystemPolicy {
     pub deny: Vec<PathBuf>,
     /// Additional tmpfs mounts.
     pub tmpfs: Vec<PathBuf>,
+    /// Explicit bind mounts where host and container paths differ.
+    /// These are processed after readonly_bind/readwrite_bind.
+    #[serde(default)]
+    pub extra_bind_mounts: Vec<BindMount>,
+}
+
+/// A bind mount with potentially different host and container paths.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BindMount {
+    /// Path on the host.
+    pub host: PathBuf,
+    /// Mount point inside the container.
+    pub container: PathBuf,
+    /// Whether the mount is read-only.
+    pub readonly: bool,
 }
 
 /// Controls outbound network access.

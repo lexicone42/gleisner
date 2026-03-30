@@ -112,6 +112,7 @@ impl SandboxPool {
     /// Each task gets its own sandbox (no shared state between concurrent tasks).
     pub fn run_all(self) -> PoolResult {
         let start = Instant::now();
+        let global_deadline = self.global_timeout.map(|t| Instant::now() + t);
         let tasks = Arc::try_unwrap(self.tasks)
             .expect("pool has no other references")
             .into_inner()
@@ -120,11 +121,9 @@ impl SandboxPool {
         let total = tasks.len();
         let mut results: HashMap<String, Result<Output, ContainerError>> = HashMap::new();
 
-        // Simple semaphore-based concurrency using threads
         let semaphore = Arc::new(Semaphore::new(self.max_concurrent));
         let results_mutex = Mutex::new(&mut results);
 
-        // Scoped threads share references safely without Arc
         std::thread::scope(|scope| {
             let mut handles = Vec::new();
 
@@ -134,11 +133,40 @@ impl SandboxPool {
                 let task_timeout = self.task_timeout;
 
                 let handle = scope.spawn(move || {
-                    // Acquire semaphore slot (blocks until a slot is free)
                     let _permit = sem.acquire();
 
+                    // Enforce global timeout: effective timeout is the minimum of
+                    // per-task timeout and remaining global budget.
+                    let effective_timeout = match (task_timeout, global_deadline) {
+                        (Some(t), Some(dl)) => {
+                            let remaining = dl.saturating_duration_since(Instant::now());
+                            if remaining.is_zero() {
+                                // Global deadline already passed — skip this task
+                                results_ref.lock().expect("results lock").insert(
+                                    pool_task.name.clone(),
+                                    Err(ContainerError::Timeout(Duration::ZERO)),
+                                );
+                                return;
+                            }
+                            Some(t.min(remaining))
+                        }
+                        (Some(t), None) => Some(t),
+                        (None, Some(dl)) => {
+                            let remaining = dl.saturating_duration_since(Instant::now());
+                            if remaining.is_zero() {
+                                results_ref.lock().expect("results lock").insert(
+                                    pool_task.name.clone(),
+                                    Err(ContainerError::Timeout(Duration::ZERO)),
+                                );
+                                return;
+                            }
+                            Some(remaining)
+                        }
+                        (None, None) => None,
+                    };
+
                     let name = pool_task.name.clone();
-                    let result = run_single_task(pool_task, task_timeout);
+                    let result = run_single_task(pool_task, effective_timeout);
 
                     results_ref
                         .lock()

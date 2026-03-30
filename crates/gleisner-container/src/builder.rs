@@ -549,13 +549,33 @@ impl Sandbox {
         let mut readwrite_bind = Vec::new();
         let mut tmpfs_paths = Vec::new();
 
+        let mut extra_bind_mounts = Vec::new();
+
         for mount in &self.mounts {
             match mount {
-                Mount::ReadOnly { host, .. } => {
-                    readonly_bind.push(host.clone());
+                Mount::ReadOnly { host, container } => {
+                    if host == container {
+                        readonly_bind.push(host.clone());
+                    } else {
+                        // Different paths — use extra_bind_mounts for proper
+                        // sandbox-init handling and Landlock allowlisting
+                        extra_bind_mounts.push(gleisner_polis::BindMount {
+                            host: host.clone(),
+                            container: container.clone(),
+                            readonly: true,
+                        });
+                    }
                 }
-                Mount::ReadWrite { host, .. } => {
-                    readwrite_bind.push(host.clone());
+                Mount::ReadWrite { host, container } => {
+                    if host == container {
+                        readwrite_bind.push(host.clone());
+                    } else {
+                        extra_bind_mounts.push(gleisner_polis::BindMount {
+                            host: host.clone(),
+                            container: container.clone(),
+                            readonly: false,
+                        });
+                    }
                 }
                 Mount::Tmpfs { container } => {
                     tmpfs_paths.push(container.clone());
@@ -717,6 +737,7 @@ impl Sandbox {
                 readwrite_bind,
                 deny: self.deny_paths.clone(),
                 tmpfs: tmpfs_paths,
+                extra_bind_mounts,
             },
             network,
             process: ProcessPolicy {

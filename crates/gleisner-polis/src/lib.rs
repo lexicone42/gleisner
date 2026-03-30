@@ -43,7 +43,7 @@ pub use learner::{
 };
 pub use monitor::{FsMonitorConfig, ProcMonitorConfig};
 pub use policy::{FileAccessType, LandlockPolicy, SandboxSpec};
-pub use profile::{Profile, resolve_profile};
+pub use profile::{BindMount, Profile, resolve_profile};
 pub use util::{build_claude_inner_command, expand_tilde, resolve_claude_bin, resolve_home_dir};
 
 // ── Linux-only re-exports ───────────────────────────────────────────

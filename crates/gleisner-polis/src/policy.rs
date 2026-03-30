@@ -222,6 +222,7 @@ mod tests {
                 readwrite_bind: vec![PathBuf::from("/project")],
                 deny: vec![PathBuf::from("/home/user/.ssh")],
                 tmpfs: vec![],
+                extra_bind_mounts: Vec::new(),
             },
             network: NetworkPolicy {
                 default: PolicyDefault::Deny,

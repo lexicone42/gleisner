@@ -378,6 +378,47 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
         bind_mount(&spec.project_dir, &new_root, MsFlags::empty())?;
     }
 
+    // ── Phase 2b: Extra bind mounts with different host/container paths ──
+    for bm in &spec.filesystem.extra_bind_mounts {
+        if !bm.host.exists() {
+            eprintln!(
+                "gleisner-sandbox-init: skipping bind mount (host not found): {}",
+                bm.host.display()
+            );
+            continue;
+        }
+        let target = new_root.join(bm.container.strip_prefix("/").unwrap_or(&bm.container));
+        if bm.container.is_dir() || bm.host.is_dir() {
+            fs::create_dir_all(&target).map_err(|e| format!("mkdir {}: {e}", target.display()))?;
+        } else if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("mkdir parent of {}: {e}", target.display()))?;
+        }
+        let flags = if bm.readonly {
+            MsFlags::MS_BIND | MsFlags::MS_RDONLY | MsFlags::MS_REC
+        } else {
+            MsFlags::MS_BIND | MsFlags::MS_REC
+        };
+        mount(Some(&bm.host), &target, None::<&str>, flags, None::<&str>).map_err(|e| {
+            format!(
+                "bind mount {} -> {}: {e}",
+                bm.host.display(),
+                target.display()
+            )
+        })?;
+        if bm.readonly {
+            // Remount to enforce read-only (Linux needs a second mount call)
+            mount(
+                None::<&str>,
+                &target,
+                None::<&str>,
+                MsFlags::MS_BIND | MsFlags::MS_REMOUNT | MsFlags::MS_RDONLY | MsFlags::MS_REC,
+                None::<&str>,
+            )
+            .map_err(|e| format!("ro remount {}: {e}", target.display()))?;
+        }
+    }
+
     // ── Phase 3: Symlink target binds ────────────────────────────
     for target in &deferred_symlink_targets {
         bind_mount(target, &new_root, MsFlags::MS_RDONLY)?;
