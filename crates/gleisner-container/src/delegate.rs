@@ -93,6 +93,46 @@ impl Delegation {
         }
     }
 
+    /// Build a delegation from a minimal.toml task definition.
+    ///
+    /// Parses the minimal.toml config, extracts the named task's sandbox
+    /// configuration, and adds `claude` + `node` as additional tools.
+    /// The task description becomes the delegation's task.
+    ///
+    /// ```no_run
+    /// use gleisner_container::delegate::Delegation;
+    /// use gleisner_container::minimal_toml::MinimalConfig;
+    ///
+    /// let config = MinimalConfig::from_file("minimal.toml").unwrap();
+    /// let delegation = Delegation::from_minimal_task(
+    ///     &config,
+    ///     "claude",
+    ///     "/workspace/project",
+    ///     "Fix the auth bug in src/auth.rs",
+    /// ).unwrap();
+    /// ```
+    pub fn from_minimal_task(
+        config: &crate::minimal_toml::MinimalConfig,
+        task_name: &str,
+        project_dir: impl Into<PathBuf>,
+        task_description: impl Into<String>,
+    ) -> Result<Self, ContainerError> {
+        let project_dir = project_dir.into();
+        let mut task = config.task_sandbox(task_name, &project_dir)?;
+        // Always add claude + node for delegation
+        task = task.needs_tools(["claude", "node"]);
+
+        Ok(Self {
+            task,
+            project_dir,
+            task_description: task_description.into(),
+            context: Vec::new(),
+            timeout: None,
+            claude_bin: "claude".to_owned(),
+            claude_args: Vec::new(),
+        })
+    }
+
     /// Describe the task for the inner Claude.
     pub fn task(mut self, description: impl Into<String>) -> Self {
         self.task_description = description.into();

@@ -605,6 +605,33 @@ impl TaskSandbox {
             reason: "syscall filtering preset".to_owned(),
         });
 
+        // Package mounts
+        for pkg in &self.packages {
+            let detail = if pkg.host_path == pkg.container_path {
+                format!("readonly: {}", pkg.host_path.display())
+            } else {
+                format!(
+                    "readonly: {} → {}",
+                    pkg.host_path.display(),
+                    pkg.container_path.display()
+                )
+            };
+            grants.push(CapabilityGrant {
+                category: "packages".to_owned(),
+                capability: detail,
+                reason: format!("package '{}'", pkg.name),
+            });
+        }
+
+        // State persistence
+        if let Some(ref key) = self.state_key {
+            grants.push(CapabilityGrant {
+                category: "state".to_owned(),
+                capability: format!("readwrite: .gleisner/state/{key}/"),
+                reason: "persistent state directory (survives across runs)".to_owned(),
+            });
+        }
+
         // Security posture
         grants.push(CapabilityGrant {
             category: "security".to_owned(),
@@ -921,6 +948,19 @@ impl TaskSandbox {
         if !self.tools.is_empty() {
             lines.push(String::new());
             lines.push(format!("Available tools: {}", self.tools.join(", ")));
+        }
+
+        // Packages
+        if !self.packages.is_empty() {
+            lines.push(String::new());
+            lines.push("Installed packages:".to_owned());
+            for pkg in &self.packages {
+                lines.push(format!(
+                    "  - {} at {}",
+                    pkg.name,
+                    pkg.container_path.display()
+                ));
+            }
         }
 
         // Guidance

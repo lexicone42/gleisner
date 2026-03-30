@@ -404,9 +404,29 @@ let sandbox = config.task_sandbox("build", "/workspace")?;
 //     .state_key("dev")  // from [defaults]
 ```
 
-This means gleisner can sandbox any minimal.toml task without workflow
-changes — the sandbox configuration is derived from the config the
-developer already wrote.
+### Delegating a minimal.toml task to Claude
+
+Bridge from config to delegation in one call:
+
+```rust
+use gleisner_container::delegate::Delegation;
+use gleisner_container::minimal_toml::MinimalConfig;
+
+let config = MinimalConfig::from_file("minimal.toml")?;
+let result = Delegation::from_minimal_task(
+    &config,
+    "claude",                    // task name in minimal.toml
+    "/workspace/project",
+    "Fix the auth bug in src/auth.rs",
+)?.forward_api_key()
+  .timeout(Duration::from_secs(300))
+  .build()?
+  .execute()?;
+```
+
+This inherits everything from the minimal.toml task (packages, patches,
+env vars, network, harness tools, state_key) and adds Claude + Node.js
+for the inner agent. No manual wiring needed.
 
 ## Attestation Integration
 
