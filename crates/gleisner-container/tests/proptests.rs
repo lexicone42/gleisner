@@ -250,10 +250,28 @@ proptest! {
     fn state_key_produces_valid_sandbox(
         key in "[a-z][a-z0-9_-]{0,15}",
     ) {
-        let task = TaskSandbox::new("/workspace")
+        // Use a real writable path (not /workspace which doesn't exist)
+        let dir = std::path::PathBuf::from("/datar/workspace/claude_code_experiments/gleisner/target/proptest-state");
+        std::fs::create_dir_all(&dir).ok();
+        let task = TaskSandbox::new(&dir)
             .state_key(&key);
         let sb = task.build();
         prop_assert!(sb.is_ok(), "state_key '{key}' should produce valid sandbox");
+        // Clean up state dirs
+        std::fs::remove_dir_all(dir.join(".gleisner")).ok();
+    }
+
+    // ── Property: state_key rejects traversal ──────────────────────
+
+    #[test]
+    fn state_key_rejects_traversal(
+        key in "\\PC{1,30}",
+    ) {
+        let task = TaskSandbox::new("/workspace").state_key(&key);
+        let result = task.build();
+        if key.contains("..") || key.contains('/') || key.contains('\\') {
+            prop_assert!(result.is_err(), "state_key '{key}' with traversal should be rejected");
+        }
     }
 
     // ── Property: minimal_toml parse never panics ─────────────────

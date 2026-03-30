@@ -319,7 +319,13 @@ impl TaskSandbox {
             // Ensure the container mount point exists on the host so
             // sandbox-init doesn't skip it as "nonexistent path".
             if pkg.host_path != pkg.container_path {
-                std::fs::create_dir_all(&pkg.container_path).ok();
+                if let Err(e) = std::fs::create_dir_all(&pkg.container_path) {
+                    return Err(ContainerError::Config(format!(
+                        "cannot create package mount point {}: {e} \
+                         (the container_path must be writable on the host)",
+                        pkg.container_path.display()
+                    )));
+                }
             }
             sb.mount_readonly(&pkg.host_path, &pkg.container_path);
         }
@@ -327,8 +333,19 @@ impl TaskSandbox {
         // ── State persistence ─────────────────────────────────
 
         if let Some(ref key) = self.state_key {
+            // Validate: reject path traversal in state keys
+            if key.contains("..") || key.contains('/') || key.contains('\\') {
+                return Err(ContainerError::Config(format!(
+                    "state_key '{key}' contains path separator or traversal"
+                )));
+            }
             let state_dir = self.project_dir.join(format!(".gleisner/state/{key}"));
-            std::fs::create_dir_all(&state_dir).ok();
+            std::fs::create_dir_all(&state_dir).map_err(|e| {
+                ContainerError::Config(format!(
+                    "cannot create state dir {}: {e}",
+                    state_dir.display()
+                ))
+            })?;
             sb.bind_rw(&state_dir);
         }
 

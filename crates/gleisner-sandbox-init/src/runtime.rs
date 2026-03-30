@@ -388,7 +388,7 @@ fn setup_filesystem(spec: &SandboxSpec) -> Result<(), String> {
             continue;
         }
         let target = new_root.join(bm.container.strip_prefix("/").unwrap_or(&bm.container));
-        if bm.container.is_dir() || bm.host.is_dir() {
+        if bm.host.is_dir() {
             fs::create_dir_all(&target).map_err(|e| format!("mkdir {}: {e}", target.display()))?;
         } else if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)
