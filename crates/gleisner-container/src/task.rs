@@ -802,6 +802,23 @@ impl TaskSandbox {
             unused.push(format!("read_paths: [{}]", unused_reads.join(", ")));
         }
 
+        // Packages declared but whose mount point was never read.
+        // A package is "used" if any observed read path is under its container_path.
+        let unused_packages: Vec<&str> = self
+            .packages
+            .iter()
+            .filter(|pkg| {
+                !observed
+                    .read_paths
+                    .iter()
+                    .any(|p| p.starts_with(&pkg.container_path))
+            })
+            .map(|pkg| pkg.name.as_str())
+            .collect();
+        if !unused_packages.is_empty() {
+            unused.push(format!("packages: [{}]", unused_packages.join(", ")));
+        }
+
         // Build the tighter config
         let mut suggested = TaskSandbox::new(&self.project_dir);
 
@@ -843,6 +860,27 @@ impl TaskSandbox {
             .collect();
         if !used_write_paths.is_empty() {
             suggested = suggested.needs_write(used_write_paths);
+        }
+
+        // Only include packages that were accessed
+        let used_packages: Vec<PackageMount> = self
+            .packages
+            .iter()
+            .filter(|pkg| {
+                observed
+                    .read_paths
+                    .iter()
+                    .any(|p| p.starts_with(&pkg.container_path))
+            })
+            .cloned()
+            .collect();
+        if !used_packages.is_empty() {
+            suggested = suggested.needs_packages(used_packages);
+        }
+
+        // Carry over state_key (always — state is persistent by design)
+        if let Some(ref key) = self.state_key {
+            suggested = suggested.state_key(key);
         }
 
         // Carry over env and other settings
@@ -1347,6 +1385,79 @@ mod tests {
             report.summary.contains("already minimal"),
             "should say config is minimal: {}",
             report.summary
+        );
+    }
+
+    #[test]
+    fn narrow_detects_unused_packages() {
+        let task = TaskSandbox::new("/workspace")
+            .needs_tools(["sh"])
+            .needs_packages([
+                PackageMount {
+                    name: "curl".to_owned(),
+                    host_path: PathBuf::from("/cache/curl"),
+                    container_path: PathBuf::from("/opt/curl"),
+                },
+                PackageMount {
+                    name: "zlib".to_owned(),
+                    host_path: PathBuf::from("/cache/zlib"),
+                    container_path: PathBuf::from("/opt/zlib"),
+                },
+                PackageMount {
+                    name: "openssl".to_owned(),
+                    host_path: PathBuf::from("/cache/openssl"),
+                    container_path: PathBuf::from("/opt/openssl"),
+                },
+            ]);
+
+        let mut observed = ObservedCapabilities::default();
+        observed.executed_tools.insert("sh".to_owned());
+        // Only curl's mount was read
+        observed
+            .read_paths
+            .insert(PathBuf::from("/opt/curl/lib/libcurl.so"));
+
+        let report = task.narrow(&observed);
+        assert!(
+            report.summary.contains("zlib") && report.summary.contains("openssl"),
+            "should detect unused packages: {}",
+            report.summary
+        );
+
+        // Suggested config should only include curl
+        assert_eq!(report.suggested_config.packages.len(), 1);
+        assert_eq!(report.suggested_config.packages[0].name, "curl");
+    }
+
+    #[test]
+    fn explain_shows_packages_and_state() {
+        let task = TaskSandbox::new("/workspace")
+            .needs_tools(["sh"])
+            .needs_packages([PackageMount {
+                name: "curl".to_owned(),
+                host_path: PathBuf::from("/cache/curl"),
+                container_path: PathBuf::from("/opt/curl"),
+            }])
+            .state_key("dev");
+
+        let explanation = task.explain();
+        let text = format!("{explanation}");
+
+        assert!(
+            text.contains("curl"),
+            "explain should show package name: {text}"
+        );
+        assert!(
+            text.contains("/cache/curl"),
+            "explain should show host path: {text}"
+        );
+        assert!(
+            text.contains("/opt/curl"),
+            "explain should show container path: {text}"
+        );
+        assert!(
+            text.contains("state/dev"),
+            "explain should show state key: {text}"
         );
     }
 
